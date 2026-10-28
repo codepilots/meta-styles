@@ -14,7 +14,10 @@
 - To use it: source the file into the shell/process env before running code that needs it, e.g. `set -a; source .env/secrets; set +a` (or load it in Node/Python via a dotenv-style loader), then read `process.env['meta-api-key']` / `os.environ['meta-api-key']` from code. Code should reference the env var name, never the literal key value.
 - Any agent (including Muse Code) working in this repo should treat `.env/secrets` as read-only-by-reference: wire real API calls to pull from env, don't inline keys into source, don't echo the file.
 
-## Options rejected / parked
+## Decision (Autumn, 2026-10-28)
+The SecondBloom Instagram bot/webhook deployment (`igwebhook`, app `29264663606459560`) is treated entirely as prior work for this hackathon. It will **not** be modified, extended, or have new routes added to it during the hackathon window — resolves `docs/instagram-bot-api.md` open question #2 (no, adding new `GET` routes to the existing bot does not count as acceptable hackathon-period work).
+
+**Consequence for the roadmap:** Milestone 9's proposed read API (`GET /ig/shares`, `GET /ig/media/<id>`) cannot be implemented as new routes on `igwebhook` as drafted. Milestones 6-9 (anything requiring a live, two-way integration with the bot) are on hold pending a redesign that keeps 100% of new code inside this repo — e.g. a wholly separate new proxy/relay service that only reads the bot's already-written output files without altering the bot itself, or dropping the live-integration milestones from the hackathon scope entirely and keeping Milestone 5's fixture-based bridge as the submission's final Instagram-input story.
 - Startup track (parked): needs production-readiness story + team; revisit only if co-founder joins.
 - Generic retail affiliate styling (rejected): crowded, wrong body model, contradicts resale-first taste.
 

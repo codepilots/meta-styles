@@ -1,9 +1,13 @@
-# Instagram bot read API — contract spec (Milestone 9, PROPOSED, not implemented)
+# Instagram bot read API — contract spec (Milestone 9, ON HOLD, not implemented)
 
-Status: design only. Nothing here is built. The SecondBloom webhook
-receiver (`igwebhook`, deployed outside this repo) is unchanged; the
-meta-styles client module against this API is future work that replaces
-the fixture fetch in `app/inbox-bridge.js`.
+Status: **on hold as drafted** (Autumn, 2026-10-28) — the API below assumes
+new routes on the existing SecondBloom `igwebhook` deployment, which is now
+treated entirely as prior work and will not be modified during the
+hackathon. The design is kept here as reference for a future redesign (a
+separate relay service, or dropping live bot integration from scope). The
+SecondBloom webhook receiver (`igwebhook`, deployed outside this repo) is
+unchanged; the meta-styles client module against this API is future work
+that replaces the fixture fetch in `app/inbox-bridge.js`.
 
 ## Direction: meta-styles polls the bot (bot exposes a read API)
 
@@ -84,13 +88,21 @@ rotation are undecided — flagged below.
 
 ## Open questions for Autumn
 
+~~2. Confirm bot-side addition (new `GET` routes on the `igwebhook` host)
+   counts as acceptable hackathon-period work on Autumn's own deployment vs
+   touching prior-work code — confirm before building.~~
+**Resolved (Autumn, 2026-10-28): no.** The bot is treated entirely as prior
+work and will not be modified during the hackathon. This API as drafted —
+new routes added to `igwebhook` — is **not implementable as-is**. See
+`docs/decisions.md` for the roadmap consequence: Milestones 6-9 are on hold
+pending either a separate new relay service (reads the bot's existing
+output files, changes nothing on the bot) or dropping live bot integration
+from this hackathon's scope.
+
 1. Auth scheme: pre-shared bearer token vs short-lived issued tokens — and
    where does the meta-styles side store it (same `.env/secrets` file under
-   a new name, or separate)? **This is the biggest open question: it blocks
-   any implementation.**
-2. Confirm bot-side addition (new `GET` routes on the `igwebhook` host)
-   counts as acceptable hackathon-period work on Autumn's own deployment vs
-   touching prior-work code — confirm before building.
+   a new name, or separate)? Still open, now secondary to the question
+   above (moot if no bot-side change happens at all).
 3. Do share items need sender identity at all (privacy: currently no sender
    field is specified), and how long should the bot retain `data/media/`
    files for re-fetch?
