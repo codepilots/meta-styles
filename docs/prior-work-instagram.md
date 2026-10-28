@@ -39,10 +39,21 @@ SecondBloom proved the hard infrastructure problem — getting a real photo
 of a real outfit from an ordinary user's phone into a processing pipeline
 without any setup friction (no Creator account switch, no Facebook Page
 link, no dashboard). meta-styles reuses that lesson (design for the ordinary
-user first) but is a separate, self-contained web app built fresh during the
-hackathon window; it does not call into or depend on the SecondBloom
-webhook, container, or credentials, and none of SecondBloom's code is
-vendored into this repo.
+user first) and is a separate, self-contained web app built fresh during
+the hackathon window.
+
+**Planned extension (decided 2026-10-28, not yet built):** Autumn will add
+a read-only API (`GET /ig/shares`, `GET /ig/media/<id>` — full spec in
+`docs/instagram-bot-api.md`) to this existing SecondBloom deployment
+herself. That addition is **maintenance of this prior-work project**, built
+outside this repo, and must never be presented in the hackathon
+submission/demo as something built during the hackathon window. Once it
+exists, meta-styles' Milestone 9 client module (new, hackathon-built, lives
+in `app/`) will call it to replace the Milestone 5 fixture-only bridge —
+at that point this repo *does* depend on the bot's API at runtime, which is
+fine (a thin client calling a documented API is the new work; the bot and
+its existing webhook/receiver logic remain prior work, untouched in
+substance).
 
 ## Full detail
 
