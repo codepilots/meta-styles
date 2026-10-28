@@ -320,11 +320,7 @@ style — small pure-helper modules with `node`-runnable self-tests in
 app/test/<name>.test.js`), plus manual browser walks. Each task is
 independently verifiable and lands in dependency order.
 
-1. **Seed content + placeholder images.** Write `mock-ig-bot/seed.json`
-   (3–4 synthetic shares covering `ig_post` + `image` shapes, one with
-   `media_available: false`, one older than 24h for the `422` demo) and 2–3
-   locally generated placeholder images. Verify: JSON parses, every entry
-   passes the same shape rules as `isValidShareItem`, ids all `SYNTH_…`.
+1. **Instructions panel + empty store.** Build the in-memory store starting genuinely empty (no `seed.json`, per Autumn's decision — the chat opens blank). Write `app/mock-dm.html`'s on-page usage instructions (how to share a photo, how to send-as-app, how to point `index.html` at the mock) as static content, no server dependency to render. Verify: mock starts with `GET /ig/shares` → `{"items": [], "next_cursor": null}`; the instructions render with the server stopped (pure static HTML).
 2. **Mock shares + media routes.** Implement `GET /ig/shares` (cursor paging,
    `limit` validation/defaults) and `GET /ig/media/<id>` (bytes,
    `Content-Type`, `404`, cache headers) over the in-memory store seeded
@@ -358,10 +354,11 @@ independently verifiable and lands in dependency order.
    photo share, send-as-app operator panel (byte-identical `POST /ig/send`
    incl. `confirm:true`), stale-share + duplicate-send demo affordances.
    Verify: manual click-through of the §2 four-beat flow against the mock.
-9. **Swap wiring.** One-line `BOT_BASE` retarget + optional `?bot=` override
-   (behavior-neutral per §4 rules) and a documented default-backend decision.
-   Verify: identical inbox behavior against mock vs real bot (side-by-side
-   walk per §5 step 3); override supplies only the base string (code review).
+9. **Swap wiring.** `BOT_BASE` defaults to the mock (`http://127.0.0.1:8904`)
+   in the checked-in `app/inbox-bridge.js`; switching to the real bot is a
+   one-line edit to `http://127.0.0.1:8903`, documented in a code comment —
+   no query-param override (resolved §8.4). Verify: identical inbox behavior
+   against mock vs real bot (side-by-side walk per §5 step 3).
 10. **Contract-parity sweep.** Diff every mock route's codes + body shapes
     against the two specs' "As implemented" sections (good + error cases).
     Verify: written checklist with per-route pass marks; known divergences
@@ -375,29 +372,14 @@ independently verifiable and lands in dependency order.
     + plan agree, no secret or real-bot credential appears in any new file
     (key/token grep clean).
 
-## 8. Open questions for Autumn
+## 8. Open questions for Autumn — RESOLVED (2026-10-28)
 
-1. **Default backend for the checked-in demo:** should `index.html` (and the
-   demo-video link) default to the mock so the live product always works for
-   judges, with the real bot only on your machine — or default to the real
-   bot with the mock as the documented fallback link? (Recommendation in §4
-   is mock-default; your call before task 9.)
-2. **Replace or alongside:** §2 recommends `app/mock-dm.html` as a separate
-   page leaving the inbox panel untouched. If you would rather the chat thread
-   *replace* the inbox panel inside `index.html`, say so — it changes tasks
-   8–9 materially, so this needs settling before implementation starts.
-3. **Seeded conversation on load:** should the mock auto-load a canned demo
-   thread (a half-finished styling conversation, e.g. two shares + one prior
-   app reply) so the chat is lively on first view — or start empty/minimal so
-   every bubble on screen is something you created live during the demo?
-   (Plan assumes a small seeded thread per task 1; easy to trim.)
-4. **Swap mechanism:** is the optional `?bot=` query override welcome
-   convenience or unwanted extra surface — is the one-line `BOT_BASE` edit
-   alone enough for how you will actually run the demo and record the video?
-5. **Scope confirmation:** this milestone builds no M12 send-client module and
-   replicates no fail2ban/nginx hardening (see §6). Confirm that matches your
-   expectation, or flag anything in §6 you want pulled into scope now rather
-   than discovered mid-build.
+1. ~~Default backend for the checked-in demo~~ — **Resolved: default to the mock.** `index.html`'s `BOT_BASE` ships pointed at the mock (`http://127.0.0.1:8904`) by default; the real bot is an Autumn-only edit.
+2. ~~Replace or alongside~~ — **Resolved: separate chat page, confirmed.** `app/mock-dm.html` stays distinct from the inbox panel. **Additional constraint from Autumn: the mock must run as a genuinely separate server process from the app**, not embedded in or started by the static file server — confirms §3's existing design (a standalone `node mock-ig-bot/server.js` process on its own port), nothing to change there.
+3. ~~Seeded conversation on load~~ — **Resolved: start empty, not seeded.** No canned demo thread. Instead, `app/mock-dm.html` shows on-page usage instructions (how to share a photo, how to trigger a send-as-app, how to point `index.html` at the mock) so the empty state is self-explanatory rather than a blank unexplained thread. `seed.json` is no longer part of task 1 — replaced by an in-page instructions panel (see §3/§7 amendments below).
+4. ~~Swap mechanism~~ — **Resolved: the one-line `BOT_BASE` edit alone is enough.** No `?bot=` query override — drop that from §4 and task 9.
+5. ~~Scope confirmation~~ — **Resolved: no security measures needed.** Confirms §6's existing boundary (no fail2ban/nginx/TLS replication) — this is a local-only demo harness, not infrastructure. Nothing to change.
+
 
 ## Cross-references
 
