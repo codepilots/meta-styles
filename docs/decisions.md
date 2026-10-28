@@ -9,7 +9,7 @@
 | 5 | Milestones 5-8 (Instagram DM-share integration) reuse SecondBloom's existing receiving IG account (`17841417613087488`) and app (`29264663606459560`) — no separate account/app | Already-deployed, already-verified identity; avoids a second App Review process | 2026-10-28 |
 
 ## Secrets / environment
-- `.env/secrets` holds `meta-api-key=<value>` for the Meta Model API (Muse Spark / Muse Image / SAM 3.1).
+- `.env/secrets` holds `meta-api-key=<value>` for the Meta Model API (Muse Spark / Muse Image / SAM 3.1), and will also hold `ig-bot-token=<value>` once Milestone 9's bot API exists — a separate credential for a separate service, never reused across the two.
 - `.env/` is gitignored (see `.gitignore`) — never commit it, never cat/print its contents in a chat, log, or agent transcript.
 - To use it: source the file into the shell/process env before running code that needs it, e.g. `set -a; source .env/secrets; set +a` (or load it in Node/Python via a dotenv-style loader), then read `process.env['meta-api-key']` / `os.environ['meta-api-key']` from code. Code should reference the env var name, never the literal key value.
 - Any agent (including Muse Code) working in this repo should treat `.env/secrets` as read-only-by-reference: wire real API calls to pull from env, don't inline keys into source, don't echo the file.

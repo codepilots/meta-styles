@@ -1,16 +1,17 @@
 # Instagram bot read API — contract spec (Milestone 9, APPROVED for bot-side build, by Autumn — not part of this repo)
 
-Status: **approved, with a scope boundary** (Autumn, 2026-10-28) — Autumn
-will add this API to the existing SecondBloom `igwebhook` deployment
-herself, as maintenance of that prior-work project. That bot-side work is
-**not** part of this repo and must never be presented as hackathon-built —
-`docs/prior-work-instagram.md` stays the source of truth on that boundary
-and should be updated once the bot API is live. The hackathon's own new
-work is strictly the meta-styles-side client module in `app/` that calls
-this API, replacing the Milestone 5 fixture-only bridge. The SecondBloom
-webhook receiver's existing logic (handshake, signature verification,
-events.jsonl/shares.jsonl writers, media download) stays unchanged; only
-new read-only routes are added on top.
+Status: **approved, auth decided** (Autumn, 2026-10-28) — Autumn will add
+this API to the existing SecondBloom `igwebhook` deployment herself, as
+maintenance of that prior-work project, authenticated via a bearer token
+stored in `.env/secrets`. That bot-side work is **not** part of this repo
+and must never be presented as hackathon-built — `docs/prior-work-instagram.md`
+stays the source of truth on that boundary and should be updated once the
+bot API is live. The hackathon's own new work is strictly the meta-styles-
+side client module in `app/` that calls this API, replacing the Milestone
+5 fixture-only bridge. The SecondBloom webhook receiver's existing logic
+(handshake, signature verification, events.jsonl/shares.jsonl writers,
+media download) stays unchanged; only new read-only routes are added on
+top.
 
 ## Direction: meta-styles polls the bot (bot exposes a read API)
 
@@ -58,14 +59,17 @@ No author username or permalink exists on either shape — the client must not
 expect them. `title` is the post caption. Carousel shares carry the first
 image only (upstream limit, not this API's choice).
 
-## Auth (OPEN QUESTION — see below)
+## Auth — RESOLVED (Autumn, 2026-10-28)
 
-Do NOT reuse the `meta-api-key` in `.env/secrets`: it authorises the Meta
-Model API (Spark/Image/SAM), a different service with a different owner and
-quota. The bot API needs its own credential. Proposed: a bot-issued bearer
-token sent as `Authorization: Bearer <token>`, read from the process
-environment on both sides, never committed. Exact scheme, issuance, and
-rotation are undecided — flagged below.
+Bearer token. The bot issues a pre-shared bearer token; meta-styles sends
+`Authorization: Bearer <token>` on every `GET /ig/shares` / `GET
+/ig/media/<id>` call. Stored in `.env/secrets` under its own name — **not**
+reusing `meta-api-key`, per the reasoning above (different service,
+different owner/quota). Proposed var name: `ig-bot-token=...` (same
+`key=value` convention as the existing file). Issuance/rotation mechanics
+(how the bot generates it, whether it expires) are still Autumn's call when
+she builds the bot side — not blocking the client module's design, since
+the client only needs to know the header shape and the env var name.
 
 ## Error handling (client contract for the future client module)
 
@@ -98,11 +102,10 @@ only the meta-styles client that consumes it (replacing the Milestone 5
 fixture bridge). `docs/prior-work-instagram.md` needs an update once the
 bot API is live, to describe it there as prior-work infrastructure.
 
-1. Auth scheme: pre-shared bearer token vs short-lived issued tokens — and
-   where does the meta-styles side store it (same `.env/secrets` file under
-   a new name, or separate)? **Still the biggest open item — blocks the
-   client module.**
-2. Do share items need sender identity at all (privacy: currently no sender
+**Resolved (Autumn, 2026-10-28): auth is a bearer token in `.env/secrets`**
+(see Auth section above) — retires the item that was the biggest blocker.
+
+1. Do share items need sender identity at all (privacy: currently no sender
    field is specified), and how long should the bot retain `data/media/`
    files for re-fetch?
 
