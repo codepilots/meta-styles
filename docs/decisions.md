@@ -6,6 +6,7 @@
 | 2 | Disk folder ~/projects/meta-styles, vault Projects/meta-styles | User-chosed slug; keeps disk + vault aligned | 2026-10-14 |
 | 3 | v1 outputs full-look cards (base + layer/scarf/bag, no shoes), natural proportions, ≤300w per-piece vendor-grounded copy | Carries over proven boutique conventions instead of inventing new ones | 2026-10-14 |
 | 4 | Meta Model API key lives at `.env/secrets` as `meta-api-key=...`, sourced into the process environment (never read/printed by agents, never committed) | Autumn supplied real credentials for Milestone 3+; `.env/` is gitignored at repo root | 2026-10-28 |
+| 5 | Milestones 5-8 (Instagram DM-share integration) reuse SecondBloom's existing receiving IG account (`17841417613087488`) and app (`29264663606459560`) — no separate account/app | Already-deployed, already-verified identity; avoids a second App Review process | 2026-10-28 |
 
 ## Secrets / environment
 - `.env/secrets` holds `meta-api-key=<value>` for the Meta Model API (Muse Spark / Muse Image / SAM 3.1).

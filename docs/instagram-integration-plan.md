@@ -22,5 +22,5 @@ Input path alternative to the Milestone 1 in-app upload/demo picker: user shares
 - Reuse as-is: SecondBloom live app + privacy/terms/deletion pages as the reference submission.
 - Risk: App Review takes days — start early; non-tester traffic is gated until approval.
 
-## Open decision for Autumn
-Reuse SecondBloom's receiving IG account (ID `17841417613087488`) for meta-styles, or set up a separate receiving account/app for meta-styles? Not assumed — needs Autumn's call (hackathon lineage vs separate demo identity, App Review scope).
+## Decision (Autumn, 2026-10-28)
+Reuse SecondBloom's existing receiving IG account (ID `17841417613087488`) and app (`29264663606459560`) for meta-styles — no separate account/app. Milestones 5-8 build on that existing deployment as-is; no new App Review scope beyond what SecondBloom already has unless a milestone specifically needs it.
