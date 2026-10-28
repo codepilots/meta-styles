@@ -46,28 +46,126 @@ function createStore() {
   };
 }
 
-function sendJson(res, status, obj) {
+function sendJson(res, status, obj, corsOrigin) {
   const body = JSON.stringify(obj);
-  res.writeHead(status, {
+  const headers = {
     "Content-Type": "application/json",
     "Cache-Control": "no-store",
     "Content-Length": Buffer.byteLength(body),
-  });
+  };
+  if (corsOrigin) headers["Access-Control-Allow-Origin"] = corsOrigin;
+  res.writeHead(status, headers);
   res.end(body);
 }
 
-function notFound(res) {
-  sendJson(res, 404, { error: "not_found" });
+function notFound(res, corsOrigin) {
+  sendJson(res, 404, { error: "not_found" }, corsOrigin);
 }
 
-function createHandler(store) {
+function parsePaging(url) {
+  const rawSince = url.searchParams.get("since");
+  const rawLimit = url.searchParams.get("limit");
+  let start = 0;
+  if (rawSince !== null) {
+    if (!/^\d+$/.test(rawSince)) return { error: "bad since" };
+    start = Number(rawSince);
+  }
+  let limit = 20;
+  if (rawLimit !== null) {
+    if (!/^\d+$/.test(rawLimit)) return { error: "bad limit" };
+    limit = Number(rawLimit);
+    if (limit < 1 || limit > 50) return { error: "bad limit" };
+  }
+  return { start, limit };
+}
+
+function publicShare(item) {
+  return {
+    id: item.id,
+    received_at: item.received_at,
+    attachment: item.attachment,
+    media_id: item.media_id,
+    media_available: item.media_available,
+  };
+}
+
+function createHandler(store, config) {
+  const expectedToken = (config && config.token) || DEFAULT_TOKEN;
+  const allowOrigin = (config && config.allowOrigin) || DEFAULT_ORIGIN;
   return function handler(req, res) {
     const url = new URL(req.url, "http://127.0.0.1");
-    if (req.method === "GET" && url.pathname === "/ig/shares") {
-      sendJson(res, 200, { items: [], next_cursor: null });
+    const origin = req.headers.origin || null;
+    const corsOrigin = origin === allowOrigin ? allowOrigin : null;
+
+    // CORS preflight (browsers never attach auth here): 204 or 403.
+    if (req.method === "OPTIONS" && origin && req.headers["access-control-request-method"]) {
+      if (!corsOrigin) {
+        sendJson(res, 403, { error: "forbidden_origin" });
+        return;
+      }
+      res.writeHead(204, {
+        "Access-Control-Allow-Origin": corsOrigin,
+        "Access-Control-Allow-Methods": "GET, POST, DELETE, OPTIONS",
+        "Access-Control-Allow-Headers": "Authorization, Content-Type",
+        "Cache-Control": "no-store",
+      });
+      res.end();
       return;
     }
-    notFound(res);
+    // Single-origin policy for real requests carrying an Origin header.
+    if (origin && !corsOrigin) {
+      sendJson(res, 403, { error: "forbidden_origin" });
+      return;
+    }
+
+    // Bearer [REDACTED] on every route except the outbound-media token URL.
+    const isOutboundMedia = req.method === "GET" && url.pathname.indexOf("/ig/outbound-media/") === 0;
+    if (!isOutboundMedia) {
+      const header = req.headers.authorization || "";
+      if (header !== "Bearer " + expectedToken) {
+        res.writeHead(401, {
+          "Content-Type": "application/json",
+          "Cache-Control": "no-store",
+          "WWW-Authenticate": 'Bearer realm="ig"',
+          ...(corsOrigin ? { "Access-Control-Allow-Origin": corsOrigin } : {}),
+        });
+        res.end(JSON.stringify({ error: "unauthorized" }));
+        return;
+      }
+    }
+
+    if (req.method === "GET" && url.pathname === "/ig/shares") {
+      const paging = parsePaging(url);
+      if (paging.error || paging.start > store.shares.length) {
+        sendJson(res, 400, { error: "bad_paging" }, corsOrigin);
+        return;
+      }
+      const page = store.shares.slice(paging.start, paging.start + paging.limit);
+      const nextCursor = page.length > 0
+        ? String(paging.start + page.length)
+        : (url.searchParams.get("since") !== null
+          ? url.searchParams.get("since")
+          : (store.shares.length > 0 ? "0" : null));
+      sendJson(res, 200, { items: page.map(publicShare), next_cursor: nextCursor }, corsOrigin);
+      return;
+    }
+    const mediaMatch = req.method === "GET" && /^\/ig\/media\/([^/]+)$/.exec(url.pathname);
+    if (mediaMatch) {
+      const entry = store.media.get(decodeURIComponent(mediaMatch[1]));
+      if (!entry) {
+        sendJson(res, 404, { error: "media_not_found" }, corsOrigin);
+        return;
+      }
+      res.writeHead(200, {
+        "Content-Type": entry.contentType,
+        "Cache-Control": "private, no-store",
+        "Content-Length": entry.bytes.length,
+        ...(corsOrigin ? { "Access-Control-Allow-Origin": corsOrigin } : {}),
+      });
+      res.end(entry.bytes);
+      return;
+    }
+    notFound(res, corsOrigin);
   };
 }
 
@@ -75,7 +173,10 @@ function startServer(opts) {
   const options = opts || {};
   const port = options.port !== undefined ? options.port : DEFAULT_PORT;
   const store = options.store || createStore();
-  const server = http.createServer(createHandler(store));
+  const server = http.createServer(createHandler(store, {
+    token: options.token,
+    allowOrigin: options.allowOrigin,
+  }));
   return new Promise((resolve, reject) => {
     server.once("error", reject);
     server.listen(port, "127.0.0.1", () => resolve({ server, store }));
