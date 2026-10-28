@@ -381,6 +381,84 @@ async function main() {
     check("task6: expired token -> 404", expired.status === 404, `got ${expired.status}`);
   }
 
+  // --- Task 7: operator routes --------------------------------------------------
+  async function postMock(path, body, contentType) {
+    return fetch(`${base}${path}`, {
+      method: "POST",
+      headers: { ...authHeaders(), ...(contentType ? { "Content-Type": contentType } : {}) },
+      body,
+    });
+  }
+  {
+    // Incoming text advances the shares cursor and is visible via contract reads.
+    const cursorBefore = (await (await fetch(`${base}/ig/shares`, { headers: authHeaders() })).json()).next_cursor;
+    const res = await postMock("/mock/incoming-text", JSON.stringify({ text: "SYNTH inbound hello" }), "application/json");
+    const created = await res.json();
+    check("task7: POST /mock/incoming-text -> 200 + share",
+      res.status === 200 && typeof created.share.id === "string", `${res.status}`);
+    const after = await (await fetch(`${base}/ig/shares?since=${cursorBefore}`, { headers: authHeaders() })).json();
+    check("task7: injected text advances the cursor (visible via /ig/shares)",
+      after.items.length === 1 && after.items[0].id === created.share.id,
+      JSON.stringify(after).slice(0, 160));
+    const bad = await postMock("/mock/incoming-text", JSON.stringify({}), "application/json");
+    check("task7: incoming-text without text -> 400", bad.status === 400, `got ${bad.status}`);
+  }
+  {
+    // Incoming photo: bytes stored, media_available true, fetchable.
+    const res = await postMock(`/mock/incoming-photo?caption=${encodeURIComponent("SYNTH picnic")}`,
+      PNG_1PX, "image/png");
+    const created = await res.json();
+    check("task7: POST /mock/incoming-photo -> 200 + share + media_id",
+      res.status === 200 && created.share.media_available === true &&
+      typeof created.share.media_id === "string",
+      `${res.status} ${JSON.stringify(created).slice(0, 160)}`);
+    const media = await fetch(`${base}/ig/media/${created.share.media_id}`, { headers: authHeaders() });
+    check("task7: injected photo bytes fetchable via contract media route",
+      media.status === 200 && Buffer.from(await media.arrayBuffer()).equals(PNG_1PX),
+      `got ${media.status}`);
+    // ?pending=1 stages not-yet-ready state.
+    const pend = await postMock("/mock/incoming-photo?pending=1", PNG_1PX, "image/png");
+    const pendBody = await pend.json();
+    const pendMedia = await fetch(`${base}/ig/media/${pendBody.share.media_id}`, { headers: authHeaders() });
+    check("task7: ?pending=1 stages media_available:false, bytes not served",
+      pend.status === 200 && pendBody.share.media_available === false && pendMedia.status === 404,
+      `${pend.status}/${pendMedia.status}`);
+    // Backdated injection gives the stale-share demo its 422 honestly.
+    const stale = await postMock("/mock/incoming-text?age_hours=30",
+      JSON.stringify({ text: "SYNTH old news" }), "application/json");
+    const staleBody = await stale.json();
+    const sendStale = await postSend({ share_id: staleBody.share.id, text: "SYNTH late reply", idempotency_key: "SYNTH_key_opstale_001", confirm: true });
+    check("task7: backdated injection (?age_hours=30) sends -> 422",
+      stale.status === 200 && sendStale.status === 422, `${stale.status}/${sendStale.status}`);
+  }
+  {
+    // Stage outbound image, then image-send succeeds for a fresh share.
+    const inj = await (await postMock("/mock/incoming-photo", PNG_1PX, "image/png")).json();
+    const staged = await postMock(`/mock/stage-outbound-image/${inj.share.id}`, PNG_1PX, "image/png");
+    check("task7: stage outbound image -> 200",
+      staged.status === 200, `got ${staged.status}`);
+    const sent = await postSend({ share_id: inj.share.id, text: "SYNTH staged card", idempotency_key: "SYNTH_key_staged_001", confirm: true, image: true });
+    check("task7: staged share sends with image -> 200 + image_message_id",
+      sent.status === 200 && (await sent.json()).image_message_id !== undefined,
+      `got ${sent.status}`);
+    const missing = await postMock("/mock/stage-outbound-image/SYNTH_mid_nope", PNG_1PX, "image/png");
+    check("task7: stage for unknown share -> 404", missing.status === 404, `got ${missing.status}`);
+  }
+  {
+    // Outbound log + debug state feed the chat UI's outgoing bubbles.
+    const out = await (await fetch(`${base}/mock/outbound`, { headers: authHeaders() })).json();
+    check("task7: GET /mock/outbound reflects sends",
+      Array.isArray(out.outbound) && out.outbound.length === store.outbound.length && out.outbound.length > 0,
+      JSON.stringify(out).slice(0, 120));
+    const state = await (await fetch(`${base}/mock/state`, { headers: authHeaders() })).json();
+    check("task7: GET /mock/state reports cursor + key/token counts",
+      typeof state.next_cursor === "string" && typeof state.idempotency_keys_held === "number" &&
+      typeof state.tokens_burned === "number",
+      JSON.stringify(state).slice(0, 160));
+    const noAuth = await fetch(`${base}/mock/outbound`);
+    check("task7: operator routes require auth too", noAuth.status === 401, `got ${noAuth.status}`);
+  }
+
   console.log(`\n${passes} passed, ${failures} failed.`);
   server.close();
   process.exit(failures === 0 ? 0 : 1);

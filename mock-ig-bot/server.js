@@ -91,7 +91,33 @@ function publicShare(item) {
 }
 
 const MAX_SEND_BODY = 1024 * 1024; // 1 MB, per the send spec
+const MAX_MEDIA_BODY = 15 * 1024 * 1024; // 15 MB, mirrors the read spec's download cap
 const WINDOW_MS = 24 * 3600 * 1000; // IG reply window: 24h from the share
+
+// Minimal content sniff for operator-supplied bytes (same idea as the bot's
+// sniffed media Content-Type; SVGs are served as image/svg+xml like fixtures).
+function sniffContentType(bytes) {
+  if (!bytes || bytes.length < 4) return "application/octet-stream";
+  if (bytes[0] === 0x89 && bytes[1] === 0x50 && bytes[2] === 0x4e && bytes[3] === 0x47) return "image/png";
+  if (bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) return "image/jpeg";
+  if (bytes[0] === 0x47 && bytes[1] === 0x49 && bytes[2] === 0x46) return "image/gif";
+  const head = bytes.slice(0, 256).toString("latin1").replace(/^\s+/, "");
+  if (/^<svg[\s>]/.test(head)) return "image/svg+xml";
+  return "application/octet-stream";
+}
+
+// Operator backdating for the stale-share demo: explicit ?received_at=ISO
+// wins, else ?age_hours=N shifts now back, else the request time.
+function resolveReceivedAt(url, payload) {
+  const fromBody = payload && typeof payload.received_at === "string" ? payload.received_at : null;
+  const explicit = url.searchParams.get("received_at") || fromBody;
+  if (explicit && !isNaN(Date.parse(explicit))) return new Date(explicit).toISOString();
+  const age = url.searchParams.get("age_hours");
+  if (age !== null && age !== "" && !isNaN(Number(age))) {
+    return new Date(Date.now() - Number(age) * 3600 * 1000).toISOString();
+  }
+  return new Date().toISOString();
+}
 
 function normalizeText(t) {
   return t.trim().replace(/\s+/g, " ");
@@ -304,6 +330,97 @@ function createHandler(store, config) {
         store.sendChain = run.catch(() => {});
         run.then(({ status, body }) => sendJson(res, status, body, corsOrigin));
       });
+      return;
+    }
+    // --- Operator-only routes (mock-local /mock/... namespace, never called
+    // --- by inbox-bridge.js or any judged surface). Same auth as above.
+    if (url.pathname === "/mock/incoming-text" && req.method === "POST") {
+      readBody(req, MAX_SEND_BODY).then((parsed) => {
+        let payload = null;
+        try { payload = JSON.parse((parsed.bytes || Buffer.alloc(0)).toString("utf8")); } catch (err) { payload = null; }
+        const text = payload && payload.text;
+        if (typeof text !== "string" || !text) {
+          sendJson(res, 400, { error: "bad_request" }, corsOrigin);
+          return;
+        }
+        store.counters.share += 1;
+        const share = {
+          id: "SYNTH_mid_op_" + String(store.counters.share).padStart(3, "0"),
+          received_at: resolveReceivedAt(url, payload),
+          attachment: { type: "text", payload: { text } },
+          media_id: null,
+          media_available: false,
+        };
+        store.shares.push(share);
+        sendJson(res, 200, { share: publicShare(share) }, corsOrigin);
+      });
+      return;
+    }
+    if (url.pathname === "/mock/incoming-photo" && req.method === "POST") {
+      readBody(req, MAX_MEDIA_BODY).then((parsed) => {
+        if (parsed.tooLarge) {
+          sendJson(res, 413, { error: "body_too_large" }, corsOrigin);
+          return;
+        }
+        const pending = url.searchParams.get("pending") === "1";
+        const caption = url.searchParams.get("caption") || "";
+        const kind = url.searchParams.get("kind") === "post" ? "post" : "image";
+        store.counters.share += 1;
+        const n = String(store.counters.share).padStart(3, "0");
+        const mediaId = "SYNTH_media_op_" + n;
+        const attachment = kind === "post"
+          ? { type: "ig_post", payload: { ig_post_media_id: "SYNTH_post_op_" + n, title: caption || "SYNTH untitled share", url: "mock-local:incoming-photo" } }
+          : { type: "image", payload: { url: "mock-local:incoming-photo" } };
+        const share = {
+          id: "SYNTH_mid_op_" + n,
+          received_at: resolveReceivedAt(url, null),
+          attachment,
+          media_id: mediaId,
+          media_available: !pending,
+        };
+        if (!pending) {
+          const bytes = parsed.bytes || Buffer.alloc(0);
+          store.media.set(mediaId, { bytes, contentType: sniffContentType(bytes) });
+        }
+        store.shares.push(share);
+        sendJson(res, 200, { share: publicShare(share) }, corsOrigin);
+      });
+      return;
+    }
+    if (req.method === "POST" && url.pathname.indexOf("/mock/stage-outbound-image/") === 0) {
+      const shareId = decodeURIComponent(url.pathname.slice("/mock/stage-outbound-image/".length));
+      if (!store.shares.some((s) => s.id === shareId)) {
+        sendJson(res, 404, { error: "unknown_share" }, corsOrigin);
+        return;
+      }
+      readBody(req, MAX_MEDIA_BODY).then((parsed) => {
+        if (parsed.tooLarge) {
+          sendJson(res, 413, { error: "body_too_large" }, corsOrigin);
+          return;
+        }
+        const bytes = parsed.bytes || Buffer.alloc(0);
+        store.outboundStaged.set(shareId, { bytes, contentType: sniffContentType(bytes) });
+        sendJson(res, 200, { share_id: shareId, content_type: sniffContentType(bytes) }, corsOrigin);
+      });
+      return;
+    }
+    if (req.method === "GET" && url.pathname === "/mock/outbound") {
+      sendJson(res, 200, { outbound: store.outbound }, corsOrigin);
+      return;
+    }
+    if (req.method === "GET" && url.pathname === "/mock/state") {
+      let burned = 0;
+      for (const entry of store.outboundTokens.values()) {
+        if (entry.used) burned += 1;
+      }
+      sendJson(res, 200, {
+        shares_count: store.shares.length,
+        next_cursor: String(store.shares.length),
+        idempotency_keys_held: store.idempotency.size,
+        tokens_minted: store.outboundTokens.size,
+        tokens_burned: burned,
+        outbound_staged: store.outboundStaged.size,
+      }, corsOrigin);
       return;
     }
     if (req.method === "DELETE") {
