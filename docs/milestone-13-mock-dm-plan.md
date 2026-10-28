@@ -1,8 +1,12 @@
 # Milestone 13 — mock Instagram-DM chat + mock bot server (standalone demo path, zero Instagram dependency)
 
-Status: **plan only (2026-10-28)** — nothing here is built yet. This doc is the
-build plan; implementation is a future TDD-style pass following the task
-breakdown in §7.
+Status: **built 2026-10-28 (task 12 this update)** — tasks 1–9 implemented and
+committed (mock server, chat page, `BOT_BASE` defaulting to the mock at
+`http://127.0.0.1:8904`); task 10 contract-parity checklist written at
+`docs/milestone-13-contract-parity.md`; task 11 static isolation verified and
+test-enforced (live browser + hosts-file walk still needs a human — see the
+parity doc's Isolation section). Default-backend decision (§8.1) and the
+one-line-edit swap with no query override (§8.4) are applied as resolved.
 
 **New-work boundary:** everything in this milestone — the mock server, the chat
 UI page, and any seeded demo content — is **genuinely new hackathon work built
