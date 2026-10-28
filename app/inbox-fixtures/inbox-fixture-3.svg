@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="600" height="750" viewBox="0 0 600 750">
+  <title>Synthetic inbox fixture 3 — shared fairycore cardigan reel (not real Instagram data)</title>
+  <rect width="600" height="750" fill="#d5e5dd"/>
+  <rect x="40" y="40" width="520" height="670" fill="#eff7f2"/>
+  <circle cx="300" cy="90" r="10" fill="#4a5a53"/>
+  <line x1="300" y1="100" x2="300" y2="130" stroke="#4a5a53" stroke-width="6"/>
+  <!-- cardigan -->
+  <path d="M180 130 L270 130 L262 400 L258 645 L182 645 L170 400 Z" fill="#7a9e8f"/>
+  <path d="M330 130 L420 130 L430 400 L418 645 L342 645 L338 400 Z" fill="#7a9e8f"/>
+  <!-- dress under -->
+  <path d="M270 160 L330 160 L344 420 L352 645 L248 645 L256 420 Z" fill="#e8dff0"/>
+  <text x="300" y="710" text-anchor="middle" font-family="sans-serif" font-size="22" fill="#4a5a53">inbox-fixture-3 · cardigan</text>
+</svg>

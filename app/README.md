@@ -40,11 +40,31 @@ No build step, no dependencies. Either:
   `layer/blazer` to see the two-layer flag; add `shoes` to see the exclusion;
   add only a scarf or only a base to see the incomplete-card flags.
 
+## DM-share inbox bridge (Milestone 5 — synthetic fixtures, not a live webhook)
+
+- **Source:** the "Import from DM inbox" button reads the locally created
+  `inbox-fixtures/shares.jsonl` plus the placeholder SVGs next to it. Every
+  id, url, and caption there is invented for demo/testing; the entries only
+  mirror the real SecondBloom payload shape (`ig_post` attachments carry
+  `ig_post_media_id`/`title`/`url`, directly-sent photos carry `image`/`url`).
+  No real Instagram data is vendored or referenced anywhere in this repo.
+- **Alternate source, not a replacement:** picking a fixture entry calls the
+  same `loadImage()` path as uploads and demo photos, so the
+  mask-viewer/classifier/assembler pipeline downstream is unchanged.
+- **Needs HTTP:** `fetch()` can't read the fixture file over `file://` — serve
+  with `python3 -m http.server 8000` from `app/` (above) to use the bridge.
+- **Future work (not in scope):** wiring this to the real SecondBloom
+  webhook's live `shares.jsonl`/media output must only ever happen at runtime
+  from a path Autumn configures, never by copying real SecondBloom data into
+  this repo.
+
 ## Files
 
 | file | purpose |
 |---|---|
 | `index.html` | single-page UI shell |
+| `inbox-bridge.js` | inbox bridge: fixture list UI, feeds picks into `loadImage()` |
+| `inbox-fixtures/` | synthetic demo fixtures (`shares.jsonl` + placeholder SVGs) |
 | `styles.css` | plain styling, no framework |
 | `app.js` | viewer logic + stubbed segmenter + look-card UI wiring |
 | `classifier.js` | taxonomy + classifier stub + placeholder copy bank |

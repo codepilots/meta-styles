@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="600" height="750" viewBox="0 0 600 750">
+  <title>Synthetic inbox fixture 2 — directly-sent knit top photo (not real Instagram data)</title>
+  <rect width="600" height="750" fill="#e5d9c8"/>
+  <rect x="40" y="40" width="520" height="670" fill="#faf5ec"/>
+  <circle cx="300" cy="90" r="10" fill="#6b6259"/>
+  <line x1="300" y1="100" x2="300" y2="130" stroke="#6b6259" stroke-width="6"/>
+  <!-- knit top -->
+  <path d="M216 130 L384 130 L372 300 L408 420 L192 420 L228 300 Z" fill="#b47814"/>
+  <path d="M216 130 L300 210 L384 130" fill="none" stroke="#8a5c0e" stroke-width="6"/>
+  <!-- skirt -->
+  <path d="M216 440 L384 440 L420 645 L180 645 Z" fill="#3f5a3a"/>
+  <text x="300" y="710" text-anchor="middle" font-family="sans-serif" font-size="22" fill="#6b6259">inbox-fixture-2 · knit top + skirt</text>
+</svg>

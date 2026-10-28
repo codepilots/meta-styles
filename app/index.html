@@ -24,6 +24,15 @@
       <input type="file" id="fileInput" accept="image/*">
     </label>
 
+    <div class="inbox">
+      <button type="button" id="inboxToggleBtn" class="ghost" aria-expanded="false">Import from DM inbox</button>
+      <div id="inboxPanel" hidden>
+        <p class="hint">Synthetic demo fixtures (<code>inbox-fixtures/shares.jsonl</code>) — not real DMs, not a live webhook. Pick one to load it into the viewer below.</p>
+        <p class="hint" id="inboxStatus" role="status" aria-live="polite"></p>
+        <div id="inboxList" class="wardrobe"></div>
+      </div>
+    </div>
+
     <h2>2 · Segment</h2>
     <div class="row">
       <button type="button" id="segmentBtn">Run segmentation (stub)</button>
@@ -125,5 +134,6 @@
 <script src="spark.js"></script>
 <script src="preview.js"></script>
 <script src="app.js"></script>
+<script src="inbox-bridge.js"></script>
 </body>
 </html>

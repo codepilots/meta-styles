@@ -115,6 +115,11 @@ body {
 
 .upload input { display: block; margin-top: 0.3rem; }
 
+.inbox { margin-top: 0.6rem; }
+.inbox .ghost[aria-expanded="true"] { border-color: var(--ink); }
+#inboxPanel { margin-top: 0.5rem; display: grid; gap: 0.5rem; }
+#inboxPanel[hidden] { display: none; }
+
 .row { display: flex; gap: 0.5rem; flex-wrap: wrap; }
 
 button {
