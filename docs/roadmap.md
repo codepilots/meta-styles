@@ -1,18 +1,324 @@
 # roadmap
 
-- Milestone 0 (one session): application draft ready. Paste each Cerebral Valley form question here → per-field answers (150–230w), technical-skill answer grounded in a real repo (use a different project than the pitch, e.g. boutique sourcing scanner or rail-data), all links curl-checked. Done = applied before the 20k cap.
-- Milestone 1: photo → SAM mask viewer + manual-box fallback (cached demo set).
-- Milestone 2: garment classifier + look-card assembler with fit rules.
-- Milestone 3: Spark copy generator + Image preview + share card.
-- Milestone 4: submission cut — video, cached mode, live rehearsal.
-- Milestone 5: DM-share inbox bridge — import SecondBloom shares.jsonl + media/ drop into meta-styles inbox as alternate input to Milestone 1 picker (draws from skills/meta-instagram-integration/SKILL.md §5, docs/prior-work-instagram.md).
-- Milestone 6: DM photo → look-card pipeline — feed inbox images through classifier.js / assembler.js with immediate-download rule for expiring signed URLs (draws from skills/meta-instagram-integration/SKILL.md §7, references/access-routes.md). — VERIFIED 2026-10-28: no separate pipeline code was needed; Milestone 5+9's shared loadImage() entry point already wires every inbox source through the same mask/classify/assemble pipeline as uploads, proven by app/test/milestone6-pipeline-wiring.test.js (run: `node app/test/milestone6-pipeline-wiring.test.js`).
-- Milestone 7: reply-back share card — return spark.js / preview.js output via DM within 24h window, skipping is_echo events (draws from skills/meta-instagram-integration/SKILL.md Pitfalls, references/access-routes.md).
-- Milestone 8: production hardening — App Review for instagram_business_manage_messages + published-app / webhook-subscription checklist (draws from skills/meta-instagram-integration/SKILL.md §4/§6, docs/prior-work-instagram.md).
-- Milestone 9: bot read-API client — meta-styles-side integration against the API in docs/instagram-bot-api.md (approved for Autumn to build on the bot, as prior-work maintenance, outside this repo — not claimed as hackathon-built). The new work here is only the client module in app/, replacing the Milestone 5 fixture bridge. Unblocks Milestones 6-8. Client IMPLEMENTED 2026-10-28 in app/inbox-bridge.js (live GET /ig/shares + /ig/media with Bearer token from untracked app/ig-bot-token.local.json, DELETE-after-use acknowledgement, Milestone 5 fixtures as offline fallback).
-- Milestone 10 (placeholder, not designed): bot chat-script API — a scripted/guided-conversation endpoint on the bot (e.g. a style quiz or structured Q&A driven over Instagram DM) that meta-styles could trigger or configure. Same split as Milestone 9: any new endpoint is Autumn's prior-work maintenance on `igwebhook`, built and documented outside this repo first; the only hackathon work here is a client module consuming it. Needs a contract doc (`docs/instagram-bot-chat-api.md`, not yet written) before any build — follow the Milestone 9 spec-first process in `docs/instagram-bot-api.md`.
-- Milestone 11 (placeholder, not designed): bot data-storage API — a small persistence endpoint on the bot (save/retrieve app state such as look-cards or user preferences server-side instead of only browser localStorage). Same split as Milestone 9: storage endpoint is prior-work maintenance outside this repo; a thin storage-adapter client here is the new work. Needs its own contract doc before any build; flag to Autumn whether this is meant to replace or supplement localStorage before designing it.
-- Milestone 12 (design fully resolved 2026-10-28; bot side LIVE 2026-10-28 — see docs/instagram-bot-send-api.md "As implemented"/"Applied" sections): bot write API — a new outbound endpoint so meta-styles can send a message (e.g. a finished share card) to a specific Instagram user via the bot's DM channel, mirroring the already-planned Milestone 7 reply-back idea but as a general-purpose send rather than an automatic reply. **Higher compliance/platform risk than the read-only Milestone 9 API** — outbound messaging is subject to Instagram's 24-hour messaging window, rate limits, and consent/opt-in expectations, and the app actively pushing messages (vs. passively polling) is a bigger step than Milestone 9's read-only client; get Autumn's explicit go-ahead on scope before any build, same as the Milestone 9 open-questions process.
-- **Milestone 13 (HIGH PRIORITY — submission-blocking, not optional polish): standalone demo path with zero Instagram dependency — same-API mock DM chat + mock bot server (plan: docs/milestone-13-mock-dm-plan.md).** The entire Instagram chain (Milestones 5-9, 12) is deliberately local-only — the bot only answers on Autumn's own machine (docs/instagram-bot-api.md, docs/instagram-bot-send-api.md) and will never answer for a judge's browser running the live product per the Demo (25%) criterion. Instead of merely hardening the fixture fallback (a second client code path that could silently rot), this milestone builds a mock Instagram-DM chat page plus a mock server in this repo that implement the EXACT same API contract as the real bot, so `app/inbox-bridge.js` points at the mock by changing ONLY its `BOT_BASE` constant and the identical client code path runs against a zero-Instagram-dependency backend — shares typed/shared in the visual chat thread land in the mock's data live, and app-side sends appear as outgoing bubbles. All mock/seed content is genuinely new, synthetic, offline hackathon work (no prior-work boundary concerns — it never touches real Instagram). Verify per the plan's isolation test: full demo end to end with the real bot stopped and its host unreachable (e.g. `/etc/hosts` block), no console errors, no reference to the real bot, nothing waiting on a timeout. Scope note: this is about the Instagram/igwebhook dependency only — the hackathon's own pass/fail gate requires real Meta Model API calls (Spark/Image/SAM), so those stay live network dependencies and are explicitly NOT part of what this milestone isolates away.
-  BUILT 2026-10-28 (tasks 1–9 committed; parity + isolation-static + close-out follow in the same pass): `mock-ig-bot/server.js` (stdlib-only, port 8904), `app/mock-dm.html` (thread + share + send-as-app panel, starts empty with instructions), `app/inbox-bridge.js` `BOT_BASE` defaulting to the mock (`http://127.0.0.1:8904`; one-line edit back to `:8903` for the real bot, no query override). Contract parity vs the two bot specs: `docs/milestone-13-contract-parity.md` (known divergences: no 502/429/503 families, mock-local token format, no host hardening). Static isolation verified and test-enforced (no real-Instagram host or outbound request in any of the three files) — the live browser + hosts-file walk (plan §5) still needs a human pass. Demo: run `node mock-ig-bot/server.js` and (from `app/`) `python3 -m http.server 8000`, then open `http://localhost:8000/mock-dm.html`.
-- See docs/instagram-integration-plan.md for per-milestone build vs reuse vs risks.
+Last critical review: **2026-10-28** (7 days to the hard deadline,
+**Nov 4, 9:00 PM ET, no grace period**). Deadline and the Meta-model
+pass/fail gate are from `skills/meta-hackathon-compliance/SKILL.md`;
+if this file and that skill disagree, the skill wins.
+
+How to read this file: `DONE` means built and verified in this repo.
+`STUB-DONE` means the UI/flow exists but the AI behind it is a
+placeholder — it does **not** satisfy the hackathon's Meta-model gate.
+Nothing is called done on the strength of a plan doc alone.
+
+## Critical path (in order)
+
+1. **M14 — real Meta Model API integration** (pass/fail gate; blocks
+   M15, M16's claims, and M4's video).
+2. **M18 — finish M13's live isolation proof** (blocks a trustworthy demo).
+3. **M16 — judge-ready hosted product** (blocks Demo 25%: judges assess
+   the live product, not only the video).
+4. **M4 — submission cut** (video, public repo, package; start the
+   script early, finish last).
+
+Everything else is optional, parked, or descoped below. Do not start a
+parked item before the critical path is green.
+
+## Done / verified
+
+- Milestone 0: application draft. **Status unverified in-repo** — no
+  submission receipt is recorded here. See the open check in M4.
+- Milestone 1 — STUB-DONE: photo → mask viewer + manual-box fallback
+  (cached demo set). Real: image loading, canvas, box draw/move/resize.
+  Stub: `StubSegmentationService` in `app/app.js` returns deterministic
+  polygons (`TODO(SAM-3.1)`). Superseded by M14b.
+- Milestone 2 — part real, part STUB-DONE: garment classifier + look-card
+  assembler with fit rules. Real: `assembleLook` in `app/assembler.js`
+  (base + exactly-one finish, two-layer/shoe rejection, ≤300-word cap)
+  — this fit-rule engine is the project's strongest real component.
+  Stub: `classifyRegion` in `app/classifier.js` is a hint/geometry/hash
+  heuristic (`TODO(model)`); per-piece copy is invented placeholder
+  (`placeholder:true`). Superseded in part by M14c/M15.
+- Milestone 3 — STUB-DONE: Spark copy generator + Image preview + share
+  card. Real: share-card layout, copy-as-text, PNG download, word budget.
+  Stub: `generateCopy` in `app/spark.js` (`TODO(Spark-API)`) and
+  `generateImage` in `app/preview.js` (canvas collage,
+  `TODO(Image-API)`). Superseded by M14d/M14e.
+- Milestone 5 — DONE: DM-share inbox bridge with synthetic fixtures
+  (`app/inbox-fixtures/`, `SYNTH_` ids only; no real DM data).
+- Milestone 6 — VERIFIED 2026-10-28: no separate pipeline code was
+  needed; Milestone 5+9's shared `loadImage()` entry point already wires
+  every inbox source through the same mask/classify/assemble pipeline as
+  uploads, proven by `app/test/milestone6-pipeline-wiring.test.js`.
+- Milestone 9 — DONE (client only): bot read-API client in
+  `app/inbox-bridge.js` (live `GET /ig/shares` + `/ig/media` with Bearer
+  auth from untracked `app/ig-bot-token.local.json`, DELETE-after-use
+  acknowledgement, Milestone 5 fixtures as offline fallback). The bot
+  API itself is prior-work maintenance outside this repo (see
+  `docs/instagram-bot-api.md`, `docs/prior-work-instagram.md`) and must
+  never be presented as hackathon-built.
+- Milestone 13 — BUILT, live proof pending (see M18): standalone demo
+  path with zero Instagram dependency — same-API mock DM chat + mock
+  bot server (`mock-ig-bot/server.js`, stdlib-only, port 8904;
+  `app/mock-dm.html`; `app/inbox-bridge.js` `BOT_BASE` defaults to the
+  mock, one-line edit back to `:8903` for the real bot, no query
+  override). Tasks 1–9 committed; contract-parity checklist at
+  `docs/milestone-13-contract-parity.md` (known divergences: no
+  502/429/503 families, mock-local token format, no host hardening).
+  Static isolation is test-enforced (`app/test/milestone13-*.test.js`);
+  the live browser + hosts-file walk (plan §5) still needs a human pass.
+  Demo: run `node mock-ig-bot/server.js` and (from `app/`) `python3 -m
+  http.server 8000`, then open `http://localhost:8000/mock-dm.html`.
+  Scope note: this isolates the Instagram/igwebhook dependency only —
+  the Meta Model API calls in M14 stay live network dependencies and
+  are explicitly not isolated away here.
+
+Test state at this review (run 2026-10-28, all green):
+`node app/test/milestone13-mock-bot.test.js` (74),
+`node app/test/milestone13-mock-dm-page.test.js` (32),
+`node app/test/milestone6-pipeline-wiring.test.js` (36) — 142
+assertions. Gap: these are pure-helper/static tests; there is no direct
+unit test for `assembleLook`'s fit rules or the Spark word budget, and
+no browser end-to-end test. Closed by M18/M14 acceptance tests.
+
+## Superseded, parked, or descoped (do not build as written)
+
+- Milestone 7 — SUPERSEDED by Milestone 12 + M17: reply-back share card
+  via DM is the same send path as M12's general-purpose send. Do not
+  build a second, automatic-reply implementation. The `is_echo` skip
+  rule still applies to whichever send client ships.
+- Milestone 8 — DESCOPED for this submission (needs Autumn's explicit
+  confirmation, recorded in `docs/decisions.md`): production hardening /
+  App Review for `instagram_business_manage_messages`. App Review takes
+  days and the judged demo path is the local/mock one (M13/M16), which
+  needs no new review scope. Revisit post-hackathon only. If Autumn
+  instead wants the real-Instagram path judged, this descope is wrong
+  and M8 becomes critical-path — flag that before M16.
+- Milestone 10 — PARKED (post-hackathon, not designed): bot chat-script
+  API. No contract doc exists. Building it now would spend critical-path
+  time on an undifferentiated guided-chat surface; it also drifts
+  toward the avoid-list's generic-chatbot shape if framed carelessly.
+- Milestone 11 — PARKED (post-hackathon, not designed): bot data-storage
+  API. No contract doc, and the replace-vs-supplement localStorage
+  question is still unanswered. Not needed for the demo.
+- Milestone 12 — BOT SIDE LIVE, CLIENT NOT BUILT: bot write API
+  (`POST /ig/send`, public outbound-media host, fail2ban+Cloudflare —
+  see `docs/instagram-bot-send-api.md` "As implemented"/"Applied").
+  Two blockers remain before any real DM can be sent: (a) no client
+  module exists in `app/`; (b) `IG_GRAPH_SEND_TOKEN` on the bot is a
+  placeholder with no real Meta credential, so real sends still `502`.
+  Whether to close either blocker for this submission is M17's
+  decision, not an assumption. The bot side is prior-work maintenance
+  and must never be demoed as hackathon-built.
+
+## Gap-closing milestones
+
+### Milestone 14 (P0 — pass/fail gate): real Meta Model API integration
+
+**Gap:** the submission must "meaningfully use Meta Model API and/or
+Meta open-weight models" — a pass/fail gate before scoring (compliance
+skill). Today every AI surface is a stub (M1–M3 above), so as it stands
+the project fails the gate regardless of polish. `docs/decisions.md`
+records the real key as provisioned in `.env/secrets`, held until
+Autumn says go. **This milestone needs that explicit go, recorded in
+`docs/decisions.md`, before any task below starts.**
+
+- **14a — API spike + backend architecture (do first, time-boxed).**
+  Check the Meta Model API cookbook (compliance skill, Learning
+  resources) for the actual Spark/Image/SAM endpoints and response
+  shapes; do not design against the `TODO` comments' guesses. Decide
+  where calls run: the app is a static browser page, so the key must
+  never ship to the browser or appear in source/network-visible
+  requests from judge machines. Smallest compliant shape wins (e.g. a
+  thin local/hosted proxy reading the key from the process environment,
+  per `docs/decisions.md` §Secrets — parse `.env/secrets`, never
+  `source` it, never print it). Record the decision in
+  `docs/decisions.md`. Acceptance: one authenticated Spark call from
+  the chosen runtime with the key sourced from env, and a grep showing
+  no key material in tracked files.
+- **14b — SAM 3.1 segmentation.** Replace `StubSegmentationService`
+  behind the existing `segment(imageEl, sourceId) -> {polygons, boxes}`
+  contract in `app/app.js`; keep the manual-box fallback and the cached
+  demo set as the failure path. Acceptance: a real photo (not an SVG
+  demo) returns real polygons; API-down shows the manual-box path, not
+  an error dead-end.
+- **14c — Spark garment classification.** Replace/augment
+  `classifyRegion`'s heuristic with a Muse Spark call behind the same
+  `{category, method, confidence, placeholder}` shape; keep the fixed
+  taxonomy and the tie-blouse/shrug = layer rule as a validation layer
+  (Spark proposes, fit rules dispose). Keep the heuristic only as an
+  explicitly-labelled offline fallback. Acceptance: `placeholder`
+  flips to false only on a real model response.
+- **14d — Spark look assembly + copy.** This closes the pitch gap:
+  today a human manually tags every piece and `generateCopy` fills a
+  canned bank. Wire Spark to propose 2–3 complete looks from the
+  wardrobe/resale candidates (see M15 for the candidate data), pass
+  every proposal through `assembleLook` unchanged as the validator,
+  and generate the per-piece copy through `generateCopy`'s existing
+  shape and ≤300-word budget. Frame this as agentic reasoning
+  (propose → validate against fit rules → revise/flag orphans, never
+  silently re-pair) — that framing is both honest and the "Best
+  Agentic Use-Case" angle. Acceptance: one photo yields at least one
+  `valid:true` card whose copy came from the API, with invalid
+  proposals visibly rejected by the existing rules, not hidden.
+- **14e — Muse Image preview.** Replace `generateImage`'s canvas
+  collage behind its existing return shape; present output as a look
+  card, never as a fake worn try-on (pitch risk note). Keep the collage
+  as the labelled fallback when image generation fails.
+- **14f — Cached/offline demo mode.** Precompute and cache real-API
+  results for the demo set (masks, classifications, copy, previews) so
+  the video and live demo survive an API outage or quota limit
+  (`docs/pitch.md` Demo fallbacks). Cached results must be labelled
+  as cached in the UI/logs used for rehearsal, and the live path must
+  be the default. Acceptance: full demo runs with the network to the
+  Model API blocked, using cached results, and with it open, using
+  live results — both recorded in rehearsal notes for M4.
+
+### Milestone 15 (P1): resale-grounded candidate data
+
+**Gap:** the differentiator is "resale-grounded, vendor-grounded copy
+(measurement, fabric, flaw, price)", but all copy today is invented
+placeholder with no candidate inventory behind it, and the pitch's
+stale-stock handling does not exist. Invented copy must never be
+presented as real listings.
+
+- Build a small, clearly-synthetic demo inventory in-repo (structured
+  records: category, measurements, fabric, flaw, price, vendor name,
+  snapshotted-at date) that M14d's assembly selects from; label it
+  synthetic demo inventory wherever it surfaces.
+- Snapshot price/vendor at card creation and mark stale entries
+  (snapshot older than a stated threshold shows a stale flag, per
+  `docs/pitch.md` risks).
+- Acceptance: every per-piece line on a demo card traces to an
+  inventory record's fields; removing/aging a record changes the card
+  (flagged stale or re-assembled), never silently stale.
+
+### Milestone 16 (P0 for Demo 25%): judge-ready hosted product
+
+**Gap:** judges assess video, code, **and the live product**. Today
+the live product only runs on Autumn's machine (static server + local
+Node mock on `127.0.0.1:8904`); a remote judge who opens the repo gets
+no runnable product, and there is no root `README.md` at all.
+
+- **16a — Hosted live URL.** Deploy the static app somewhere a judge
+  can open with one link and no local processes (e.g. GitHub Pages or
+  equivalent static host). The hosted build must run the full judged
+  flow self-contained: cached/M14f demo mode and the fixture inbox work
+  without the local mock or the real bot. If M14's proxy is needed for
+  live calls, host that too or make the hosted build cached-first with
+  live calls clearly optional. Acceptance: fresh browser, logged out,
+  one URL → complete look card, no console errors, no `127.0.0.1`
+  dependency in the primary flow.
+- **16b — Root README + judge framing.** Add `README.md` at repo root:
+  one-line pitch centred on full-look assembly + fit rules +
+  resale-grounded copy (**not** the classify-a-photo mechanic — the
+  avoid-list bans "simple image analyzers"; see AGENTS.md rule 4),
+  how to run locally and the hosted link, architecture (what calls
+  which Meta model, where the key lives), what's real vs cached vs
+  fallback, and the prior-work boundary summary linking
+  `docs/prior-work-instagram.md`. Update the stale status in
+  `docs/overview.md` (still dated 2026-10-14, "Not yet applied") and
+  `docs/brief.md` in the same pass.
+- **16c — Product-surface polish.** `app/index.html` still titles
+  itself "Milestone 3", leads with "tag regions with the
+  garment-classifier stub", and footers a list of stubs. Retitle and
+  reframe around the full-look outcome; `placeholder` tags may remain
+  only where a fallback genuinely produced the content. Replace or
+  supplement the SVG demo photos with realistic wardrobe/mirror photos
+  that are synthetic or Autumn's own (never real DM captures — see
+  compliance skill, synthetic-data rule). Check the flow on a phone-
+  width viewport: the input story is a mirror selfie.
+- **16d — Close stale decisions.** Record in `docs/decisions.md`:
+  boutique-ui vs Next.js is settled de facto (vanilla static app in
+  `app/` — strike the open question with that reasoning), and the
+  M8 descope + M17 send decision outcomes.
+
+### Milestone 17 (P2 — decision first): real send path, or descope it
+
+**Gap:** M12's bot side is live but unusable end-to-end (no client,
+placeholder Graph token), while M13's mock already proves the send
+contract visually. Building the real client is the highest-risk item
+left (it messages a real external person — explicit go-ahead required
+before even drafting the client contract, per compliance skill).
+
+- **Decision (Autumn, before any build):** (i) build the client +
+  provision a real `IG_GRAPH_SEND_TOKEN`, demo the real send only as
+  prior-work infrastructure being *called* by new client code; or
+  (ii) descope the real send for this submission and demo sends
+  exclusively through the M13 mock. Default to (ii) unless the real
+  send materially helps the demo — the mock already shows the flow
+  with zero platform risk.
+- If (i): client module in `app/` calling `POST /ig/send` with the
+  confirmation UI the spec requires (exact text+image shown, single
+  `confirm:true` gate, fresh idempotency key per deliberate action),
+  typed error surfacing (`422 reply_window_expired`, `409
+  duplicate_send`/`idempotency_key_reused`, 401 credential, bot-
+  unavailable keeps an unsent draft — never queued blindly), `is_echo`
+  skipped, sender IGSID never exposed (reference the opaque `share_id`
+  only). Acceptance includes the stale-share and duplicate demos
+  against the **mock first**, then one consented real send.
+
+### Milestone 18 (P0): M13 live isolation proof + browser end-to-end
+
+**Gap:** M13 is "built" on static tests and a docs-based parity diff
+(`docs/milestone-13-contract-parity.md` compared codes against spec
+text, not a live bot). The claim judges would rely on — the demo runs
+with zero Instagram dependency — is not yet proven live.
+
+- Run `docs/milestone-13-mock-dm-plan.md` §5 steps 1–6 verbatim with a
+  human at a real browser: real bot stopped, `/etc/hosts` block on the
+  real hosts, mock + static server only, the four-beat chat flow
+  (share photo → inbox → pipeline → send-as-app bubble), console +
+  Network-tab capture filtered on the blocked hosts (must be empty, no
+  multi-second stalls), then restore and re-run the swap-back walk
+  against the real backend. Record results in the parity doc's
+  Isolation section; any fallback/"bot unavailable" noise in the
+  primary flow is a bug to fix, not a note to file.
+- In the same pass, add the missing direct tests: `assembleLook` fit
+  rules (valid layer finish, valid scarf+bag finish, two-layer
+  rejection, shoe rejection, lone-scarf/lone-bag/base-only rejection,
+  ≤300-word trim) and `generateCopy`'s budget/placeholder flags, as
+  `node`-runnable tests in `app/test/` matching the existing style.
+- Acceptance: parity doc's live half signed off with evidence noted,
+  and the full test suite (existing 142 + new) green in one run.
+
+### Milestone 4: submission cut (was one line; now the checklist)
+
+**Gap:** this was "video, cached mode, live rehearsal" with no owner,
+date, or package checklist, against a hard deadline with Demo at 25%
+and a pass/fail Meta-model gate in front of it.
+
+- **Application/submission status check (immediately):** confirm the
+  Cerebral Valley application/submission state and record it in
+  `docs/decisions.md` — Milestone 0 has no receipt in-repo, and the
+  submission is one project, solo, via the Cerebral Valley submit
+  page with **public repo link + 3-minute demo video + every
+  contributor's name**.
+- **Video (3 minutes, script drafted as soon as M14d lands, not after
+  all polish):** centre full-look assembly + fit-rule reasoning +
+  resale-grounded copy and the agentic propose→validate loop; never
+  lead with the classify-a-photo mechanic; only showcase features
+  built during the hackathon window — the real Instagram bot is prior
+  work and must not be shown as a meta-styles feature (the M13 mock
+  path is the demoable surface). Optional: post the video to X for
+  Most Viral (engagement counts through Nov 8 EOD).
+- **Live rehearsal:** full run against the hosted URL (M16a) and the
+  cached mode (M14f), timed, with the API-down fallback exercised once.
+- **Repo goes public (before submitting):** re-run the key/token grep
+  across the whole tree, confirm `.env/secrets` is gitignored and
+  absent from `git ls-files`, confirm no SecondBloom code is vendored
+  in (docs references only). Record the grep date/result here when done
+  (last clean run before this review: 28 Oct 2026).
+- **Final compliance re-check:** re-fetch the Official Rules waiver URL
+  (Organizers may modify terms at any time) and re-check the compliance
+  skill's "Unverified" section for new FAQ content.
+- **Submit before Nov 4, 9:00 PM ET** (no grace period); test both the
+  repo link and video link resolve logged-out in a fresh browser, and
+  confirm the hosted live product still runs after submitting.
+
+## See also
+
+- Build vs reuse vs risks per Instagram milestone:
+  `docs/instagram-integration-plan.md` (Milestones 7/8 there are
+  superseded/descoped per above; that file needs a pointer update when
+  M16d lands).
+- Compliance and the pass/fail gate: `skills/meta-hackathon-compliance/SKILL.md`.

@@ -53,8 +53,8 @@ downloaded on arrival). All of that is **maintenance of this prior-work
 project**, lives outside this repo, and must never be presented in the
 hackathon submission/demo as something built during the hackathon window.
 meta-styles' Milestone 9 client module (new, hackathon-built, lives in
-`app/`, not yet written) calls it to replace the Milestone 5 fixture-only
-bridge — at that point this repo depends on the bot's API at runtime, which
+`app/inbox-bridge.js`, implemented 2026-10-28) calls it to replace the
+Milestone 5 fixture-only bridge — this repo depends on the bot's API at runtime, which
 is fine: a thin client calling a documented API is the new work; the bot
 remains prior work. Because the API is local-only, that live path works
 only on the machine running the bot; elsewhere the fixture bridge is the
