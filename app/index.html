@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>meta-styles · Milestone 1 — Mask Viewer</title>
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<header class="topbar">
+  <div>
+    <h1>meta-styles <span class="milestone">Milestone 1 · Mask viewer</span></h1>
+    <p class="sub">Photo &rarr; garment mask overlay, with a manual box fallback. Segmentation is stubbed until SAM&nbsp;3.1 API access is live.</p>
+  </div>
+  <p id="status" class="status" role="status" aria-live="polite">Loading&hellip;</p>
+</header>
+
+<main class="layout">
+  <section class="panel" aria-label="Controls">
+    <h2>1 · Pick a photo</h2>
+    <div id="demoPicker" class="thumbs" role="group" aria-label="Demo photos"></div>
+    <label class="upload">
+      <span>Upload your own image</span>
+      <input type="file" id="fileInput" accept="image/*">
+    </label>
+
+    <h2>2 · Segment</h2>
+    <div class="row">
+      <button type="button" id="segmentBtn">Run segmentation (stub)</button>
+      <button type="button" id="clearMaskBtn" class="ghost">Clear mask</button>
+    </div>
+
+    <h2>3 · Manual box fallback</h2>
+    <div class="row">
+      <button type="button" id="drawBtn" aria-pressed="false">Draw box manually</button>
+      <button type="button" id="clearBoxBtn" class="ghost">Clear box</button>
+    </div>
+    <p class="hint">With draw mode on, drag on the photo to draw. Drag inside the box to move it, drag a corner handle to resize. Works when no mask is available.</p>
+
+    <h2>Overlay</h2>
+    <label class="check"><input type="checkbox" id="maskToggle" checked> Show mask overlay</label>
+    <label class="slider">Mask opacity
+      <input type="range" id="opacity" min="10" max="90" value="45">
+    </label>
+
+    <h2>Selection readout</h2>
+    <pre id="readout" class="readout">No box drawn yet.</pre>
+  </section>
+
+  <section class="stage" aria-label="Photo canvas">
+    <canvas id="canvas"></canvas>
+  </section>
+</main>
+
+<footer class="foot">
+  <p>Stub: <code>StubSegmentationService</code> in <code>app.js</code> stands in for SAM 3.1 — swap it for a real call at the marked <code>TODO(SAM-3.1)</code>. See <code>README.md</code>.</p>
+</footer>
+
+<script src="app.js"></script>
+</body>
+</html>

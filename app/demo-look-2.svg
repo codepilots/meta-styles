@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="600" height="750" viewBox="0 0 600 750">
+  <title>Demo look 2 — top and skirt (placeholder photo)</title>
+  <rect width="600" height="750" fill="#dfe4e6"/>
+  <rect x="40" y="40" width="520" height="670" fill="#f4f6f6"/>
+  <circle cx="300" cy="80" r="10" fill="#6b6259"/>
+  <line x1="300" y1="90" x2="300" y2="112" stroke="#6b6259" stroke-width="6"/>
+  <!-- top -->
+  <path d="M216 105 L384 105 L372 225 L408 345 L192 345 L228 225 Z" fill="#0f766e"/>
+  <!-- skirt -->
+  <path d="M216 375 L384 375 L432 630 L168 630 Z" fill="#b47814"/>
+  <text x="300" y="710" text-anchor="middle" font-family="sans-serif" font-size="22" fill="#6b6259">demo-look-2 · top + skirt</text>
+</svg>
