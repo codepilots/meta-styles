@@ -27,6 +27,43 @@ plain browser view of that page. Full saved text:
 The Organizers can modify these terms at any time ("Modifications" clause)
 — re-fetch the waiver URL before final submission to catch changes.
 
+## Confirmed facts (from the event Discord FAQ "Project rules", pasted by Autumn 28 Oct 2026)
+
+- **New work only, now fully confirmed:** you may build on an existing
+  project/startup, but the submission and demo "must clearly identify —
+  and only showcase — the features, code and functionality built during
+  the hackathon. Unclear original contributions can lead to
+  disqualification." This retires the earlier "unverified" flag —
+  `docs/prior-work-instagram.md`'s approach (explicit pre-hackathon
+  disclosure, nothing from SecondBloom shown as a meta-styles feature) is
+  exactly the compliant pattern.
+- **Public repo, now fully confirmed:** "Your repository must be publicly
+  accessible." Before making the repo public: re-run the key/token grep
+  across the whole tree (last done 28 Oct 2026, clean) and confirm
+  `.env/secrets` is still gitignored and not in `git ls-files`.
+- **Judging gate, now fully confirmed:** projects must first fit a theme
+  AND "meaningfully use Meta Model API and/or Meta open-weight models" —
+  this is a pass/fail gate before the four equally-weighted scoring
+  criteria (Impact, Use of Meta AI tooling, Technical depth and execution,
+  Demo quality) apply. Retires the last "unverified" item from that list.
+- **Avoid-list (explicit disqualification risk):** the guide names AI
+  medical advice / mental-health advisors / skin-condition detectors,
+  **basic RAG apps, simple image analyzers**, generic education chatbots,
+  job-application screeners, nutrition coaches, personality analyzers,
+  sports analyzers/coaches, and anything political or war-related.
+  **Risk for meta-styles:** a garment classifier + segmentation viewer
+  could read as a "simple image analyzer" if the demo leads with the raw
+  classify-a-photo mechanic. Mitigate by keeping the pitch and demo framed
+  around the full-look assembly + fit-rule reasoning + resale-grounded copy
+  (the part no "simple image analyzer" does), not the SAM/classifier step
+  in isolation. Flag any doubt to @CV on the event Discord per the FAQ's
+  own suggestion rather than guessing.
+- **Only top 5 projects per track advance to finals** (indie track has up
+  to 20,000 participants per the application cap, so this is a steep cut).
+- Disqualification also covers using code/data/assets without permission —
+  reinforces why `docs/prior-work-instagram.md` draws a hard line around
+  SecondBloom rather than quietly reusing its code.
+
 ## Confirmed facts (from the event Discord FAQ, pasted by Autumn 28 Oct 2026)
 
 - **Project must use Meta models** and address one of the two themes (Build
@@ -85,51 +122,50 @@ The Organizers can modify these terms at any time ("Modifications" clause)
 
 ## Unverified / community-sourced — do not treat as binding
 
-These appear in other teams' own compiled notes (e.g. the
-`meta-ai-hackathon/meta-hack` and `rizonetech/isitlegit` GitHub repos,
-paraphrasing an event Discord post), **not** in the Organizers' Official
-Rules text above. Flag clearly as provisional if citing them to Autumn, and
-prefer the cautious reading until confirmed in-event:
+Everything previously listed here (new-work-only, public repo, the Meta
+model usage gate) is now confirmed above by the event Discord FAQs. The one
+remaining unconfirmed detail from third-party notes (e.g.
+`meta-ai-hackathon/meta-hack`, `rizonetech/isitlegit` GitHub repos):
 
-- "New work only" — demo should show only what was built during the event
-  window; unclear/pre-existing contribution risks being read as
-  non-compliant even though the Official Rules don't say this explicitly.
-  (Still not confirmed in writing anywhere seen so far, but treat as likely
-  true in spirit given the FAQ's "must use Meta models" requirement.)
-- Public repository requirement for submission.
-- A specific demo video length (e.g. 3 minutes).
-
-~~A hard pass/fail gate requiring genuine Meta Model API / open-weights
-use~~ — **now confirmed** by the Discord FAQ ("your project must use Meta
-models"), moved to the confirmed section above.
+- A specific demo video length (e.g. 3 minutes) — not seen yet in any
+  organizer-posted text; still just a common hackathon convention.
 
 ## Practical checklist for meta-styles
 
-1. **Keep pre-hackathon work clearly separated and dated.** Already done:
-   `docs/prior-work-instagram.md` states the SecondBloom Instagram
-   integration predates the hackathon by 12 days and is not part of this
-   repo's code; git commit timestamps corroborate it. Given the unverified
-   "new work only" norm above, keep erring toward over-disclosure rather
-   than presenting anything pre-built as hackathon output. If a strict
-   cutoff ever matters, use the building-period start (Oct 27 noon ET),
-   not the kickoff livestream (Oct 26 noon ET) — meta-styles' own first
-   commit (`4afac15`) predates both anyway.
-2. **Document AI-agent assistance transparently** — it's explicitly allowed
-   by the Official Rules. Don't scrub Muse/Claude commit attribution.
-3. **"Use of Meta AI Tooling" is 25% of the score** — the app is currently
-   stubbed (classifier/spark/preview all placeholder). Before final
-   submission, swap in real Meta Model API calls (Spark/Image/SAM) sourced
-   from `.env/secrets` per `docs/decisions.md` §Secrets — but only once
-   Autumn says to start using the real key (she asked to hold off as of
-   28 Oct 2026).
-4. **Before any public submission:** confirm `.env/secrets` stays gitignored
-   (`git ls-files | grep -i env` should be empty), grep the repo (including
-   `skills/`) for key/token patterns, and confirm no proprietary SecondBloom
-   code is vendored in — only docs referencing it.
-5. **Budget real time for the Demo (25% of score)** — a working live demo
+1. **Keep pre-hackathon work clearly separated and dated — now a hard
+   rule, confirmed by the Discord FAQ** ("must clearly identify — and only
+   showcase — features/code/functionality built during the hackathon").
+   Already done: `docs/prior-work-instagram.md` states the SecondBloom
+   Instagram integration predates the hackathon by 12 days and is not part
+   of this repo's code; git commit timestamps corroborate it. Use the
+   building-period start (Oct 27 noon ET) as the strict cutoff if it ever
+   matters, not the kickoff livestream (Oct 26 noon ET) — meta-styles' own
+   first commit (`4afac15`) predates both anyway.
+2. **Watch the "simple image analyzer" overlap risk.** The avoid-list
+   explicitly bans basic RAG apps and simple image analyzers. Keep the
+   pitch/demo centred on full-look assembly + fit rules + resale-grounded
+   copy, not the SAM/classifier step in isolation. Ask on the event
+   Discord (@CV) if genuinely unsure before investing more build time.
+3. **Document AI-agent assistance transparently** — it's explicitly
+   allowed by the Official Rules. Don't scrub Muse/Claude commit
+   attribution.
+4. **"Use of Meta AI Tooling" is 25% of the score, and using Meta models is
+   now a pass/fail gate too** — the app is currently stubbed
+   (classifier/spark/preview all placeholder). Before final submission,
+   swap in real Meta Model API calls (Spark/Image/SAM) sourced from
+   `.env/secrets` per `docs/decisions.md` §Secrets — but only once Autumn
+   says to start using the real key (she asked to hold off as of 28 Oct
+   2026). This is no longer optional polish — without it the submission
+   fails the gate.
+5. **Repo must go public before final submission — confirmed requirement,
+   not yet done.** Before flipping visibility: re-run the key/token grep
+   across the whole tree (last clean run 28 Oct 2026), confirm
+   `.env/secrets` isn't in `git ls-files`, and confirm no proprietary
+   SecondBloom code is vendored in — only docs referencing it.
+6. **Budget real time for the Demo (25% of score)** — a working live demo
    plus a polished demo video; this is Milestone 4 ("submission cut") in
    `docs/roadmap.md`.
-6. **Nothing shared during the event is confidential** — don't paste real
+7. **Nothing shared during the event is confidential** — don't paste real
    client data or other paid-work details into the event Discord, workshops,
    or the submission itself.
-7. **Deadline is Nov 4, 9:00 PM ET** — no grace period assumed.
+8. **Deadline is Nov 4, 9:00 PM ET** — no grace period assumed.
