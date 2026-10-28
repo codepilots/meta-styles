@@ -6,12 +6,16 @@
 <title>meta-styles · Milestone 13 — Mock Instagram DM chat (demo harness)</title>
 <link rel="stylesheet" href="styles.css">
 <style>
-  .thread { display: flex; flex-direction: column; gap: 0.5rem; margin: 1rem 0; }
+  .thread { display: flex; flex-direction: column; gap: 0.5rem; margin: 1rem 0; min-height: 4rem; }
   .bubble { max-width: 70%; padding: 0.5rem 0.75rem; border-radius: 0.75rem; }
   .bubble.incoming { align-self: flex-start; background: #f0eef6; }
-  .bubble.outgoing { align-self: flex-end; background: #e3f0ff; }
+  .bubble.outgoing { align-self: flex-end; background: #dfe9d8; }
   .bubble img { max-width: 100%; display: block; border-radius: 0.5rem; }
+  .bubble .when { display: block; font-size: 0.75rem; color: #666; margin-top: 0.25rem; }
   .empty-note { color: #666; }
+  .thread.dragover { outline: 2px dashed #666; }
+  .sendresult-ok { color: #1a6b1a; }
+  .sendresult-err { color: #8a1f1f; }
 </style>
 </head>
 <body>
@@ -32,21 +36,21 @@
       <li>Start the mock bot (separate server process):
         <code>node mock-ig-bot/server.js</code> — listens on
         <code>http://127.0.0.1:8904</code> by default.</li>
-      <li>Serve this folder: <code>python3 -m http.server 8000</code> from
+      <li>Serve this folder: <code>python3 -m http-server 8000</code> from
         <code>app/</code>, then open
         <code>http://localhost:8000/mock-dm.html</code>.</li>
-      <li>Paste the demo token <code>SYNTH_mock_token</code> when asked
+      <li>The demo token <code>SYNTH_mock_token</code> is prefilled below
         (non-secret demo value; the real bot token never goes here).</li>
     </ol>
     <h2>How to share a photo</h2>
-    <p>Pick an image file below (or drag-drop it onto the chat box) and hit
+    <p>Pick an image file below (or drag-drop it onto the thread) and hit
       Share. The photo is injected into the mock as an inbound share
       (<code>POST /mock/incoming-photo</code>) and appears as an incoming
       bubble. Then open <code>index.html</code> — its inbox, pointed at the
       mock, lists the new share; “Use this photo” loads it into the viewer.</p>
     <h2>How to trigger a send-as-app</h2>
-    <p>Type the reply text (and optionally stage a share-card image), then hit
-      “Send as app”. The page issues a byte-identical
+    <p>Pick the share to reply to, type the reply text (and optionally stage a
+      share-card image), then hit “Send as app”. The page issues a byte-identical
       <code>POST /ig/send</code> with <code>"confirm": true</code>; the text
       appears as an outgoing bubble, fed by the mock’s own send handler.</p>
     <h2>How to point <code>index.html</code> at the mock</h2>
@@ -55,6 +59,23 @@
       (<code>http://127.0.0.1:8904</code>). To use the real bot on Autumn’s own
       machine instead, edit that one line to
       <code>http://127.0.0.1:8903</code> (documented in a comment there).</p>
+    <h2>Stale-share + duplicate-send demos</h2>
+    <p>“Inject stale share” below adds a share backdated 30 hours: sending to
+      it honestly returns <code>422 reply_window_expired</code>. Sending the
+      same text twice (with a fresh key each time) returns
+      <code>409 duplicate_send</code>; ticking “reuse last idempotency key”
+      and re-sending replays the stored result instead.</p>
+  </section>
+
+  <section class="panel" aria-label="Connection">
+    <h2>Connection</h2>
+    <div class="row">
+      <label>Mock base <input id="mockBase" type="text" size="28" value="http://127.0.0.1:8904"></label>
+      <label>Token <input id="mockToken" type="text" size="24" value="SYNTH_mock_token"></label>
+      <button type="button" id="refreshBtn">Refresh thread</button>
+      <label class="check"><input type="checkbox" id="autoPoll" checked> Auto-refresh (5s)</label>
+    </div>
+    <p class="hint" id="connHint">Same credential story as the inbox bridge: the mock checks this Bearer [REDACTED] a wrong one shows the identical “check bot credential” 401 path.</p>
   </section>
 
   <section class="panel" aria-label="Chat thread">
@@ -62,7 +83,362 @@
     <div id="thread" class="thread" aria-live="polite">
       <p class="empty-note" id="emptyNote">Empty — share a photo or send a message to start the thread.</p>
     </div>
+    <div class="row">
+      <input id="chatText" type="text" size="48" placeholder="Type a message as the user…">
+      <button type="button" id="sendTextBtn">Share text as user</button>
+      <button type="button" id="staleBtn" class="ghost">Inject stale share (30h old)</button>
+    </div>
+    <div class="row">
+      <input id="photoInput" type="file" accept="image/*">
+      <input id="photoCaption" type="text" size="28" placeholder="Caption (optional)…">
+      <label class="check"><input type="checkbox" id="photoPending"> Stage as not-yet-ready</label>
+      <button type="button" id="sharePhotoBtn">Share photo as user</button>
+    </div>
+    <p class="hint">Tip: you can also drag-drop an image file onto the thread above.</p>
+  </section>
+
+  <section class="panel" aria-label="Send as app" id="sendPanel">
+    <h2>Send as app (operator)</h2>
+    <div class="row">
+      <label>Reply to <select id="sendShareId"></select></label>
+    </div>
+    <div class="row">
+      <input id="sendText" type="text" size="48" placeholder="Reply text from the app…">
+    </div>
+    <div class="row">
+      <label>Share-card image (optional) <input id="sendImageFile" type="file" accept="image/*"></label>
+      <label class="check"><input type="checkbox" id="reuseKey"> Reuse last idempotency key (replay demo)</label>
+      <button type="button" id="sendBtn">Send as app</button>
+    </div>
+    <p class="hint" id="sendResult" role="status" aria-live="polite"></p>
+    <p class="hint">Duplicate demo: send the same text twice with fresh keys → second send shows <code>409 duplicate_send</code>. Replay demo: tick the box and re-send → <code>200</code> with the stored <code>message_id</code>.</p>
   </section>
 </main>
-</body>
-</html>
+
+<script>
+(function () {
+"use strict";
+
+var threadEl = document.getElementById("thread");
+var statusEl = document.getElementById("mockStatus");
+var resultEl = document.getElementById("sendResult");
+var mediaCache = {}; // media_id -> object URL
+var outboundPreview = {}; // share_id -> object URL of the staged image (this browser)
+var pollTimer = null;
+var lastKey = null;
+
+function base() {
+  return document.getElementById("mockBase").value.replace(/\/+$/, "");
+}
+
+function token() {
+  return document.getElementById("mockToken").value.trim();
+}
+
+function authed(path, opts) {
+  var o = opts || {};
+  o.headers = o.headers || {};
+  o.headers.Authorization = "Bearer " + token();
+  return fetch(base() + path, o);
+}
+
+function setStatus(text) {
+  statusEl.textContent = text;
+}
+
+function esc(text) {
+  return String(text).replace(/[&<>"]/g, function (c) {
+    return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c];
+  });
+}
+
+function bubbleClass(outgoing) {
+  return "bubble " + (outgoing ? "outgoing" : "incoming");
+}
+
+function whenLine(iso) {
+  var d = new Date(iso);
+  return isNaN(d) ? "" : d.toLocaleString();
+}
+
+function renderIncoming(item) {
+  var div = document.createElement("div");
+  div.className = bubbleClass(false);
+  var att = item.attachment || {};
+  if (att.type === "text") {
+    div.innerHTML = esc((att.payload && att.payload.text) || "") +
+      '<span class="when">' + esc(item.id + " · " + whenLine(item.received_at)) + "</span>";
+    return div;
+  }
+  if (item.media_available === false || !item.media_id) {
+    div.innerHTML = esc("Photo not yet ready — the mock is still downloading it.") +
+      '<span class="when">' + esc(item.id + " · " + whenLine(item.received_at)) + "</span>";
+    return div;
+  }
+  var title = (att.payload && att.payload.title) || item.id;
+  div.innerHTML = '<span class="hint">Loading photo…</span>' +
+    '<span class="when">' + esc(title + " · " + item.id) + "</span>";
+  var url = mediaCache[item.media_id];
+  function show(src) {
+    div.innerHTML = "";
+    var img = document.createElement("img");
+    img.src = src;
+    img.alt = title;
+    div.appendChild(img);
+    var when = document.createElement("span");
+    when.className = "when";
+    when.textContent = title + " · " + item.id + " · " + whenLine(item.received_at);
+    div.appendChild(when);
+  }
+  if (url) {
+    show(url);
+  } else {
+    authed("/ig/media/" + encodeURIComponent(item.media_id)).then(function (res) {
+      if (!res.ok) throw new Error("media HTTP " + res.status);
+      return res.blob();
+    }).then(function (blob) {
+      var objectURL = URL.createObjectURL(blob);
+      mediaCache[item.media_id] = objectURL;
+      show(objectURL);
+    }).catch(function () {
+      div.innerHTML = esc("Photo fetch failed for " + item.id);
+    });
+  }
+  return div;
+}
+
+function renderOutgoing(entry) {
+  var div = document.createElement("div");
+  div.className = bubbleClass(true);
+  div.innerHTML = "";
+  var preview = outboundPreview[entry.share_id];
+  if (preview) {
+    var img = document.createElement("img");
+    img.src = preview;
+    img.alt = "Sent share-card image";
+    div.appendChild(img);
+  }
+  var text = document.createElement("div");
+  text.textContent = entry.text + (entry.image_message_id && !preview ? " (+ photo)" : "");
+  div.appendChild(text);
+  var when = document.createElement("span");
+  when.className = "when";
+  when.textContent = "sent by app · " + entry.message_id + " · " + whenLine(entry.sent_at);
+  div.appendChild(when);
+  return div;
+}
+
+function refreshThread() {
+  return Promise.all([
+    authed("/ig/shares?limit=50").then(function (res) {
+      if (res.status === 401) throw new Error("check mock token (HTTP 401)");
+      if (!res.ok) throw new Error("shares HTTP " + res.status);
+      return res.json();
+    }),
+    authed("/mock/outbound").then(function (res) {
+      if (!res.ok) throw new Error("outbound HTTP " + res.status);
+      return res.json();
+    }),
+  ]).then(function (parts) {
+    var items = (parts[0].items || []).map(function (item) {
+      return { at: item.received_at, el: renderIncoming(item) };
+    });
+    var outs = ((parts[1] && parts[1].outbound) || []).map(function (entry) {
+      return { at: entry.sent_at, el: renderOutgoing(entry) };
+    });
+    var all = items.concat(outs);
+    all.sort(function (a, b) { return String(a.at) < String(b.at) ? -1 : 1; });
+    threadEl.innerHTML = "";
+    if (all.length === 0) {
+      var empty = document.createElement("p");
+      empty.className = "empty-note";
+      empty.textContent = "Empty — share a photo or send a message to start the thread.";
+      threadEl.appendChild(empty);
+    } else {
+      all.forEach(function (row) { threadEl.appendChild(row.el); });
+    }
+    refreshShareSelect(parts[0].items || []);
+    setStatus("Mock: live (" + parts[0].items.length + " shares, " + outs.length + " sent).");
+  }).catch(function (err) {
+    setStatus("Mock: " + err.message + " — is node mock-ig-bot/server.js running?");
+  });
+}
+
+function refreshShareSelect(items) {
+  var select = document.getElementById("sendShareId");
+  var keep = select.value;
+  select.innerHTML = "";
+  items.forEach(function (item) {
+    var opt = document.createElement("option");
+    opt.value = item.id;
+    var label = item.id;
+    if (item.attachment && item.attachment.type === "text") {
+      label += " — " + ((item.attachment.payload && item.attachment.payload.text) || "").slice(0, 32);
+    } else if (item.attachment && item.attachment.payload && item.attachment.payload.title) {
+      label += " — " + item.attachment.payload.title.slice(0, 32);
+    } else {
+      label += " — photo";
+    }
+    if (item.media_available === false) label += " (media pending)";
+    opt.textContent = label;
+    select.appendChild(opt);
+  });
+  if (keep) select.value = keep;
+}
+
+function newKey() {
+  if (window.crypto && typeof window.crypto.randomUUID === "function") {
+    return "SYNTH_" + window.crypto.randomUUID();
+  }
+  return "SYNTH_key_" + Date.now() + "_" + Math.floor(Math.random() * 1e9);
+}
+
+function shareTextAsUser() {
+  var input = document.getElementById("chatText");
+  var text = input.value.trim();
+  if (!text) return;
+  authed("/mock/incoming-text", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ text: text }),
+  }).then(function (res) {
+    if (!res.ok) throw new Error("incoming-text HTTP " + res.status);
+    input.value = "";
+    return refreshThread();
+  }).catch(function (err) {
+    setStatus("Mock: " + err.message);
+  });
+}
+
+function sharePhotoFile(file) {
+  if (!file) return;
+  var caption = document.getElementById("photoCaption").value;
+  var pending = document.getElementById("photoPending").checked;
+  var path = "/mock/incoming-photo" + (pending ? "?pending=1" : "");
+  if (caption && !pending) path += (path.indexOf("?") === -1 ? "?" : "&") + "caption=" + encodeURIComponent(caption);
+  authed(path, {
+    method: "POST",
+    headers: { "Content-Type": file.type || "application/octet-stream" },
+    body: file,
+  }).then(function (res) {
+    if (!res.ok) throw new Error("incoming-photo HTTP " + res.status);
+    document.getElementById("photoInput").value = "";
+    return refreshThread();
+  }).catch(function (err) {
+    setStatus("Mock: " + err.message);
+  });
+}
+
+function sendAsApp() {
+  var shareId = document.getElementById("sendShareId").value;
+  var text = document.getElementById("sendText").value;
+  var imageFile = document.getElementById("sendImageFile").files[0] || null;
+  if (!shareId || !text) {
+    resultEl.textContent = "Pick a share and type the reply text first.";
+    resultEl.className = "hint sendresult-err";
+    return;
+  }
+  var key = document.getElementById("reuseKey").checked && lastKey ? lastKey : newKey();
+  function doSend(withImage) {
+    return authed("/ig/send", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        share_id: shareId,
+        text: text,
+        idempotency_key: key,
+        confirm: true,
+        image: withImage,
+      }),
+    }).then(function (res) {
+      return res.json().then(function (body) {
+        return { status: res.status, body: body };
+      });
+    }).then(function (out) {
+      if (out.status === 200) {
+        lastKey = key;
+        resultEl.textContent = "Sent: message_id " + out.body.message_id +
+          (out.body.image_message_id ? " + " + out.body.image_message_id : "") + ".";
+        resultEl.className = "hint sendresult-ok";
+      } else {
+        resultEl.textContent = "Not sent (HTTP " + out.status + "): " +
+          JSON.stringify(out.body) + ".";
+        resultEl.className = "hint sendresult-err";
+      }
+      return refreshThread();
+    });
+  }
+  resultEl.textContent = "Sending…";
+  resultEl.className = "hint";
+  if (imageFile) {
+    outboundPreview[shareId] = URL.createObjectURL(imageFile);
+    authed("/mock/stage-outbound-image/" + encodeURIComponent(shareId), {
+      method: "POST",
+      headers: { "Content-Type": imageFile.type || "application/octet-stream" },
+      body: imageFile,
+    }).then(function (res) {
+      if (!res.ok) throw new Error("stage HTTP " + res.status);
+      return doSend(true);
+    }).catch(function (err) {
+      resultEl.textContent = "Not sent: " + err.message + ".";
+      resultEl.className = "hint sendresult-err";
+    });
+  } else {
+    doSend(false).catch(function (err) {
+      resultEl.textContent = "Not sent: " + err.message + ".";
+      resultEl.className = "hint sendresult-err";
+    });
+  }
+}
+
+document.getElementById("sendTextBtn").addEventListener("click", shareTextAsUser);
+document.getElementById("chatText").addEventListener("keydown", function (ev) {
+  if (ev.key === "Enter") shareTextAsUser();
+});
+document.getElementById("sharePhotoBtn").addEventListener("click", function () {
+  sharePhotoFile(document.getElementById("photoInput").files[0] || null);
+});
+document.getElementById("sendBtn").addEventListener("click", sendAsApp);
+document.getElementById("refreshBtn").addEventListener("click", refreshThread);
+document.getElementById("staleBtn").addEventListener("click", function () {
+  authed("/mock/incoming-text?age_hours=30", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ text: "SYNTH stale share — reply window already closed" }),
+  }).then(function (res) {
+    if (!res.ok) throw new Error("incoming-text HTTP " + res.status);
+    return refreshThread();
+  }).then(function () {
+    resultEl.textContent = "Stale share injected — select it above and Send as app to see 422 reply_window_expired.";
+    resultEl.className = "hint";
+  }).catch(function (err) {
+    setStatus("Mock: " + err.message);
+  });
+});
+threadEl.addEventListener("dragover", function (ev) {
+  ev.preventDefault();
+  threadEl.classList.add("dragover");
+});
+threadEl.addEventListener("dragleave", function () {
+  threadEl.classList.remove("dragover");
+});
+threadEl.addEventListener("drop", function (ev) {
+  ev.preventDefault();
+  threadEl.classList.remove("dragover");
+  var file = ev.dataTransfer && ev.dataTransfer.files && ev.dataTransfer.files[0];
+  if (file) sharePhotoFile(file);
+});
+document.getElementById("autoPoll").addEventListener("change", function (ev) {
+  if (pollTimer) {
+    clearInterval(pollTimer);
+    pollTimer = null;
+  }
+  if (ev.target.checked) {
+    pollTimer = setInterval(refreshThread, 5000);
+  }
+});
+
+refreshThread();
+pollTimer = setInterval(refreshThread, 5000);
+})();
+</script>
