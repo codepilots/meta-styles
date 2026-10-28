@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>meta-styles · Milestone 13 — Mock Instagram DM chat (demo harness)</title>
+<link rel="stylesheet" href="styles.css">
+<style>
+  .thread { display: flex; flex-direction: column; gap: 0.5rem; margin: 1rem 0; }
+  .bubble { max-width: 70%; padding: 0.5rem 0.75rem; border-radius: 0.75rem; }
+  .bubble.incoming { align-self: flex-start; background: #f0eef6; }
+  .bubble.outgoing { align-self: flex-end; background: #e3f0ff; }
+  .bubble img { max-width: 100%; display: block; border-radius: 0.5rem; }
+  .empty-note { color: #666; }
+</style>
+</head>
+<body>
+<header class="topbar">
+  <div>
+    <h1>meta-styles <span class="milestone">Milestone 13 · Mock DM chat</span></h1>
+    <p class="sub">Demo harness only — a synthetic, offline Instagram-DM thread backed by the
+      local mock bot. Nothing here touches real Instagram. The chat starts empty:
+      there is no seed data; share a photo below to put the first bubble in the thread.</p>
+  </div>
+  <p id="mockStatus" class="status" role="status" aria-live="polite">Mock: unknown.</p>
+</header>
+
+<main class="layout">
+  <section class="panel" aria-label="Instructions">
+    <h2>How to run the demo</h2>
+    <ol>
+      <li>Start the mock bot (separate server process):
+        <code>node mock-ig-bot/server.js</code> — listens on
+        <code>http://127.0.0.1:8904</code> by default.</li>
+      <li>Serve this folder: <code>python3 -m http.server 8000</code> from
+        <code>app/</code>, then open
+        <code>http://localhost:8000/mock-dm.html</code>.</li>
+      <li>Paste the demo token <code>SYNTH_mock_token</code> when asked
+        (non-secret demo value; the real bot token never goes here).</li>
+    </ol>
+    <h2>How to share a photo</h2>
+    <p>Pick an image file below (or drag-drop it onto the chat box) and hit
+      Share. The photo is injected into the mock as an inbound share
+      (<code>POST /mock/incoming-photo</code>) and appears as an incoming
+      bubble. Then open <code>index.html</code> — its inbox, pointed at the
+      mock, lists the new share; “Use this photo” loads it into the viewer.</p>
+    <h2>How to trigger a send-as-app</h2>
+    <p>Type the reply text (and optionally stage a share-card image), then hit
+      “Send as app”. The page issues a byte-identical
+      <code>POST /ig/send</code> with <code>"confirm": true</code>; the text
+      appears as an outgoing bubble, fed by the mock’s own send handler.</p>
+    <h2>How to point <code>index.html</code> at the mock</h2>
+    <p>No step needed: <code>app/inbox-bridge.js</code> ships with
+      <code>BOT_BASE</code> pointed at the mock
+      (<code>http://127.0.0.1:8904</code>). To use the real bot on Autumn’s own
+      machine instead, edit that one line to
+      <code>http://127.0.0.1:8903</code> (documented in a comment there).</p>
+  </section>
+
+  <section class="panel" aria-label="Chat thread">
+    <h2>Thread</h2>
+    <div id="thread" class="thread" aria-live="polite">
+      <p class="empty-note" id="emptyNote">Empty — share a photo or send a message to start the thread.</p>
+    </div>
+  </section>
+</main>
+</body>
+</html>
