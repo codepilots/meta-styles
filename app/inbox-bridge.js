@@ -42,7 +42,12 @@
  */
 
 (function () {
-  var BOT_BASE = "http://127.0.0.1:8903";
+  // Milestone 13: default backend is the local mock bot (zero Instagram
+  // dependency demo path). To switch to the real Instagram bot on Autumn's
+  // machine, change this one line back to "http://127.0.0.1:8903" — both
+  // backends implement the identical contract, so nothing else in this file
+  // needs to change. There is deliberately no query-param override.
+  var BOT_BASE = "http://127.0.0.1:8904";
   var TOKEN_URL = "ig-bot-token.local.json";
   var TOKEN_STORAGE_KEY = "igBotToken";
   var FIXTURE_URL = "inbox-fixtures/shares.jsonl";

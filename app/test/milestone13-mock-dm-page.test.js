@@ -83,5 +83,50 @@ const bridge = fs.readFileSync(bridgePath, "utf8");
 check("task7: inbox-bridge.js never calls /mock/... operator routes",
   !/\/mock\//.test(bridge));
 
+// --- Task 9: swap wiring (one-line BOT_BASE edit, no override) ---------------
+check("task9: BOT_BASE defaults to the mock (:8904)",
+  /var BOT_BASE = "http:\/\/127\.0\.0\.1:8904"/.test(bridge));
+check("task9: switch-back to the real bot (:8903) is documented in a comment",
+  /8903/.test(bridge) && /real .*bot|switch/i.test(bridge));
+check("task9: no query-param override in the bridge",
+  !/location\.search|URLSearchParams|\?bot=/.test(bridge));
+function stripComments(src) {
+  return src
+    .replace(/\/\*[\s\S]*?\*\//g, "")
+    .replace(/(^|[^\S\n])\/\/[^\n]*/g, "$1");
+}
+const bridgeCode = stripComments(bridge);
+check("task9: live bridge code never points at :8903 (comment only)",
+  !/8903/.test(bridgeCode));
+check("task9: bridge fetches only BOT_BASE-relative or same-origin URLs",
+  ![...bridgeCode.matchAll(/fetch\(\s*[`'"]([^`'"]+)/g)]
+    .some((m) => /^https?:\/\//.test(m[1])));
+
+// --- Task 11: zero-dependency isolation (static half) -------------------------
+// The live half (real browser walk with a hosts-file block) still needs a
+// human — see docs/milestone-13-contract-parity.md §Isolation. What CAN be
+// proven here: no code path in the mock server, the chat page, or the bridge
+// references a real-Instagram host or issues an outbound request to anything
+// but 127.0.0.1:8904 / same-origin.
+const serverPath = path.join(__dirname, "..", "..", "mock-ig-bot", "server.js");
+const server = fs.readFileSync(serverPath, "utf8");
+const serverCode = stripComments(server);
+const pageCode = stripComments(page);
+for (const [label, src] of [["mock server", serverCode], ["chat page", pageCode], ["bridge", bridgeCode]]) {
+  check(`task11: no real-Instagram host in ${label} code (codepilots/graph/lookaside/fbsbx)`,
+    !/codepilots|graph\.instagram|lookaside|fbsbx/i.test(src));
+}
+check("task11: :8903 appears in mock server comments only, never in live code",
+  !/8903/.test(serverCode));
+check("task11: mock server requires no network-client module (https/net/tls/dns/child_process)",
+  ![...serverCode.matchAll(/require\(\s*["']([^"']+)["']\s*\)/g)]
+    .some((m) => /^(https|http2|net|tls|dgram|dns|child_process|worker_threads)$/.test(m[1])));
+check("task11: mock server never issues an outbound request (no http.request/get, fetch, socket connect)",
+  !/http\.(request|get)\s*\(|fetch\s*\(|net\.connect|tls\.connect|new WebSocket|XMLHttpRequest/.test(serverCode));
+check("task11: mock server binds loopback only",
+  /listen\([^)]*"127\.0\.0\.1"/.test(serverCode));
+check("task11: chat page mock-base field defaults to 127.0.0.1:8904",
+  /value="http:\/\/127\.0\.0\.1:8904"/.test(page));
+
 console.log(`\n${passes} passed, ${failures} failed.`);
 process.exit(failures === 0 ? 0 : 1);
