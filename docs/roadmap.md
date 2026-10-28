@@ -9,4 +9,5 @@
 - Milestone 6: DM photo → look-card pipeline — feed inbox images through classifier.js / assembler.js with immediate-download rule for expiring signed URLs (draws from skills/meta-instagram-integration/SKILL.md §7, references/access-routes.md).
 - Milestone 7: reply-back share card — return spark.js / preview.js output via DM within 24h window, skipping is_echo events (draws from skills/meta-instagram-integration/SKILL.md Pitfalls, references/access-routes.md).
 - Milestone 8: production hardening — App Review for instagram_business_manage_messages + published-app / webhook-subscription checklist (draws from skills/meta-instagram-integration/SKILL.md §4/§6, docs/prior-work-instagram.md).
+- Milestone 9: bot read-API contract — poll-based shares/media API spec replacing fixture-only bridge (see docs/instagram-bot-api.md; draws from skills/meta-instagram-integration/SKILL.md Pitfalls + references/access-routes.md).
 - See docs/instagram-integration-plan.md for per-milestone build vs reuse vs risks.
