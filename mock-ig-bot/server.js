@@ -253,6 +253,25 @@ function createHandler(store, config) {
       sendJson(res, 200, { items: page.map(publicShare), next_cursor: nextCursor }, corsOrigin);
       return;
     }
+    if (req.method === "GET" && url.pathname.indexOf("/ig/outbound-media/") === 0) {
+      pruneSendState(store, Date.now());
+      const token = decodeURIComponent(url.pathname.slice("/ig/outbound-media/".length));
+      const entry = store.outboundTokens.get(token);
+      // Every refusal is the same bare 404 (reason never leaks to the fetcher).
+      if (!entry || entry.used) {
+        res.writeHead(404);
+        res.end();
+        return;
+      }
+      entry.used = true;
+      res.writeHead(200, {
+        "Content-Type": entry.contentType,
+        "Cache-Control": "private, no-store",
+        "Content-Length": entry.bytes.length,
+      });
+      res.end(entry.bytes);
+      return;
+    }
     const mediaMatch = req.method === "GET" && /^\/ig\/media\/([^/]+)$/.exec(url.pathname);
     if (mediaMatch) {
       const entry = store.media.get(decodeURIComponent(mediaMatch[1]));

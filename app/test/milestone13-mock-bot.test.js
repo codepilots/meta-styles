@@ -353,6 +353,34 @@ async function main() {
       `${results.map((r) => r.status).join(",")} ids=${ids.join(",")}`);
   }
 
+  // --- Task 6: outbound-media token route ---------------------------------------
+  {
+    // The round-A image send minted exactly one token; read it white-box.
+    const tokens = [...store.outboundTokens.keys()];
+    check("task6: image send minted an outbound token", tokens.length === 1, `got ${tokens.length}`);
+    const token = tokens[0];
+    // No Authorization header on purpose: the token IS the credential.
+    const first = await fetch(`${base}/ig/outbound-media/${token}`);
+    check("task6: token fetch -> 200 image bytes, no auth needed",
+      first.status === 200 && (first.headers.get("content-type") || "").includes("image/png"),
+      `${first.status} ${first.headers.get("content-type")}`);
+    check("task6: token bytes match the staged image",
+      Buffer.from(await first.arrayBuffer()).equals(PNG_1PX));
+    const second = await fetch(`${base}/ig/outbound-media/${token}`);
+    check("task6: token is single-use (second fetch -> bare 404)",
+      second.status === 404 && (await second.text()) === "",
+      `${second.status}`);
+    const junk = await fetch(`${base}/ig/outbound-media/SYNTH_outbound_999`);
+    check("task6: unknown token -> bare 404",
+      junk.status === 404 && (await junk.text()) === "", `${junk.status}`);
+    store.outboundTokens.set("SYNTH_outbound_expired", {
+      share_id: freshId, bytes: PNG_1PX, contentType: "image/png",
+      expiresAt: Date.now() - 1000, used: false,
+    });
+    const expired = await fetch(`${base}/ig/outbound-media/SYNTH_outbound_expired`);
+    check("task6: expired token -> 404", expired.status === 404, `got ${expired.status}`);
+  }
+
   console.log(`\n${passes} passed, ${failures} failed.`);
   server.close();
   process.exit(failures === 0 ? 0 : 1);
