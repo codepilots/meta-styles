@@ -26,3 +26,4 @@ The SecondBloom Instagram bot/webhook deployment (`igwebhook`, app `292646636064
 - [ ] Reuse boutique-ui as the frontend shell or fresh minimal Next.js app?
 - [ ] Application Q&A: paste each form question as it appears (login-gated) for per-field drafting.
 - [ ] Discord thread from earlier today: import the styling-app details agreed there.
+- [ ] M12 send-API design decisions needing Autumn's explicit answer before any build (see docs/instagram-bot-send-api.md): 24h-expired-window error behavior, idempotency approach, text-vs-image-vs-both payload scope, and whether to require a send confirmation step.
