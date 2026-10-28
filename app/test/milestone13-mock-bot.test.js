@@ -287,6 +287,72 @@ async function main() {
       `${imgRes.status} ${JSON.stringify(imgBody).slice(0, 160)}`);
   }
 
+  // --- Task 5b: idempotency trio, 24h window, serialised sends ------------------
+  {
+    // Same key + same payload replays the stored result; nothing re-sent.
+    const before = outboundCount();
+    const replay = await postSend({ share_id: freshId, text: "SYNTH look card copy", idempotency_key: "SYNTH_key_ok_001", confirm: true });
+    const replayBody = await replay.json();
+    const replay2Body = await (await postSend({ share_id: freshId, text: "SYNTH look card copy", idempotency_key: "SYNTH_key_ok_001", confirm: true })).json();
+    check("task5: same key + same payload replays stored result",
+      replay.status === 200 && typeof replayBody.message_id === "string" &&
+      replayBody.message_id === replay2Body.message_id && outboundCount() === before,
+      `${replay.status} ${JSON.stringify(replayBody).slice(0, 120)}`);
+    // Same key + different payload -> 409 idempotency_key_reused.
+    const reused = await postSend({ share_id: freshId, text: "SYNTH different text", idempotency_key: "SYNTH_key_ok_001", confirm: true });
+    const reusedBody = await reused.json();
+    check("task5: same key + different payload -> 409 idempotency_key_reused",
+      reused.status === 409 && reusedBody.error === "idempotency_key_reused" && outboundCount() === before,
+      `${reused.status} ${JSON.stringify(reusedBody).slice(0, 120)}`);
+    // Same share + same whitespace-normalised text, different key -> 409 duplicate.
+    const dup = await postSend({ share_id: freshId, text: "SYNTH  look  card\ncopy ", idempotency_key: "SYNTH_key_dup_001", confirm: true });
+    const dupBody = await dup.json();
+    check("task5: same share + same normalised text, new key -> 409 duplicate_send",
+      dup.status === 409 && dupBody.error === "duplicate_send" && outboundCount() === before,
+      `${dup.status} ${JSON.stringify(dupBody).slice(0, 120)}`);
+    // Same share + genuinely different text, new key -> 200.
+    const fresh2 = await postSend({ share_id: freshId, text: "SYNTH second card", idempotency_key: "SYNTH_key_ok_003", confirm: true });
+    check("task5: same share + different text, new key -> 200",
+      fresh2.status === 200 && outboundCount() === before + 1, `got ${fresh2.status}`);
+    // Failed attempts are not stored: a 400 under key K, then a valid send
+    // under the same key K, must succeed (not 409 key-reused).
+    const badFirst = await postSend({ share_id: freshId, text: "SYNTH retry me", idempotency_key: "SYNTH_key_retry_001", confirm: false });
+    const goodRetry = await postSend({ share_id: freshId, text: "SYNTH retry me", idempotency_key: "SYNTH_key_retry_001", confirm: true });
+    check("task5: error attempts are not stored (retry same key -> 200)",
+      badFirst.status === 400 && goodRetry.status === 200, `${badFirst.status}/${goodRetry.status}`);
+  }
+  {
+    // Stale share (older than 24h) -> 422 with the share id, nothing sent.
+    const staleId = "SYNTH_mid_stale_001";
+    store.shares.push({
+      id: staleId,
+      received_at: new Date(Date.now() - 25 * 3600 * 1000).toISOString(),
+      attachment: { type: "image", payload: { url: "https://example.invalid/synth-media/SYNTH_stale.png" } },
+      media_id: "SYNTH_media_stale_001",
+      media_available: true,
+    });
+    const before = outboundCount();
+    const res = await postSend({ share_id: staleId, text: "SYNTH too late", idempotency_key: "SYNTH_key_stale_001", confirm: true });
+    const body = await res.json();
+    check("task5: stale share -> 422 reply_window_expired + share_id",
+      res.status === 422 && body.error === "reply_window_expired" && body.share_id === staleId &&
+      outboundCount() === before,
+      `${res.status} ${JSON.stringify(body).slice(0, 120)}`);
+  }
+  {
+    // Serialised sends: three concurrent sends each land exactly once.
+    const before = outboundCount();
+    const results = await Promise.all([1, 2, 3].map((n) =>
+      postSend({ share_id: freshId, text: `SYNTH burst ${n}`, idempotency_key: `SYNTH_key_burst_00${n}`, confirm: true })
+    ));
+    const bodies = await Promise.all(results.map((r) => r.json()));
+    const ids = bodies.map((b) => b.message_id);
+    check("task5: concurrent sends all succeed with distinct message_ids",
+      results.every((r) => r.status === 200) && new Set(ids).size === 3 &&
+      outboundCount() === before + 3,
+      `${results.map((r) => r.status).join(",")} ids=${ids.join(",")}`);
+  }
+
   console.log(`\n${passes} passed, ${failures} failed.`);
   server.close();
   process.exit(failures === 0 ? 0 : 1);
