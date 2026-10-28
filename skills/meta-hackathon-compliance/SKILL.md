@@ -27,6 +27,39 @@ plain browser view of that page. Full saved text:
 The Organizers can modify these terms at any time ("Modifications" clause)
 — re-fetch the waiver URL before final submission to catch changes.
 
+## Confirmed facts (from the event Discord FAQ "Submissions, prizes and resources", pasted by Autumn 28 Oct 2026)
+
+- **Demo video length confirmed: 3 minutes** — retires the last item that
+  was still unverified below.
+- **Submission package:** one project per team/startup, submitted by the
+  team Representative via
+  https://cerebralvalley.ai/e/meta-ai-developer-hackathon/hackathon/submit,
+  containing a 3-minute demo video, a public repo link, and every
+  contributor's name. Judges assess video, code, and the live product —
+  so the app needs to actually run live, not just look good on video.
+  **Check both links resolve before submitting.**
+- **Deadline is hard:** Nov 4, 9 PM ET, late submissions not considered —
+  no grace period, confirmed explicitly (not just assumed).
+- **Bonus prizes, now itemised** (on top of the five per-track placements):
+  Most Viral Project $20k, Best Build on Meta Open Weight Models $10k,
+  Community Vote $10k, Best Agentic Use-Case $5k, Best Creative Build $5k.
+  **meta-styles angles:** "Best Agentic Use-Case" fits the fit-rule
+  assembler + Spark copy generator pipeline if it's framed as agentic
+  reasoning, not just a form-filler; "Best Creative Build" fits the
+  Y2K-x-fairycore styling angle.
+- **Most Viral Project:** post the demo on X, submit the post link through
+  the platform; engagement counts through **Nov 8 EOD**.
+- **Community Vote:** opens Nov 9, one vote per verified account, winner
+  announced Nov 16 (already noted above).
+- **Learning resources:** Quickstart (dev.meta.ai/docs/quickstart), model
+  list (dev.meta.ai/docs/models), API cookbook
+  (github.com/meta-models/meta-model-cookbook), open-weight cookbook
+  (github.com/meta-models/meta-oss-cookbook) — check the API cookbook
+  before wiring the real Meta Model API calls into spark.js/preview.js.
+- **Live workshops, noon–1 PM ET:** Oct 27 Agents 101, Oct 28 Agents 102,
+  Oct 30 Fireworks inference/training — the Fireworks one is relevant
+  given Autumn's unrelated Fireworks/Muse Glimmer training-credits thread.
+
 ## Confirmed facts (from the event Discord FAQ "Project rules", pasted by Autumn 28 Oct 2026)
 
 - **New work only, now fully confirmed:** you may build on an existing
@@ -122,13 +155,11 @@ The Organizers can modify these terms at any time ("Modifications" clause)
 
 ## Unverified / community-sourced — do not treat as binding
 
-Everything previously listed here (new-work-only, public repo, the Meta
-model usage gate) is now confirmed above by the event Discord FAQs. The one
-remaining unconfirmed detail from third-party notes (e.g.
-`meta-ai-hackathon/meta-hack`, `rizonetech/isitlegit` GitHub repos):
-
-- A specific demo video length (e.g. 3 minutes) — not seen yet in any
-  organizer-posted text; still just a common hackathon convention.
+All previously tracked unverified items (new-work-only, public repo, the
+Meta model usage gate, and the 3-minute demo video length) are now
+confirmed above by the event Discord FAQs. Nothing outstanding here as of
+28 Oct 2026 — re-check this section before final submission in case new
+FAQ content lands.
 
 ## Practical checklist for meta-styles
 
@@ -169,3 +200,9 @@ remaining unconfirmed detail from third-party notes (e.g.
    client data or other paid-work details into the event Discord, workshops,
    or the submission itself.
 8. **Deadline is Nov 4, 9:00 PM ET** — no grace period assumed.
+9. **Submission mechanics, confirmed:** exactly one project submission for
+   meta-styles (solo, no team ambiguity), via the Cerebral Valley submit
+   page, with public repo link, 3-minute demo video, and contributor name
+   listed. Test both links resolve (logged out, in a fresh browser) before
+   hitting submit — Judges watch the live product too, so it should still
+   run after submission.
