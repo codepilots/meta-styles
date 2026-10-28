@@ -180,6 +180,7 @@ function drawBox([x, y, w, h]) {
 }
 
 function updateReadout() {
+  if (typeof refreshRegionSources === "function") refreshRegionSources();
   if (!state.box) {
     readoutEl.textContent = "No box drawn yet.";
     return;
@@ -383,3 +384,192 @@ window.addEventListener("resize", () => draw());
 
 // Boot with the first demo.
 loadImage(DEMOS[0].file, DEMOS[0].id, DEMOS[0].name);
+
+// ---------------------------------------------------------------------------
+// Milestone 2 — tag regions with the classifier stub, assemble look cards.
+// Depends on classifier.js + assembler.js loaded before this file (see
+// index.html). Guards below keep Milestone 1 working if they fail to load.
+// ---------------------------------------------------------------------------
+const MS = (typeof window !== "undefined" && window.MetaStyles) || null;
+
+const regionSourceEl = document.getElementById("regionSource");
+const categorySelectEl = document.getElementById("categorySelect");
+const suggestHintEl = document.getElementById("suggestHint");
+const wardrobeEl = document.getElementById("wardrobe");
+const validityEl = document.getElementById("validity");
+const lookCardEl = document.getElementById("lookCard");
+
+const wardrobe = []; // [{ id, category, sourceLabel, thumb, copy }]
+let pieceSeq = 0;
+
+// Rebuild the region-source picker from current box/mask state, preserving
+// the user's selection when it still exists.
+function refreshRegionSources() {
+  if (!regionSourceEl) return;
+  const prev = regionSourceEl.value;
+  regionSourceEl.innerHTML = "";
+  const add = (value, label, disabled) => {
+    const opt = document.createElement("option");
+    opt.value = value;
+    opt.textContent = label;
+    opt.disabled = !!disabled;
+    regionSourceEl.appendChild(opt);
+  };
+  add("box", state.box ? "Manual box" : "Manual box (draw one first)", !state.box);
+  const polys = (state.mask && state.mask.polygons) || [];
+  polys.forEach((p, i) => add(`mask:${i}`, `Mask region ${i + 1} (${p.label})`, false));
+  if ([...regionSourceEl.options].some((o) => o.value === prev && !o.disabled)) {
+    regionSourceEl.value = prev;
+  } else {
+    const first = [...regionSourceEl.options].find((o) => !o.disabled);
+    regionSourceEl.value = first ? first.value : "";
+  }
+}
+
+function selectedRegion() {
+  const v = regionSourceEl && regionSourceEl.value;
+  if (v === "box" && state.box) {
+    return { kind: "box", rect: [...state.box], labelHint: "", sourceLabel: `Manual box · ${state.sourceName}` };
+  }
+  const m = /^mask:(\d+)$/.exec(v || "");
+  const polys = (state.mask && state.mask.polygons) || [];
+  if (m && polys[+m[1]]) {
+    const poly = polys[+m[1]];
+    return {
+      kind: "mask",
+      rect: MS ? MS.bboxOfPoints(poly.points) : [0.2, 0.2, 0.6, 0.6],
+      labelHint: poly.label,
+      sourceLabel: `Mask region ${+m[1] + 1} (${poly.label}) · ${state.sourceName}`,
+    };
+  }
+  return null;
+}
+
+// Crop a normalized rect of the current image to a thumbnail data URL.
+function cropThumb(rect) {
+  const img = state.img;
+  const [x, y, w, h] = rect;
+  const iw = img.naturalWidth;
+  const ih = img.naturalHeight;
+  if (!iw || !ih) return "";
+  const sx = Math.round(x * iw);
+  const sy = Math.round(y * ih);
+  const sw = Math.max(1, Math.round(w * iw));
+  const sh = Math.max(1, Math.round(h * ih));
+  const c = document.createElement("canvas");
+  const scale = Math.min(1, 160 / Math.max(sw, sh));
+  c.width = Math.max(1, Math.round(sw * scale));
+  c.height = Math.max(1, Math.round(sh * scale));
+  c.getContext("2d").drawImage(img, sx, sy, sw, sh, 0, 0, c.width, c.height);
+  return c.toDataURL();
+}
+
+function esc(s) {
+  return String(s).replace(/[&<>"']/g, (c) => ({
+    "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
+  }[c]));
+}
+
+document.getElementById("suggestBtn").addEventListener("click", () => {
+  const region = selectedRegion();
+  if (!region || !MS) {
+    suggestHintEl.textContent = region
+      ? "Classifier failed to load — pick a category by hand."
+      : "Nothing to label yet: run segmentation or draw a box first.";
+    return;
+  }
+  const suggestion = MS.classifyRegion(region);
+  categorySelectEl.value = MS.TAXONOMY.includes(suggestion.category)
+    ? suggestion.category
+    : categorySelectEl.value;
+  suggestHintEl.textContent =
+    `Stub suggests “${suggestion.category}” (${suggestion.method}, confidence: ${suggestion.confidence}). ` +
+    "Confirm or change it, then add to your look.";
+});
+
+document.getElementById("addBtn").addEventListener("click", () => {
+  const region = selectedRegion();
+  if (!region) {
+    setStatus("Nothing to add: run segmentation or draw a box first.");
+    return;
+  }
+  const category = categorySelectEl.value;
+  const copy = MS
+    ? MS.placeholderCopy(category)
+    : { category, text: "Placeholder piece description.", placeholder: true, note: "" };
+  wardrobe.push({
+    id: `piece-${++pieceSeq}`,
+    category,
+    sourceLabel: region.sourceLabel,
+    thumb: cropThumb(region.rect),
+    copy,
+  });
+  setStatus(`Added ${category} to your look (${wardrobe.length} piece${wardrobe.length === 1 ? "" : "s"}).`);
+  renderLook();
+});
+
+function renderLook() {
+  wardrobeEl.innerHTML = "";
+  if (wardrobe.length === 0) {
+    const p = document.createElement("p");
+    p.className = "hint";
+    p.textContent = "Nothing tagged yet.";
+    wardrobeEl.appendChild(p);
+  }
+  for (const item of wardrobe) {
+    const div = document.createElement("div");
+    div.className = "wardrobe-item";
+    div.innerHTML =
+      (item.thumb ? `<img src="${item.thumb}" alt="">` : "") +
+      `<div><strong>${esc(item.category)}</strong><br>` +
+      `<span class="hint">${esc(item.sourceLabel)}</span></div>`;
+    const rm = document.createElement("button");
+    rm.type = "button";
+    rm.className = "ghost small";
+    rm.textContent = "Remove";
+    rm.addEventListener("click", () => {
+      wardrobe.splice(wardrobe.indexOf(item), 1);
+      renderLook();
+    });
+    div.appendChild(rm);
+    wardrobeEl.appendChild(div);
+  }
+
+  if (!MS) {
+    validityEl.innerHTML = '<p class="hint">Assembler failed to load.</p>';
+    lookCardEl.hidden = true;
+    return;
+  }
+  const card = MS.assembleLook(wardrobe);
+  const badge = card.valid
+    ? '<span class="badge badge-ok">Valid full look ✔</span>'
+    : '<span class="badge badge-bad">Not a full look yet</span>';
+  const list = (items, cls) => items.length
+    ? `<ul class="${cls}">${items.map((r) => `<li>${esc(r)}</li>`).join("")}</ul>`
+    : "";
+  validityEl.innerHTML =
+    badge +
+    `<span class="hint"> finish: ${esc(card.finish || "none")} · ${card.wordCount} / 300 words</span>` +
+    list(card.reasons, "reasons") +
+    list(card.notes, "notes hint");
+
+  if (wardrobe.length === 0) {
+    lookCardEl.hidden = true;
+    return;
+  }
+  lookCardEl.hidden = false;
+  lookCardEl.innerHTML =
+    `<h3>Look card <span class="tag">placeholder copy — not real listings</span></h3>` +
+    card.pieces.map((p) =>
+      `<div class="piece">` +
+      (p.thumb ? `<img src="${p.thumb}" alt="">` : "") +
+      `<div><strong>${esc(p.category)}</strong> ` +
+      `<span class="tag">placeholder</span>` +
+      `<p>${esc(p.copy.text)}</p></div></div>`
+    ).join("") +
+    `<p class="fitnote">${esc(card.fitNote)}</p>` +
+    `<p class="hint">${esc(card.placeholderNote)} ${card.wordCount} / 300 words.</p>`;
+}
+
+refreshRegionSources();
+renderLook();

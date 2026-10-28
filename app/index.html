@@ -3,14 +3,14 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>meta-styles · Milestone 1 — Mask Viewer</title>
+<title>meta-styles · Milestone 2 — Look Cards</title>
 <link rel="stylesheet" href="styles.css">
 </head>
 <body>
 <header class="topbar">
   <div>
-    <h1>meta-styles <span class="milestone">Milestone 1 · Mask viewer</span></h1>
-    <p class="sub">Photo &rarr; garment mask overlay, with a manual box fallback. Segmentation is stubbed until SAM&nbsp;3.1 API access is live.</p>
+    <h1>meta-styles <span class="milestone">Milestone 2 · Look cards</span></h1>
+    <p class="sub">Photo &rarr; mask overlay, tag regions with the garment-classifier stub, then assemble a full look card (base + one layer, or scarf + bag — never shoes). Segmentation and copy are stubbed.</p>
   </div>
   <p id="status" class="status" role="status" aria-live="polite">Loading&hellip;</p>
 </header>
@@ -45,6 +45,33 @@
 
     <h2>Selection readout</h2>
     <pre id="readout" class="readout">No box drawn yet.</pre>
+
+    <h2>4 · Tag this region</h2>
+    <label class="slider">Region source
+      <select id="regionSource"></select>
+    </label>
+    <div class="row">
+      <button type="button" id="suggestBtn">Suggest label (stub)</button>
+    </div>
+    <p class="hint" id="suggestHint">The classifier stub suggests a label from the fixed taxonomy — confirm it before adding.</p>
+    <label class="slider">Category
+      <select id="categorySelect">
+        <option value="base/top">base/top</option>
+        <option value="base/bottom">base/bottom</option>
+        <option value="dress">dress</option>
+        <option value="layer/cardigan">layer/cardigan (incl. tie-blouses &amp; shrugs)</option>
+        <option value="layer/blazer">layer/blazer</option>
+        <option value="scarf">scarf</option>
+        <option value="bag">bag</option>
+        <option value="shoes">shoes (excluded — demos rejection)</option>
+      </select>
+    </label>
+    <div class="row">
+      <button type="button" id="addBtn">Add to look</button>
+    </div>
+
+    <h2>Look (wardrobe)</h2>
+    <div id="wardrobe" class="wardrobe"></div>
   </section>
 
   <section class="stage" aria-label="Photo canvas">
@@ -52,10 +79,18 @@
   </section>
 </main>
 
+<section class="cardwrap" aria-label="Assembled look card">
+  <h2>5 · Assembled look card</h2>
+  <div id="validity" class="validity"><p class="hint">Tag regions above and add them to your look — the card assembles here with a validity check.</p></div>
+  <article id="lookCard" class="lookcard" hidden></article>
+</section>
+
 <footer class="foot">
-  <p>Stub: <code>StubSegmentationService</code> in <code>app.js</code> stands in for SAM 3.1 — swap it for a real call at the marked <code>TODO(SAM-3.1)</code>. See <code>README.md</code>.</p>
+  <p>Stubs: <code>StubSegmentationService</code> in <code>app.js</code> stands in for SAM 3.1 (<code>TODO(SAM-3.1)</code>); <code>classifyRegion</code> in <code>classifier.js</code> is a rule/hash stub (<code>TODO(model)</code>); per-piece copy is invented placeholder text, marked <code>placeholder:true</code> — not real resale listings. See <code>README.md</code>.</p>
 </footer>
 
+<script src="classifier.js"></script>
+<script src="assembler.js"></script>
 <script src="app.js"></script>
 </body>
 </html>
