@@ -93,6 +93,11 @@ the client only needs to know the header shape and the env var name.
 - NEW (hackathon work, Milestone 9+): this read API on the bot side; a small
   client module in this repo replacing the `FIXTURE_URL` fetch (fixture stays
   as offline fallback); the bot credential above.
+- IMPLEMENTED 2026-10-28 (hackathon work, this repo): the client module is
+  `app/inbox-bridge.js` — live `GET /ig/shares` paging, `GET /ig/media/<id>`
+  bytes as object URLs, `DELETE /ig/media/<id>` only after use, Bearer token
+  from untracked `app/ig-bot-token.local.json` (see `.gitignore`), per-section
+  error handling above, and the Milestone 5 fixture file as offline fallback.
 
 ## Open questions for Autumn
 
