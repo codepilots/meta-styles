@@ -5,3 +5,8 @@
 - Milestone 2: garment classifier + look-card assembler with fit rules.
 - Milestone 3: Spark copy generator + Image preview + share card.
 - Milestone 4: submission cut — video, cached mode, live rehearsal.
+- Milestone 5: DM-share inbox bridge — import SecondBloom shares.jsonl + media/ drop into meta-styles inbox as alternate input to Milestone 1 picker (draws from skills/meta-instagram-integration/SKILL.md §5, docs/prior-work-instagram.md).
+- Milestone 6: DM photo → look-card pipeline — feed inbox images through classifier.js / assembler.js with immediate-download rule for expiring signed URLs (draws from skills/meta-instagram-integration/SKILL.md §7, references/access-routes.md).
+- Milestone 7: reply-back share card — return spark.js / preview.js output via DM within 24h window, skipping is_echo events (draws from skills/meta-instagram-integration/SKILL.md Pitfalls, references/access-routes.md).
+- Milestone 8: production hardening — App Review for instagram_business_manage_messages + published-app / webhook-subscription checklist (draws from skills/meta-instagram-integration/SKILL.md §4/§6, docs/prior-work-instagram.md).
+- See docs/instagram-integration-plan.md for per-milestone build vs reuse vs risks.
