@@ -40,6 +40,7 @@ function createStore() {
     media: new Map(), // media_id -> {bytes: Buffer, contentType: string}
     outbound: [], // {message_id, share_id, text, image_message_id?, sent_at}
     outboundStaged: new Map(), // share_id -> {bytes, contentType}
+    sendChain: Promise.resolve(), // serialised sends (no double-click race)
     outboundTokens: new Map(), // token -> {share_id, expiresAt, used}
     idempotency: new Map(), // key -> {payloadHash, result, at}
     counters: { share: 0, message: 0, token: 0 },
@@ -87,6 +88,109 @@ function publicShare(item) {
     media_id: item.media_id,
     media_available: item.media_available,
   };
+}
+
+const MAX_SEND_BODY = 1024 * 1024; // 1 MB, per the send spec
+const WINDOW_MS = 24 * 3600 * 1000; // IG reply window: 24h from the share
+
+function normalizeText(t) {
+  return t.trim().replace(/\s+/g, " ");
+}
+
+function readBody(req, cap) {
+  return new Promise((resolve) => {
+    const chunks = [];
+    let size = 0;
+    let tooLarge = false;
+    req.on("data", (chunk) => {
+      if (tooLarge) return;
+      size += chunk.length;
+      if (size > cap) {
+        tooLarge = true;
+        return;
+      }
+      chunks.push(chunk);
+    });
+    req.on("end", () => resolve(tooLarge ? { tooLarge: true } : { bytes: Buffer.concat(chunks) }));
+    req.on("error", () => resolve({ bytes: Buffer.alloc(0) }));
+  });
+}
+
+function pruneSendState(store, now) {
+  for (const [key, entry] of store.idempotency) {
+    if (now - entry.at > WINDOW_MS) store.idempotency.delete(key);
+  }
+  for (const [token, entry] of store.outboundTokens) {
+    if (entry.expiresAt <= now) store.outboundTokens.delete(token);
+  }
+}
+
+// Synchronous send core. The HTTP layer serialises calls through
+// store.sendChain so a double-click cannot race (same guarantee as the bot).
+function doSend(store, payload) {
+  const now = Date.now();
+  pruneSendState(store, now);
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+    return { status: 400, body: { error: "bad_request" } };
+  }
+  const { share_id, text, idempotency_key, confirm, image } = payload;
+  if (confirm !== true ||
+      typeof share_id !== "string" || !share_id ||
+      typeof text !== "string" || !text ||
+      typeof idempotency_key !== "string" || !idempotency_key ||
+      (image !== undefined && image !== false && image !== true)) {
+    return { status: 400, body: { error: "bad_request" } };
+  }
+  const share = store.shares.find((s) => s.id === share_id);
+  if (!share) {
+    return { status: 404, body: { error: "unknown_share" } };
+  }
+  if (image === true && !store.outboundStaged.has(share_id)) {
+    return { status: 400, body: { error: "image_not_staged" } };
+  }
+  if (now - Date.parse(share.received_at) > WINDOW_MS) {
+    return { status: 422, body: { error: "reply_window_expired", share_id } };
+  }
+  const payloadHash = share_id + "\n" + text + "\n" + (image === true ? "1" : "0");
+  const seen = store.idempotency.get(idempotency_key);
+  if (seen) {
+    if (seen.payloadHash === payloadHash) {
+      return { status: 200, body: seen.result };
+    }
+    return { status: 409, body: { error: "idempotency_key_reused" } };
+  }
+  const normText = normalizeText(text);
+  for (const entry of store.idempotency.values()) {
+    if (entry.share_id === share_id && entry.normText === normText) {
+      return { status: 409, body: { error: "duplicate_send" } };
+    }
+  }
+  store.counters.message += 1;
+  const result = {
+    message_id: "SYNTH_msg_" + String(store.counters.message).padStart(3, "0"),
+    recipient_ref: share_id,
+  };
+  const logEntry = { message_id: result.message_id, share_id, text, sent_at: new Date(now).toISOString() };
+  if (image === true) {
+    store.counters.message += 1;
+    result.image_message_id = "SYNTH_imgmsg_" + String(store.counters.message).padStart(3, "0");
+    logEntry.image_message_id = result.image_message_id;
+    const staged = store.outboundStaged.get(share_id);
+    store.counters.token += 1;
+    const token = "SYNTH_outbound_" + String(store.counters.token).padStart(3, "0");
+    store.outboundTokens.set(token, {
+      share_id,
+      bytes: staged.bytes,
+      contentType: staged.contentType,
+      expiresAt: now + WINDOW_MS,
+      used: false,
+    });
+  }
+  store.outbound.push(logEntry);
+  store.idempotency.set(idempotency_key, {
+    payloadHash, share_id, normText, result, at: now,
+  });
+  return { status: 200, body: result };
 }
 
 function createHandler(store, config) {
@@ -164,6 +268,44 @@ function createHandler(store, config) {
       });
       res.end(entry.bytes);
       return;
+    }
+    if (req.method === "POST" && url.pathname === "/ig/send") {
+      readBody(req, MAX_SEND_BODY).then((parsed) => {
+        if (parsed.tooLarge) {
+          sendJson(res, 413, { error: "body_too_large" }, corsOrigin);
+          return;
+        }
+        let payload = null;
+        try {
+          payload = JSON.parse(parsed.bytes.toString("utf8"));
+        } catch (err) {
+          payload = null;
+        }
+        const run = store.sendChain.then(() => doSend(store, payload));
+        store.sendChain = run.catch(() => {});
+        run.then(({ status, body }) => sendJson(res, status, body, corsOrigin));
+      });
+      return;
+    }
+    if (req.method === "DELETE") {
+      const delMatch = /^\/ig\/media\/([^/]+)$/.exec(url.pathname);
+      if (delMatch) {
+        const mediaId = decodeURIComponent(delMatch[1]);
+        if (!store.media.has(mediaId)) {
+          sendJson(res, 404, { error: "media_not_found" }, corsOrigin);
+          return;
+        }
+        store.media.delete(mediaId);
+        for (const item of store.shares) {
+          if (item.media_id === mediaId) item.media_available = false;
+        }
+        res.writeHead(204, {
+          "Cache-Control": "no-store",
+          ...(corsOrigin ? { "Access-Control-Allow-Origin": corsOrigin } : {}),
+        });
+        res.end();
+        return;
+      }
     }
     notFound(res, corsOrigin);
   };

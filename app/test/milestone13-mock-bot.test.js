@@ -188,6 +188,105 @@ async function main() {
     check("task3: preflight from other origin -> 403", evilPre.status === 403, `got ${evilPre.status}`);
   }
 
+  // --- Task 4: collect-then-delete --------------------------------------------
+  {
+    // GET alone deletes nothing: still listed available after a fetch.
+    await fetch(`${base}/ig/media/${s2.media_id}`, { headers: authHeaders() });
+    const listed = await (await fetch(`${base}/ig/shares`, { headers: authHeaders() })).json();
+    check("task4: GET /ig/media deletes nothing (still media_available:true)",
+      listed.items.find((i) => i.id === s2.id).media_available === true);
+    const del = await fetch(`${base}/ig/media/${s2.media_id}`, { method: "DELETE", headers: authHeaders() });
+    check("task4: DELETE /ig/media/<id> -> 204", del.status === 204, `got ${del.status}`);
+    const gone = await fetch(`${base}/ig/media/${s2.media_id}`, { headers: authHeaders() });
+    check("task4: bytes are gone after DELETE (GET -> 404)", gone.status === 404, `got ${gone.status}`);
+    const relisted = await (await fetch(`${base}/ig/shares`, { headers: authHeaders() })).json();
+    check("task4: item flips to media_available:false after DELETE",
+      relisted.items.find((i) => i.id === s2.id).media_available === false);
+    const unknown = await fetch(`${base}/ig/media/SYNTH_media_missing`, { method: "DELETE", headers: authHeaders() });
+    check("task4: DELETE unknown id -> 404", unknown.status === 404, `got ${unknown.status}`);
+    const noAuth = await fetch(`${base}/ig/media/${s1.media_id}`, { method: "DELETE" });
+    check("task4: DELETE requires auth", noAuth.status === 401, `got ${noAuth.status}`);
+  }
+
+  // --- Task 5a: send route validation -------------------------------------------
+  async function postSend(payload, key) {
+    return fetch(`${base}/ig/send`, {
+      method: "POST",
+      headers: { ...authHeaders(), "Content-Type": "application/json" },
+      body: typeof payload === "string" ? payload : JSON.stringify(payload),
+    });
+  }
+  function outboundCount() { return store.outbound.length; }
+  const FRESH_SHARE = s1.id; // received_at 2026-10-28T12:01 — tests run same week? no: use fresh below
+  {
+    // NOTE: seeded shares carry fixed 2026-10-28 timestamps, so the 24h
+    // window tests below use freshly injected shares instead (see task 5b).
+    const basePayload = { share_id: "SYNTH_mid_001", text: "SYNTH hello", idempotency_key: "SYNTH_key_val_001", confirm: true };
+    for (const [label, tweak] of [
+      ["missing confirm", { confirm: undefined }],
+      ["confirm:false", { confirm: false }],
+      ["confirm string", { confirm: "true" }],
+      ["missing share_id", { share_id: undefined }],
+      ["missing text", { text: undefined }],
+      ["missing key", { idempotency_key: undefined }],
+      ["empty text", { text: "" }],
+    ]) {
+      const p = { ...basePayload };
+      if (tweak.confirm === undefined && "confirm" in tweak) delete p.confirm;
+      else if (tweak.share_id === undefined && "share_id" in tweak) delete p.share_id;
+      else if (tweak.text === undefined && "text" in tweak) delete p.text;
+      else if (tweak.idempotency_key === undefined && "idempotency_key" in tweak) delete p.idempotency_key;
+      else Object.assign(p, tweak);
+      const before = outboundCount();
+      const res = await postSend(p);
+      check(`task5: send ${label} -> 400, nothing sent`,
+        res.status === 400 && outboundCount() === before, `got ${res.status}`);
+    }
+    const unknown = await postSend({ share_id: "SYNTH_mid_nope", text: "SYNTH hi", idempotency_key: "SYNTH_key_val_002", confirm: true });
+    check("task5: send unknown share_id -> 404", unknown.status === 404, `got ${unknown.status}`);
+    const noImage = await postSend({ share_id: "SYNTH_mid_001", text: "SYNTH hi", idempotency_key: "SYNTH_key_val_003", confirm: true, image: true });
+    check("task5: send image:true with no staged file -> 400", noImage.status === 400, `got ${noImage.status}`);
+    const noAuth = await fetch(`${base}/ig/send`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ share_id: "SYNTH_mid_001", text: "x", idempotency_key: "k", confirm: true }),
+    });
+    check("task5: send requires auth", noAuth.status === 401, `got ${noAuth.status}`);
+    const big = await postSend({ share_id: "SYNTH_mid_001", text: "SYNTH_" + "x".repeat(1024 * 1024), idempotency_key: "SYNTH_key_val_004", confirm: true });
+    check("task5: send body > 1MB -> 413", big.status === 413, `got ${big.status}`);
+    const malformed = await postSend("{not json");
+    check("task5: send malformed JSON -> 400", malformed.status === 400, `got ${malformed.status}`);
+  }
+  // Fresh share (wall-clock now) so window checks stay green any day.
+  const freshId = "SYNTH_mid_fresh_001";
+  const freshMedia = "SYNTH_media_fresh_001";
+  store.shares.push({
+    id: freshId,
+    received_at: new Date().toISOString(),
+    attachment: { type: "image", payload: { url: "https://example.invalid/synth-media/SYNTH_fresh.png" } },
+    media_id: freshMedia,
+    media_available: true,
+  });
+  store.media.set(freshMedia, { bytes: PNG_1PX, contentType: "image/png" });
+  {
+    const before = outboundCount();
+    const res = await postSend({ share_id: freshId, text: "SYNTH look card copy", idempotency_key: "SYNTH_key_ok_001", confirm: true });
+    const body = await res.json();
+    check("task5: valid send -> 200 {message_id, recipient_ref}",
+      res.status === 200 && typeof body.message_id === "string" && body.recipient_ref === freshId &&
+      !("image_message_id" in body),
+      `${res.status} ${JSON.stringify(body).slice(0, 160)}`);
+    check("task5: valid send appended to the outbound log",
+      outboundCount() === before + 1 && store.outbound[store.outbound.length - 1].share_id === freshId,
+      `outbound=${outboundCount()} before=${before}`);
+    // Image path: stage bytes directly, then send with image:true.
+    store.outboundStaged.set(freshId, { bytes: PNG_1PX, contentType: "image/png" });
+    const imgRes = await postSend({ share_id: freshId, text: "SYNTH card + photo", idempotency_key: "SYNTH_key_ok_002", confirm: true, image: true });
+    const imgBody = await imgRes.json();
+    check("task5: image send -> 200 + image_message_id",
+      imgRes.status === 200 && typeof imgBody.image_message_id === "string",
+      `${imgRes.status} ${JSON.stringify(imgBody).slice(0, 160)}`);
+  }
+
   console.log(`\n${passes} passed, ${failures} failed.`);
   server.close();
   process.exit(failures === 0 ? 0 : 1);
