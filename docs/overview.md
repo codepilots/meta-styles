@@ -19,3 +19,4 @@ Inspirations: existing [[Upcycled Boutique]] sourcing/review pipeline, [[Boutiqu
 | docs/roadmap.md | milestones, milestone 0 buildable in one session |
 | docs/prior-work-instagram.md | SecondBloom Instagram DM-share bot — prior work, built pre-hackathon, not part of this repo's code |
 | skills/meta-hackathon-compliance/SKILL.md | compliance notes sourced from the Organizers' Official Rules (judging criteria, IP terms, eligibility) |
+| AGENTS.md | repo root — mandatory rules for any AI agent working here, requires reading the compliance skill first |
