@@ -15,6 +15,10 @@ automatically when the live skills change.
 - `muse-code/` — how Bramble delegates implementation work to Meta's Muse
   Code CLI (the agent that built Milestones 1–3 of this app): wrapper
   script, sandbox/AppArmor notes, prompting guidance, pitfalls.
+- `meta-hackathon-compliance/` — compliance notes for the Meta Global AI
+  Developer Hackathon sourced from the Organizers' own published Official
+  Rules (judging criteria, IP/third-party-assistance terms, eligibility),
+  with a clearly separated section for unverified community-sourced norms.
 
 Contain no credentials (checked before commit) — real keys stay in
 `.env/secrets` (gitignored), never in a skill file.
