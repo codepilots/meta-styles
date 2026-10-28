@@ -27,6 +27,26 @@ plain browser view of that page. Full saved text:
 The Organizers can modify these terms at any time ("Modifications" clause)
 — re-fetch the waiver URL before final submission to catch changes.
 
+## Confirmed facts (from the event Discord FAQ, pasted by Autumn 28 Oct 2026)
+
+- **Project must use Meta models** and address one of the two themes (Build
+  for Your World / Push the Frontier) — this upgrades the "hard pass/fail
+  gate requiring genuine Meta model use" item from unverified to confirmed:
+  the FAQ states it as a requirement, not just a scoring factor.
+- **Full model list confirmed:** Muse Spark, Muse Wonder, Muse Image, Muse
+  Voice Transcribe, SAM 3.1 (via Meta Model API), plus open-weight Muse
+  Glimmer and Muse Spark Open. **Muse Code is explicitly named as available
+  "to help you code"** — organizer-sanctioned, not just inferable from the
+  Official Rules' third-party-assistance clause.
+- **Building period is Oct 27 – Nov 4** (kickoff itself is Oct 26 at noon,
+  separate from the building period start) — sharpens the earlier "kickoff
+  Oct 26" note; if "new work only" is enforced, Oct 27 noon ET may be the
+  safer cutoff for "work done before the hackathon" rather than Oct 26.
+- **Community vote winner announced Nov 16** (later than the Nov 9 main
+  closing ceremony / winners announcement).
+- Solo entry explicitly confirmed fine; teams up to 4; team-forming and
+  intro channels exist on the event Discord.
+
 ## Confirmed facts (from the Official Rules text itself)
 
 - **Track:** Indie Developer — teams of up to 4, one Representative submits
@@ -74,11 +94,14 @@ prefer the cautious reading until confirmed in-event:
 - "New work only" — demo should show only what was built during the event
   window; unclear/pre-existing contribution risks being read as
   non-compliant even though the Official Rules don't say this explicitly.
+  (Still not confirmed in writing anywhere seen so far, but treat as likely
+  true in spirit given the FAQ's "must use Meta models" requirement.)
 - Public repository requirement for submission.
 - A specific demo video length (e.g. 3 minutes).
-- A hard pass/fail gate requiring genuine Meta Model API / open-weights use
-  before scoring (plausible given "Use of Meta AI Tooling" is 25% of score,
-  but not stated as a gate in the Official Rules text itself).
+
+~~A hard pass/fail gate requiring genuine Meta Model API / open-weights
+use~~ — **now confirmed** by the Discord FAQ ("your project must use Meta
+models"), moved to the confirmed section above.
 
 ## Practical checklist for meta-styles
 
@@ -87,7 +110,10 @@ prefer the cautious reading until confirmed in-event:
    integration predates the hackathon by 12 days and is not part of this
    repo's code; git commit timestamps corroborate it. Given the unverified
    "new work only" norm above, keep erring toward over-disclosure rather
-   than presenting anything pre-built as hackathon output.
+   than presenting anything pre-built as hackathon output. If a strict
+   cutoff ever matters, use the building-period start (Oct 27 noon ET),
+   not the kickoff livestream (Oct 26 noon ET) — meta-styles' own first
+   commit (`4afac15`) predates both anyway.
 2. **Document AI-agent assistance transparently** — it's explicitly allowed
    by the Official Rules. Don't scrub Muse/Claude commit attribution.
 3. **"Use of Meta AI Tooling" is 25% of the score** — the app is currently
