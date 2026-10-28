@@ -402,6 +402,22 @@ const lookCardEl = document.getElementById("lookCard");
 const wardrobe = []; // [{ id, category, sourceLabel, thumb, copy }]
 let pieceSeq = 0;
 
+// Milestone 3 element handles (looked up early so renderLook can use them;
+// the share card itself renders in renderShare, defined further below).
+const shareCardEl = document.getElementById("shareCard");
+const shareTitleEl = document.getElementById("shareTitle");
+const shareMetaEl = document.getElementById("shareMeta");
+const shareBadgeEl = document.getElementById("shareBadge");
+const sharePiecesEl = document.getElementById("sharePieces");
+const shareStoryEl = document.getElementById("shareStory");
+const shareFitEl = document.getElementById("shareFit");
+const shareStubNoteEl = document.getElementById("shareStubNote");
+const shareActionHintEl = document.getElementById("shareActionHint");
+const previewCanvasEl = document.getElementById("previewCanvas");
+
+let lastShareText = "";
+let lastPreviewDataURL = "";
+
 // Rebuild the region-source picker from current box/mask state, preserving
 // the user's selection when it still exists.
 function refreshRegionSources() {
@@ -538,6 +554,7 @@ function renderLook() {
   if (!MS) {
     validityEl.innerHTML = '<p class="hint">Assembler failed to load.</p>';
     lookCardEl.hidden = true;
+    if (shareCardEl) shareCardEl.hidden = true;
     return;
   }
   const card = MS.assembleLook(wardrobe);
@@ -555,6 +572,7 @@ function renderLook() {
 
   if (wardrobe.length === 0) {
     lookCardEl.hidden = true;
+    if (shareCardEl) shareCardEl.hidden = true;
     return;
   }
   lookCardEl.hidden = false;
@@ -569,7 +587,103 @@ function renderLook() {
     ).join("") +
     `<p class="fitnote">${esc(card.fitNote)}</p>` +
     `<p class="hint">${esc(card.placeholderNote)} ${card.wordCount} / 300 words.</p>`;
+  // Milestone 3: share card renders from the same assembled card (async
+  // preview draw runs fire-and-forget; text lands synchronously).
+  renderShare(card);
 }
 
 refreshRegionSources();
 renderLook();
+
+// ---------------------------------------------------------------------------
+// Milestone 3 — share card: Spark copy stub + preview-image stub + client-side
+// copy/download. Depends on spark.js + preview.js loaded before this file;
+// guards keep Milestones 1–2 working if they fail to load.
+// ---------------------------------------------------------------------------
+function buildShareText(card, spark) {
+  const lines = [
+    `${spark.title} — a meta-styles look card`,
+    `${card.valid ? "Valid full look ✔" : "Not a full look yet"} · finish: ${card.finish || "none"} · ${spark.wordCount} / 300 words`,
+    "",
+  ];
+  card.pieces.forEach((p, i) => {
+    const sparkText = (spark.perPiece[i] && spark.perPiece[i].text) || p.copy.text;
+    lines.push(`[${p.category}] ${sparkText}`);
+    lines.push("");
+  });
+  lines.push(spark.lookStory, "", card.fitNote, "Placeholder card: Spark copy + preview image are stubbed mocks, not live AI output.");
+  return lines.join("\n");
+}
+
+async function renderShare(card) {
+  if (!shareCardEl) return;
+  if (wardrobe.length === 0 || !MS || typeof MS.generateCopy !== "function") {
+    shareCardEl.hidden = true;
+    return;
+  }
+  const spark = MS.generateCopy(card);
+  shareCardEl.hidden = false;
+  shareTitleEl.textContent = spark.title;
+  shareMetaEl.textContent =
+    `finish: ${card.finish || "none"} · ${spark.wordCount} / 300 words` +
+    (spark.trimmed ? " · Spark copy trimmed to budget" : "");
+  shareBadgeEl.innerHTML = card.valid
+    ? '<span class="badge badge-ok">Valid full look ✔</span>'
+    : '<span class="badge badge-bad">Not a full look yet</span>';
+  sharePiecesEl.innerHTML = card.pieces.map((p, i) => {
+    const text = (spark.perPiece[i] && spark.perPiece[i].text) || p.copy.text;
+    return `<div class="piece"><div><strong>${esc(p.category)}</strong> ` +
+      `<span class="tag">placeholder</span><p>${esc(text)}</p></div></div>`;
+  }).join("");
+  shareStoryEl.textContent = spark.lookStory;
+  shareFitEl.textContent = card.fitNote;
+  shareStubNoteEl.textContent = `${spark.placeholderNote} ${card.placeholderNote}`;
+  lastShareText = buildShareText(card, spark);
+
+  // Mock preview image (stubbed canvas collage, TODO(Image-API)).
+  if (MS && typeof MS.generateImage === "function" && previewCanvasEl) {
+    try {
+      const res = await MS.generateImage(previewCanvasEl, card);
+      lastPreviewDataURL = res.dataURL || "";
+    } catch (err) {
+      lastPreviewDataURL = "";
+      if (shareActionHintEl) shareActionHintEl.textContent = `Preview render failed (${err.message}).`;
+    }
+  }
+}
+
+document.getElementById("copyCardBtn").addEventListener("click", async () => {
+  if (!lastShareText) return;
+  shareActionHintEl.textContent = "";
+  try {
+    await navigator.clipboard.writeText(lastShareText);
+    shareActionHintEl.textContent = "Share card copied as text ✔";
+  } catch (err) {
+    // Clipboard API unavailable (e.g. file:// without permission): fallback.
+    const ta = document.createElement("textarea");
+    ta.value = lastShareText;
+    document.body.appendChild(ta);
+    ta.select();
+    try {
+      document.execCommand("copy");
+      shareActionHintEl.textContent = "Share card copied as text ✔ (fallback)";
+    } catch (e2) {
+      shareActionHintEl.textContent = `Copy failed (${e2.message}). Select the card text manually.`;
+    }
+    ta.remove();
+  }
+});
+
+document.getElementById("downloadCardBtn").addEventListener("click", () => {
+  if (!lastPreviewDataURL) {
+    shareActionHintEl.textContent = "No preview image yet — add pieces to your look first.";
+    return;
+  }
+  const a = document.createElement("a");
+  a.href = lastPreviewDataURL;
+  a.download = "meta-styles-look.png";
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  shareActionHintEl.textContent = "Preview image downloaded (client-side PNG) ✔";
+});

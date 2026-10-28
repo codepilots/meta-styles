@@ -3,14 +3,14 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>meta-styles · Milestone 2 — Look Cards</title>
+<title>meta-styles · Milestone 3 — Share Cards</title>
 <link rel="stylesheet" href="styles.css">
 </head>
 <body>
 <header class="topbar">
   <div>
-    <h1>meta-styles <span class="milestone">Milestone 2 · Look cards</span></h1>
-    <p class="sub">Photo &rarr; mask overlay, tag regions with the garment-classifier stub, then assemble a full look card (base + one layer, or scarf + bag — never shoes). Segmentation and copy are stubbed.</p>
+    <h1>meta-styles <span class="milestone">Milestone 3 · Share cards</span></h1>
+    <p class="sub">Photo &rarr; mask overlay, tag regions with the garment-classifier stub, assemble a full look card, then preview Spark copy + a mock preview image in a shareable card. Segmentation, copy, and imagery are stubbed.</p>
   </div>
   <p id="status" class="status" role="status" aria-live="polite">Loading&hellip;</p>
 </header>
@@ -85,12 +85,45 @@
   <article id="lookCard" class="lookcard" hidden></article>
 </section>
 
+<section class="cardwrap" aria-label="Share card">
+  <h2>6 · Share card</h2>
+  <p class="hint">The final assembled look: mock preview image, Spark copy, and validity badge in a shareable layout. Everything here is placeholder until the live APIs land.</p>
+  <article id="shareCard" class="sharecard" hidden>
+    <div class="share-head">
+      <div>
+        <h3 id="shareTitle"></h3>
+        <p class="hint" id="shareMeta"></p>
+      </div>
+      <span id="shareBadge"></span>
+    </div>
+    <div class="share-body">
+      <figure class="share-fig">
+        <canvas id="previewCanvas" width="600" height="760"></canvas>
+        <figcaption class="hint">Mock preview image · placeholder — not AI imagery.</figcaption>
+      </figure>
+      <div class="share-copy">
+        <div id="sharePieces"></div>
+        <p class="lookstory" id="shareStory"></p>
+        <p class="fitnote" id="shareFit"></p>
+        <p class="hint" id="shareStubNote"></p>
+      </div>
+    </div>
+    <div class="row">
+      <button type="button" id="copyCardBtn">Copy card as text</button>
+      <button type="button" id="downloadCardBtn" class="ghost">Download preview image</button>
+    </div>
+    <p class="hint" id="shareActionHint" role="status" aria-live="polite"></p>
+  </article>
+</section>
+
 <footer class="foot">
-  <p>Stubs: <code>StubSegmentationService</code> in <code>app.js</code> stands in for SAM 3.1 (<code>TODO(SAM-3.1)</code>); <code>classifyRegion</code> in <code>classifier.js</code> is a rule/hash stub (<code>TODO(model)</code>); per-piece copy is invented placeholder text, marked <code>placeholder:true</code> — not real resale listings. See <code>README.md</code>.</p>
+  <p>Stubs: <code>StubSegmentationService</code> in <code>app.js</code> stands in for SAM 3.1 (<code>TODO(SAM-3.1)</code>); <code>classifyRegion</code> in <code>classifier.js</code> is a rule/hash stub (<code>TODO(model)</code>); per-piece copy is invented placeholder text, marked <code>placeholder:true</code> — not real listings. Milestone 3: <code>generateCopy</code> in <code>spark.js</code> is a longer-form placeholder stub (<code>TODO(Spark-API)</code>); <code>generateImage</code> in <code>preview.js</code> draws a canvas collage, not AI imagery (<code>TODO(Image-API)</code>). No live Meta API calls; <code>.env/secrets</code> is never read. See <code>README.md</code>.</p>
 </footer>
 
 <script src="classifier.js"></script>
 <script src="assembler.js"></script>
+<script src="spark.js"></script>
+<script src="preview.js"></script>
 <script src="app.js"></script>
 </body>
 </html>

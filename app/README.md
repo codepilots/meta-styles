@@ -1,4 +1,4 @@
-# meta-styles · Milestone 2 — Look cards
+# meta-styles · Milestone 3 — Share cards
 
 Minimal zero-install web app: pick a photo, view a garment-segmentation mask
 overlay (or draw a manual box), tag regions with the garment-classifier stub,
@@ -49,4 +49,24 @@ No build step, no dependencies. Either:
 | `app.js` | viewer logic + stubbed segmenter + look-card UI wiring |
 | `classifier.js` | taxonomy + classifier stub + placeholder copy bank |
 | `assembler.js` | fit rules + card assembly + word-budget cap |
+| `spark.js` | Spark copy-generator stub (`generateCopy`, `TODO(Spark-API)`) |
+| `preview.js` | mock preview-image stub (`generateImage`, `TODO(Image-API)`) |
 | `demo-look-*.svg` | locally created placeholder demo photos |
+
+## What's real vs stubbed (Milestone 3)
+
+- **Real:** share-card layout (mock preview image + Spark copy + validity
+  badge side by side), client-side **Copy card as text** (Clipboard API with
+  `execCommand` fallback) and **Download preview image** (canvas PNG via
+  `toDataURL`, no server); word-budget enforcement shared with Milestone 2
+  (title + pieces + story + fit note ≤ 300 words, trimmed and flagged).
+- **Stubbed:** `generateCopy` in `spark.js` returns invented longer-form
+  Y2K x fairycore copy (`placeholder:true`, `source:"stub"` —
+  `TODO(Spark-API)`); `generateImage` in `preview.js` draws a canvas collage
+  from category swatches + your thumbnail crops, watermarked "mock preview"
+  (`placeholder:true` — `TODO(Image-API)`).
+- **To go live:** replace the body of `generateCopy` with the Muse Spark
+  Model API call and the body of `generateImage` with the image-endpoint
+  call. Both keep their return shapes, so the share-card UI needs no
+  changes. No live Meta API calls yet; `.env/secrets` is never read —
+  Autumn reviews the env plumbing before anything goes live.
