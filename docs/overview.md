@@ -17,3 +17,4 @@ Inspirations: existing [[Upcycled Boutique]] sourcing/review pipeline, [[Boutiqu
 | docs/pitch.md | firsthand problem, differentiator, risks, build plan, demo fallbacks |
 | docs/decisions.md | numbered decisions log |
 | docs/roadmap.md | milestones, milestone 0 buildable in one session |
+| docs/prior-work-instagram.md | SecondBloom Instagram DM-share bot — prior work, built pre-hackathon, not part of this repo's code |
