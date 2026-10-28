@@ -1,0 +1,14 @@
+# Lets Meta's Muse Code CLI create unprivileged user namespaces so its
+# embedded bubblewrap sandbox works under kernel.apparmor_restrict_unprivileged_userns=1.
+# Same pattern as Ubuntu's own /etc/apparmor.d/code (VS Code) profile.
+# Glob covers the launcher's auto-updated muse-bin-<version> binaries.
+
+abi <abi/5.0>,
+include <tunables/global>
+
+profile muse-code /home/autumn/.local/bin/muse-bin-* flags=(unconfined) {
+  userns,
+
+  # Site-specific additions and overrides. See local/README for details.
+  include if exists <local/muse-code>
+}
