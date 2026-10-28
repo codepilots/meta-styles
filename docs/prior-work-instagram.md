@@ -33,6 +33,8 @@ sending user's side.
   style keywords — the same per-piece decomposition pattern meta-styles'
   Milestone 2 look-card assembler now formalises with explicit fit rules.
 
+- Read API added 2026-10-28 (prior-work maintenance, not hackathon work): bearer-token `GET /ig/shares` + `GET /ig/media/<id>` + `DELETE /ig/media/<id>` (bot deletes its copy once meta-styles has collected an image), served **only on this machine** at `127.0.0.1:8903` (never via Cloudflare); direct photos now recorded and all attachments downloaded on receipt by the receiver itself (before this, downloads were done by hand). Spec: `docs/instagram-bot-api.md`.
+
 ## Why it's relevant to meta-styles
 
 SecondBloom proved the hard infrastructure problem — getting a real photo
@@ -42,18 +44,21 @@ link, no dashboard). meta-styles reuses that lesson (design for the ordinary
 user first) and is a separate, self-contained web app built fresh during
 the hackathon window.
 
-**Planned extension (decided 2026-10-28, not yet built):** Autumn will add
-a read-only API (`GET /ig/shares`, `GET /ig/media/<id>` — full spec in
-`docs/instagram-bot-api.md`) to this existing SecondBloom deployment
-herself. That addition is **maintenance of this prior-work project**, built
-outside this repo, and must never be presented in the hackathon
-submission/demo as something built during the hackathon window. Once it
-exists, meta-styles' Milestone 9 client module (new, hackathon-built, lives
-in `app/`) will call it to replace the Milestone 5 fixture-only bridge —
-at that point this repo *does* depend on the bot's API at runtime, which is
-fine (a thin client calling a documented API is the new work; the bot and
-its existing webhook/receiver logic remain prior work, untouched in
-substance).
+**Extension (built 2026-10-28 as maintenance of this prior-work project,
+outside this repo):** Autumn had a local-only API (`GET /ig/shares`,
+`GET /ig/media/<id>`, `DELETE /ig/media/<id>` — full spec in
+`docs/instagram-bot-api.md`) added to this existing SecondBloom deployment,
+along with two receiver fixes (direct photos are now recorded; media is
+downloaded on arrival). All of that is **maintenance of this prior-work
+project**, lives outside this repo, and must never be presented in the
+hackathon submission/demo as something built during the hackathon window.
+meta-styles' Milestone 9 client module (new, hackathon-built, lives in
+`app/`, not yet written) calls it to replace the Milestone 5 fixture-only
+bridge — at that point this repo depends on the bot's API at runtime, which
+is fine: a thin client calling a documented API is the new work; the bot
+remains prior work. Because the API is local-only, that live path works
+only on the machine running the bot; elsewhere the fixture bridge is the
+fallback.
 
 ## Full detail
 

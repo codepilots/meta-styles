@@ -1,7 +1,7 @@
-# Instagram bot read API — contract spec (Milestone 9, APPROVED for bot-side build, by Autumn — not part of this repo)
+# Instagram bot read API — contract spec (Milestone 9; bot side IMPLEMENTED 2026-10-28 as prior-work maintenance, outside this repo)
 
-Status: **approved, auth decided** (Autumn, 2026-10-28) — Autumn will add
-this API to the existing SecondBloom `igwebhook` deployment herself, as
+Status: **implemented on the bot** (2026-10-28) — Autumn had the API added
+to the existing SecondBloom `igwebhook` deployment, as
 maintenance of that prior-work project, authenticated via a bearer token
 stored in `.env/secrets`. That bot-side work is **not** part of this repo
 and must never be presented as hackathon-built — `docs/prior-work-instagram.md`
@@ -27,8 +27,9 @@ separate prior-work service, this repo only gains a thin client.
 
 ## Proposed contract (all NEW — none of this exists on the bot today)
 
-Base: `https://www.codepilots.co.uk/ig` (same host as the existing
-`/ig/webhook` receiver; path prefix only, not a live endpoint).
+Base: ~~`https://www.codepilots.co.uk/ig`~~ — **superseded (Autumn,
+2026-10-28): the API is local-only at `http://127.0.0.1:8903`**, not on
+the public host. See "As implemented" below.
 
 - `GET /ig/shares?since=<cursor>&limit=<n>` → `200`
   `{ "items": [<share>], "next_cursor": "<opaque>" }`.
@@ -105,9 +106,23 @@ bot API is live, to describe it there as prior-work infrastructure.
 **Resolved (Autumn, 2026-10-28): auth is a bearer token in `.env/secrets`**
 (see Auth section above) — retires the item that was the biggest blocker.
 
-1. Do share items need sender identity at all (privacy: currently no sender
-   field is specified), and how long should the bot retain `data/media/`
-   files for re-fetch?
+1. ~~Sender identity~~ — resolved: not exposed. ~~Media retention~~ — resolved (Autumn, 2026-10-28): the bot deletes its copy once the client acknowledges collection with DELETE /ig/media/<id>; uncollected media stays until collected.
+
+## As implemented (bot side) — differences from the draft
+
+Source of truth: `~/secure-webserver/igwebhook/app.py` (prior-work service, not in this repo; 40 unit tests there).
+
+- **Local-only (Autumn, 2026-10-28):** the API is served **only** at `http://127.0.0.1:8903` on the machine running the bot. It is not reachable via `www.codepilots.co.uk`, Cloudflare, the tailnet or the LAN (no nginx route; port bound to 127.0.0.1; requests carrying proxy headers get `404`). This supersedes the draft's public base URL above. Consequence: the live Instagram input path only works when meta-styles runs on that same machine; anywhere else (incl. a judge's browser) the Milestone 5 fixture bridge is the fallback.
+
+- **Cursor** is the 0-based line offset into the bot's append-only `shares.jsonl`, as a decimal string (treat as opaque). First call omits `since`. No new items → `200` with `"items": []` and the same cursor.
+- **Item shape** adds `media_available: bool` (false until the background download finishes or if it failed). `id` = Instagram message `mid`; `received_at` = ISO-8601 UTC (`2026-10-14T20:08:56Z`). **Omitted for privacy:** sender IGSID, account id, message text — resolves open question 1 (sender identity: not exposed).
+- **Direct photos are now recorded** (`attachment.type == "image"`); their `media_id` is `img_` + first 24 hex chars of `sha256("<mid>:<attachment index>")`.
+- **Media** is downloaded on receipt (10 s timeout, 15 MB cap) to the bot's `data/media/<media_id>`; `GET /ig/media/<id>` returns it with a sniffed `Content-Type`, `404` if absent. The expiring `lookaside` URL in `payload.url` is informational only.
+- **Status codes:** `503` API disabled (no token configured), `401` + `WWW-Authenticate: Bearer realm="ig"`, `400` bad paging (`limit` 1–50), `404`, `413` (>15 MB).
+- **CORS:** only the origin in the bot's `IG_API_ALLOW_ORIGIN` (default `http://localhost:8000`, the demo origin). Preflight `204`; other origins `403`.
+- **Caching:** `Cache-Control: no-store` (JSON) / `private, no-store` (media).
+- **Collect-then-delete (Autumn, 2026-10-28):** new endpoint `DELETE /ig/media/<id>` → `204`. The client must call it **after** it has stored or used the image (e.g. once the look-card pipeline has the bytes in hand), never before; the bot then deletes its copy, `GET /ig/media/<id>` returns `404`, and the item's `media_available` becomes `false`. Unknown id → `404`. Same auth, local-only and proxy rules as the GETs; CORS preflight allows `DELETE`. Nothing is deleted on GET alone — an image the client never acknowledges stays on the bot.
+- **Client credential:** `ig-bot-token` in `.env/secrets`. A static browser app cannot keep a secret — the Milestone 9 client must decide how the token reaches the browser (see plan risks). The token can read shares/media and delete collected media; it is usable only on this machine.
 
 ## Cross-references
 
