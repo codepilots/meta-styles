@@ -503,6 +503,26 @@ the loop that reads it, then the surface and the tape.
    API key); update M16/M18 flows to the chat surface; roadmap + plan
    status lines agree. Verify: key/token grep clean; no real-DM data
    in fixtures; M10-conflict resolution recorded (see §8.7).
+8. **19h (added 2026-10-29, after the original 7) — mock-bot catalog
+   persistence + encryption parity.** `app/wardrobe-catalog.js` (19c)
+   only holds its per-user wardrobe in browser memory today — the M11
+   seam was left as a sketch comment, no backing store. The real bot
+   (`igwebhook`, prior work, NOT this repo) just gained a local-only
+   `PUT/GET /ig/catalog/<user_ref>` API plus a planned per-user-derived-
+   key encryption layer (Milestones A/B in
+   `~/secure-webserver/igwebhook/docs/data-management-and-consent.md`).
+   This milestone mirrors ONLY that contract onto `mock-ig-bot/server.js`
+   — same `user_ref` shape, whole-array-replace semantics, and per-user
+   AES-256-GCM encryption via Node's built-in `crypto` (no new npm
+   dependency, unlike the real bot's pending `cryptography` PyPI
+   question) — then wires `wardrobe-catalog.js`'s M11 seam to call it
+   instead of staying memory-only. Does NOT touch `igwebhook` at all —
+   that stays Claude's/Autumn's track per the compliance skill's
+   prior-work boundary. Verify: `node`-runnable store/retrieve
+   round-trip, last-write-wins, malformed-`user_ref` rejection, and
+   proof the on-disk file is ciphertext (read it raw, confirm it is NOT
+   valid JSON/plaintext piece data) with correct decrypt-on-read. Full
+   suite stays green.
 
 ## 8. Open questions for Autumn — ALL 8 RESOLVED 2026-10-29, plus one NEW
 
