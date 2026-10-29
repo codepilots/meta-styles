@@ -49,9 +49,24 @@
   // needs to change. There is deliberately no query-param override.
   var BOT_BASE = "http://127.0.0.1:8904";
   // LIVE_IG=1 runtime override: app/ig-runtime-config.js sets
-  // window.__IG_RUNTIME__.botBase to the real bot. Default stays mock.
+  // window.__IG_RUNTIME__.botBase to the same-origin proxy prefix ("/ig").
+  // Default stays mock. Absolute bases (older configs, explicit overrides)
+  // keep working unchanged via joinBase below.
   var RT = (typeof globalThis !== "undefined" && globalThis.__IG_RUNTIME__) || {};
   if (RT.botBase) BOT_BASE = RT.botBase;
+
+  // Join a configured base with a "/ig/..." path without doubling the
+  // prefix: joinBase("/ig", "/ig/shares") === "/ig/shares", while absolute
+  // bases concatenate as before. (Same tiny helper is duplicated in
+  // wardrobe-catalog.js, send-client.js, and meta-client.js — this static
+  // app has no shared module, so each file stays standalone for Node tests.)
+  function joinBase(base, path) {
+    var b = String(base === undefined || base === null ? "" : base);
+    if (b.length > 1) b = b.replace(/\/+$/, "");
+    else if (b === "/") b = "";
+    if (b && path.indexOf(b + "/") === 0) return path;
+    return b + path;
+  }
   var TOKEN_URL = "ig-bot-token.local.json";
   var TOKEN_STORAGE_KEY = "igBotToken";
   var FIXTURE_URL = "inbox-fixtures/shares.jsonl";
@@ -176,6 +191,7 @@
     isValidShareItem: isValidShareItem,
     parseJsonLines: parseJsonLines,
     buildSharesUrl: buildSharesUrl,
+    joinBase: joinBase,
   };
   if (typeof globalThis !== "undefined") globalThis.InboxBridge = InboxBridgePure;
   if (typeof module !== "undefined" && module.exports) module.exports = InboxBridgePure;
@@ -242,7 +258,7 @@
   }
 
   function botGet(path, token) {
-    return fetch(BOT_BASE + path, { headers: authHeaders(token) });
+    return fetch(joinBase(BOT_BASE, path), { headers: authHeaders(token) });
   }
 
   // Fetch one shares page. Resolves { items, nextCursor } with malformed
@@ -439,7 +455,7 @@
   // Collect-then-delete acknowledgement: ONLY after the bytes are in hand and
   // handed to the pipeline. Failures are reported but never break the UI.
   function acknowledgeMedia(item, token) {
-    fetch(BOT_BASE + "/ig/media/" + encodeURIComponent(item.media_id), {
+    fetch(joinBase(BOT_BASE, "/ig/media/" + encodeURIComponent(item.media_id)), {
       method: "DELETE",
       headers: authHeaders(token),
     }).then(

@@ -13,8 +13,26 @@
  * Preview images are cached in-memory only (too large for localStorage).
  */
 (function (root) {
-  var PROXY_BASE = "http://127.0.0.1:8905";
+  // LIVE_IG=1 runtime override: app/ig-runtime-config.js sets
+  // window.__IG_RUNTIME__.proxyBase to the same-origin proxy prefix ("/api").
+  // Default stays the local proxy address (judged mock path serves from
+  // localhost:8000, which the proxy's CORS allowlist trusts).
+  var _RT = (typeof globalThis !== "undefined" && globalThis.__IG_RUNTIME__) || {};
+  var PROXY_BASE = _RT.proxyBase || "http://127.0.0.1:8905";
   var memCache = {};
+
+  // Join a configured base with a path without doubling the prefix:
+  // joinBase("/api", "/api/segment") === "/api/segment", while absolute
+  // bases concatenate as before. (Same tiny helper is duplicated in
+  // inbox-bridge.js, wardrobe-catalog.js, and send-client.js — this static
+  // app has no shared module, so each file stays standalone for Node tests.)
+  function joinBase(base, path) {
+    var b = String(base === undefined || base === null ? "" : base);
+    if (b.length > 1) b = b.replace(/\/+$/, "");
+    else if (b === "/") b = "";
+    if (b && path.indexOf(b + "/") === 0) return path;
+    return b + path;
+  }
 
   function fnv(str) {
     var h = 0x811c9dc5;
@@ -43,7 +61,7 @@
   function post(path, body, timeoutMs) {
     var ctrl = typeof AbortController !== "undefined" ? new AbortController() : null;
     var timer = ctrl ? setTimeout(function () { ctrl.abort(); }, timeoutMs || 120000) : null;
-    return fetch(PROXY_BASE + path, {
+    return fetch(joinBase(PROXY_BASE, path), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
@@ -65,7 +83,9 @@
   }
 
   function health() {
-    return fetch(PROXY_BASE + "/health").then(function (res) {
+    // With the relative "/api" base this requests "/api/health", which the
+    // live-proxy maps to the Meta API proxy's GET /health route.
+    return fetch(joinBase(PROXY_BASE, "/health")).then(function (res) {
       if (!res.ok) throw new Error("proxy HTTP " + res.status);
       return res.json();
     });
@@ -121,6 +141,7 @@
 
   var client = {
     PROXY_BASE: PROXY_BASE,
+    joinBase: joinBase,
     health: health, segment: segment, classify: classify,
     copy: copy, assemble: assemble, preview: preview,
     cardSignature: cardSignature,

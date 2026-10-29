@@ -28,6 +28,19 @@
   var SEND_BASE = _RT.sendBase || _RT.botBase || "http://127.0.0.1:8904";
   var RUNTIME_SEND_TOKEN = _RT.sendToken || "";
 
+  // Join a configured base with a "/ig/..." path without doubling the
+  // prefix: joinBase("/ig", "/ig/send") === "/ig/send", while absolute
+  // bases concatenate as before. (Same tiny helper is duplicated in
+  // inbox-bridge.js, wardrobe-catalog.js, and meta-client.js — this static
+  // app has no shared module, so each file stays standalone for Node tests.)
+  function joinBase(base, path) {
+    var b = String(base === undefined || base === null ? "" : base);
+    if (b.length > 1) b = b.replace(/\/+$/, "");
+    else if (b === "/") b = "";
+    if (b && path.indexOf(b + "/") === 0) return path;
+    return b + path;
+  }
+
   var keyCounter = 0;
 
   // Fresh idempotency key per deliberate turn. SYNTH_-prefixed like the
@@ -127,7 +140,7 @@
     var lastTurn = null; // {key, payload} of the most recent sendTurn
 
     function authed(path, body) {
-      return root.fetch(base + path, {
+      return root.fetch(joinBase(base, path), {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -194,6 +207,7 @@
 
   var api = {
     SEND_BASE: SEND_BASE,
+    joinBase: joinBase,
     newKey: newKey,
     buildPayload: buildPayload,
     isEcho: isEcho,

@@ -86,10 +86,24 @@
 
   // Milestone 19h — catalog API base. Defaults to mock bot 8904;
   // LIVE_IG=1 injects app/ig-runtime-config.js -> window.__IG_RUNTIME__
-  // with catalogBase + catalogToken for the real bot on 8903.
+  // with catalogBase + catalogToken for the real bot (same-origin proxy
+  // prefix "/ig" — see joinBase; absolute bases keep working unchanged).
   var _RT = (typeof globalThis !== "undefined" && globalThis.__IG_RUNTIME__) || {};
   var CATALOG_BASE = _RT.catalogBase || _RT.botBase || "http://127.0.0.1:8904";
   var RUNTIME_CATALOG_TOKEN = _RT.catalogToken || "";
+
+  // Join a configured base with a "/ig/..." path without doubling the
+  // prefix: joinBase("/ig", "/ig/catalog/x") === "/ig/catalog/x", while
+  // absolute bases concatenate as before. (Same tiny helper is duplicated
+  // in inbox-bridge.js, send-client.js, and meta-client.js — this static
+  // app has no shared module, so each file stays standalone for Node tests.)
+  function joinBase(base, path) {
+    var b = String(base === undefined || base === null ? "" : base);
+    if (b.length > 1) b = b.replace(/\/+$/, "");
+    else if (b === "/") b = "";
+    if (b && path.indexOf(b + "/") === 0) return path;
+    return b + path;
+  }
 
   // Same result shape as send-client.normalizeResult(): HTTP statuses
   // resolve (surfaced), only a network failure resolves as status 0
@@ -126,7 +140,7 @@
     var userRef = o.userRef || "";
 
     function url() {
-      return base + "/ig/catalog/" + encodeURIComponent(userRef);
+      return joinBase(base, "/ig/catalog/" + encodeURIComponent(userRef));
     }
 
     function authed(method, body) {
@@ -648,6 +662,7 @@
     TURN_KEYS: TURN_KEYS,
     REPLY_WINDOW_MS: REPLY_WINDOW_MS,
     CATALOG_BASE: CATALOG_BASE,
+    joinBase: joinBase,
     createCatalog: createCatalog,
     createCatalogStore: createCatalogStore,
   };

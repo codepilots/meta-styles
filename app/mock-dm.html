@@ -70,10 +70,12 @@
         (non-secret demo value; the real bot token never goes here).</li>
       <li>Live mode (real Instagram bot, same computer only): start with
         <code>LIVE_IG=1 sh start.sh</code> from the repo root, then open
-        <code>http://localhost:8000/mock-dm.html</code> directly in a browser
-        on that same computer — <strong>not</strong> the remote (Tailscale)
-        link. The live bot deliberately trusts only that one local address,
-        so the remote link loads the page but can never reach the bot.</li>
+        <code>http://localhost:8000/mock-dm.html</code> — or the remote
+        (Tailscale) link to this same server. Either address works: the page
+        only ever talks to its own origin (relative <code>/ig</code> and
+        <code>/api</code> paths) and the live-proxy on this server hops to
+        the bot from there, so there is no cross-origin or mixed-content
+        request for the browser to block.</li>
     </ol>
     <h2>How to share a photo</h2>
     <p>Pick an image file below (or drag-drop it onto the thread) and hit
@@ -232,20 +234,14 @@ var lastOutboundTotal = 0;
 // the live connection field, never hardcoded here.
 var RT0 = (typeof globalThis !== "undefined" && globalThis.__IG_RUNTIME__) || {};
 var IS_LIVE = !!(RT0.botBase);
-var BOT_LABEL = IS_LIVE ? String(RT0.botBase) : "http://127.0.0.1:8904";
+var BOT_LABEL = IS_LIVE
+  ? (String(RT0.botBase).charAt(0) === "/"
+      ? window.location.origin + String(RT0.botBase) + " (same-origin proxy on this server)"
+      : String(RT0.botBase))
+  : "http://127.0.0.1:8904";
 var seenShareIds = {}; // share id -> true (so only genuinely new arrivals announce)
 var bannerPrimed = false; // first poll primes the seen-set; announcements start after
 var lastCheckedAt = null;
-
-function pageIsLocalHttp() {
-  try {
-    var h = String(window.location.hostname || "");
-    return window.location.protocol === "http:" &&
-      (h === "localhost" || h === "127.0.0.1" || h === "::1" || h === "[::1]");
-  } catch (e) {
-    return true;
-  }
-}
 
 function setConnMode() {
   var el = document.getElementById("connMode");
@@ -296,6 +292,18 @@ function base() {
   return document.getElementById("mockBase").value.replace(/\/+$/, "");
 }
 
+// Same-origin join: with the LIVE relative base ("/ig") the "/ig/..."
+// paths below must not double the prefix; absolute bases (mock default,
+// older configs) concatenate as before. Mirrors joinBase in
+// inbox-bridge.js / send-client.js.
+function joinBase(base, path) {
+  var b = String(base == null ? "" : base);
+  if (b.length > 1) b = b.replace(/\/+$/, "");
+  else if (b === "/") b = "";
+  if (b && path.indexOf(b + "/") === 0) return path;
+  return b + path;
+}
+
 function token() {
   return document.getElementById("mockToken").value.trim();
 }
@@ -313,7 +321,7 @@ function authed(path, opts) {
   if (RT2.sendToken && path.indexOf("/ig/send") === 0) tok = RT2.sendToken;
   if (RT2.catalogToken && path.indexOf("/ig/catalog") === 0) tok = RT2.catalogToken;
   o.headers.Authorization = "Bearer " + tok;
-  return fetch(base() + path, o);
+  return fetch(joinBase(base(), path), o);
 }
 
 function setStatus(text) {
@@ -529,11 +537,7 @@ function refreshThread() {
   }).catch(function (err) {
     setStatus("Mock: " + err.message + " — is node mock-ig-bot/server.js running?");
     var msg = err && err.message ? err.message : String(err);
-    if (IS_LIVE && !pageIsLocalHttp()) {
-      setConnHealth(false, "Not connected — wrong page address. Open this page " +
-        "directly as shown in the README (on the computer running the bot), " +
-        "not the remote link: the live bot only trusts that one local address.");
-    } else if (msg.indexOf("401") !== -1 || msg.indexOf("login token") !== -1) {
+    if (msg.indexOf("401") !== -1 || msg.indexOf("login token") !== -1) {
       setConnHealth(false, IS_LIVE
         ? "Not connected — the bot didn't accept this page's login token. " +
           "Check the Token box above matches the bot's current token, then hit Refresh thread."

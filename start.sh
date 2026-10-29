@@ -24,6 +24,12 @@
 #   8904. The browser runtime config (app/ig-runtime-config.js) is generated
 #   from local secrets and removed on exit. Requires the real bot already
 #   running on 127.0.0.1:8903 (local-only, no nginx/public route).
+#   The page is served by live-proxy-server.js (not python http.server):
+#   the browser only ever talks to its OWN origin via the relative bases
+#   "/ig" and "/api", and the proxy does the server-to-server hop to
+#   127.0.0.1:8903 / 127.0.0.1:8905. That keeps the Tailscale https link
+#   working (no CORS preflight, no mixed-content fetch) with zero change
+#   to the real bot's CORS config (~/secure-webserver/igwebhook is untouched).
 #
 # Stop: Ctrl-C (all processes are cleaned up).
 set -eu
@@ -40,6 +46,14 @@ RUNTIME_CONFIG="app/ig-runtime-config.js"
 command -v node >/dev/null 2>&1 || { echo "start.sh: node is required" >&2; exit 1; }
 command -v python3 >/dev/null 2>&1 || { echo "start.sh: python3 is required" >&2; exit 1; }
 [ -f meta-api-proxy/server.js ] || { echo "start.sh: run from the repo root" >&2; exit 1; }
+
+# Localhost must never go through an HTTP proxy (sandboxed runners and
+# corporate networks both set http_proxy without a localhost exception).
+# Exported BEFORE any child process starts: Node snapshots proxy config at
+# startup, so a later export would not cover the servers below (notably the
+# live-proxy's server-to-server hops to 127.0.0.1:8903/8905).
+export NO_PROXY="127.0.0.1,localhost,${NO_PROXY:-}"
+export no_proxy="$NO_PROXY"
 
 # Key resolution: explicit env wins; else parse .env/secrets (hyphenated
 # names are not valid shell variables, so never `source` it); else empty
@@ -119,7 +133,15 @@ storage_tok = pick("ig-storage-token", "ig_storage_token", "ig-store-token",
                    "IG_API_STORAGE_TOKEN", "ig_catalog_token")
 send_tok = pick("ig-send-token", "ig_send_token", "IG_API_SEND_TOKEN")
 
-live_base = os.environ.get("LIVE_BOT_BASE", "http://127.0.0.1:8903")
+# Browser-side bases are RELATIVE through this repo's live-proxy-server.js
+# (same-origin: the page only talks to the origin it loaded from, so both
+# localhost:8000 and the Tailscale https link work). The proxy does the
+# server-to-server hop to the real bot / Meta API proxy, so no absolute
+# 127.0.0.1 literals or cross-origin fetches remain in the live browser path.
+# LIVE_BOT_BASE is still honored as the proxy's upstream bot target (see the
+# --bot flag below); it just never reaches the browser anymore.
+live_base = "/ig"
+proxy_base = "/api"
 out_path = "app/ig-runtime-config.js"
 # Validate we have at least the read token; storage/send may be absent
 # (catalog/send will 401 gracefully if unset on the bot side).
@@ -133,6 +155,7 @@ cfg = {
     "botBase": live_base,
     "catalogBase": live_base,
     "sendBase": live_base,
+    "proxyBase": proxy_base,
     "readToken": read_tok,
     "catalogToken": storage_tok,
     "sendToken": send_tok,
@@ -158,7 +181,15 @@ if [ -z "$LIVE_IG" ]; then
 else
   MOCK_PID=""
 fi
-python3 -m http.server "$STATIC_PORT" --directory app >/dev/null 2>&1 &
+# Mock mode keeps the plain python static server exactly as before.
+# Live mode serves app/ through live-proxy-server.js instead, so the browser
+# only ever talks to its own origin (relative /ig + /api bases) while the
+# proxy hops server-to-server to the bot and the Meta API proxy.
+if [ -z "$LIVE_IG" ]; then
+  python3 -m http.server "$STATIC_PORT" --directory app >/dev/null 2>&1 &
+else
+  node live-proxy-server.js --port "$STATIC_PORT" --bot "$LIVE_BOT_BASE" --proxy "http://127.0.0.1:$PROXY_PORT" >/dev/null 2>&1 &
+fi
 STATIC_PID=$!
 
 cleanup() {
@@ -175,10 +206,7 @@ cleanup() {
 trap cleanup INT TERM EXIT
 
 # Wait for all to answer before handing the judge a URL.
-# Localhost must never go through an HTTP proxy (sandboxed runners and
-# corporate networks both set http_proxy without a localhost exception).
-export NO_PROXY="127.0.0.1,localhost,${NO_PROXY:-}"
-export no_proxy="$NO_PROXY"
+# (NO_PROXY is exported near the top so child processes inherit it at startup.)
 ok=1
 i=0
 if [ -n "$LIVE_IG" ]; then
@@ -203,7 +231,8 @@ if [ -n "$LIVE_IG" ]; then
   echo "  proxy health:            http://127.0.0.1:$PROXY_PORT/health"
   echo "  live bot health:         http://127.0.0.1:8903/healthz (local-only)"
   echo "  runtime config:          $RUNTIME_CONFIG (generated, removed on exit)"
-  echo "Press Ctrl-C to stop proxy + static (live bot keeps running separately)."
+  echo "  same-origin proxy:       live-proxy-server.js serves app/ + proxies /ig/* -> 8903, /api/* -> $PROXY_PORT"
+  echo "Press Ctrl-C to stop meta-proxy + live-proxy (live bot keeps running separately)."
 else
   while [ "$i" -lt 50 ]; do
     if curl --noproxy '*' -fsS "http://127.0.0.1:$PROXY_PORT/health" >/dev/null 2>&1 \
