@@ -89,7 +89,7 @@
       <label>Mock base <input id="mockBase" type="text" size="28" value="http://127.0.0.1:8904"></label>
       <label>Token <input id="mockToken" type="text" size="24" value="SYNTH_mock_token"></label>
       <button type="button" id="refreshBtn">Refresh thread</button>
-      <label class="check"><input type="checkbox" id="autoPoll" checked> Auto-refresh (5s)</label>
+      <label class="check"><input type="checkbox" id="autoPoll" checked> Auto-refresh (5s active · 30s after 10 min idle · stops when idle/hidden)</label>
     </div>
     <p class="hint" id="connHint">Same credential story as the inbox bridge: the mock checks this Bearer [REDACTED] a wrong one shows the identical “check bot credential” 401 path.</p>
   </section>
@@ -156,6 +156,7 @@
   </section>
 </main>
 
+<script src="poll-scheduler.js"></script>
 <script>
 (function () {
 "use strict";
@@ -169,6 +170,15 @@ var lookStore = {}; // message_id -> {title, fit, pieces[]} text part of a full-
 var lookByShareText = {}; // share_id + "\n" + text -> look parts fallback (server log carries text only)
 var pollTimer = null;
 var lastKey = null;
+// Milestone 19f: designed polling cadence (§4 Gap 3) driven by the shared
+// poll-scheduler module — 5s active, 30s after 10 min idle, stopped after
+// 30 min idle or while the tab is hidden. Same bot endpoints as 19a-19e,
+// no new hosts.
+var pollModule = (window.MetaStyles && window.MetaStyles.pollScheduler) || null;
+var scheduler = pollModule ? pollModule.createPollScheduler({}) : null;
+var lastSharesById = {}; // share id -> received_at (for the user-anchored window check)
+var lastShareTotal = 0;
+var lastOutboundTotal = 0;
 
 function base() {
   return document.getElementById("mockBase").value.replace(/\/+$/, "");
@@ -351,6 +361,7 @@ function refreshThread() {
       all.forEach(function (row) { threadEl.appendChild(row.el); });
     }
     refreshShareSelect(parts[0].items || []);
+    notePolledItems(parts[0].items || [], (parts[1] && parts[1].outbound) || []);
     setStatus("Mock: live (" + parts[0].items.length + " shares, " + outs.length + " sent).");
   }).catch(function (err) {
     setStatus("Mock: " + err.message + " — is node mock-ig-bot/server.js running?");
@@ -390,10 +401,81 @@ function newKey() {
   return "SYNTH_key_" + Date.now() + "_" + Math.floor(Math.random() * 1e9);
 }
 
+// Milestone 19f helpers: user-anchored window + adaptive cadence. The
+// window is measured against THIS user's latest inbound received_at
+// (user-keyed, matching the 19c catalog anchor — never per-share).
+function latestInboundAt() {
+  var latest = null;
+  Object.keys(lastSharesById).forEach(function (id) {
+    var at = lastSharesById[id];
+    if (typeof at === "string" && (latest === null || at > latest)) latest = at;
+  });
+  return latest;
+}
+
+function notePolledItems(items, outbound) {
+  lastSharesById = {};
+  items.forEach(function (item) {
+    if (item && item.id) lastSharesById[item.id] = item.received_at;
+  });
+  if (!scheduler) {
+    lastShareTotal = items.length;
+    lastOutboundTotal = outbound.length;
+    return;
+  }
+  var fresh = Math.max(0, items.length - lastShareTotal) +
+    Math.max(0, outbound.length - lastOutboundTotal);
+  lastShareTotal = items.length;
+  lastOutboundTotal = outbound.length;
+  scheduler.noteInboundPoll(fresh);
+}
+
+// Pre-send user-anchored 24h check: when the window has lapsed, return
+// the honest 422 text to render (in resultEl / in-thread) INSTEAD of
+// attempting the POST. Returns null when the send may proceed (no
+// anchor yet, or window open — the server still rules per send).
+function preSendWindowBlock() {
+  if (!pollModule) return null;
+  var latest = latestInboundAt();
+  if (!latest) return null;
+  if (pollModule.isWindowOpen(latest, Date.now())) return null;
+  if (scheduler) scheduler.noteOperatorAction(Date.now());
+  return pollModule.lapsedWindowText();
+}
+
+function scheduleNextPoll() {
+  if (pollTimer) {
+    clearTimeout(pollTimer);
+    pollTimer = null;
+  }
+  if (!document.getElementById("autoPoll").checked) return;
+  if (!scheduler) {
+    pollTimer = setTimeout(function () {
+      refreshThread().then(scheduleNextPoll, scheduleNextPoll);
+    }, 5000);
+    return;
+  }
+  var delay = scheduler.intervalAt(Date.now(), document.hidden);
+  if (delay === null) {
+    setStatus("Mock: polling paused (idle or tab hidden) — resumes on your next action or when the tab is visible again.");
+    return;
+  }
+  pollTimer = setTimeout(function () {
+    refreshThread().then(scheduleNextPoll, scheduleNextPoll);
+  }, delay);
+}
+
+// Any operator/user action resumes the 5s cadence from stopped/backoff.
+function pokeScheduler() {
+  if (scheduler) scheduler.noteOperatorAction(Date.now());
+  scheduleNextPoll();
+}
+
 function shareTextAsUser() {
   var input = document.getElementById("chatText");
   var text = input.value.trim();
   if (!text) return;
+  pokeScheduler();
   authed("/mock/incoming-text", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -409,6 +491,7 @@ function shareTextAsUser() {
 
 function sharePhotoFile(file) {
   if (!file) return;
+  pokeScheduler();
   var caption = document.getElementById("photoCaption").value;
   var pending = document.getElementById("photoPending").checked;
   var path = "/mock/incoming-photo" + (pending ? "?pending=1" : "");
@@ -435,6 +518,13 @@ function sendAsApp() {
     resultEl.className = "hint sendresult-err";
     return;
   }
+  var blocked = preSendWindowBlock();
+  if (blocked) {
+    resultEl.textContent = blocked;
+    resultEl.className = "hint sendresult-err";
+    return;
+  }
+  if (scheduler) scheduler.setPendingTurn(true);
   var key = document.getElementById("reuseKey").checked && lastKey ? lastKey : newKey();
   function doSend(withImage) {
     return authed("/ig/send", {
@@ -462,6 +552,8 @@ function sendAsApp() {
           JSON.stringify(out.body) + ".";
         resultEl.className = "hint sendresult-err";
       }
+      if (scheduler) scheduler.setPendingTurn(false);
+      pokeScheduler();
       return refreshThread();
     });
   }
@@ -477,11 +569,15 @@ function sendAsApp() {
       if (!res.ok) throw new Error("stage HTTP " + res.status);
       return doSend(true);
     }).catch(function (err) {
+      if (scheduler) scheduler.setPendingTurn(false);
+      pokeScheduler();
       resultEl.textContent = "Not sent: " + err.message + ".";
       resultEl.className = "hint sendresult-err";
     });
   } else {
     doSend(false).catch(function (err) {
+      if (scheduler) scheduler.setPendingTurn(false);
+      pokeScheduler();
       resultEl.textContent = "Not sent: " + err.message + ".";
       resultEl.className = "hint sendresult-err";
     });
@@ -502,6 +598,13 @@ function proposeLook() {
     result.className = "hint sendresult-err";
     return;
   }
+  var lookBlocked = preSendWindowBlock();
+  if (lookBlocked) {
+    result.textContent = lookBlocked;
+    result.className = "hint sendresult-err";
+    return;
+  }
+  if (scheduler) scheduler.setPendingTurn(true);
   var text = title + (fit ? " — " + fit : "");
   if (pieces.length) text += "\n" + pieces.join("\n");
   var key = newKey();
@@ -534,6 +637,8 @@ function proposeLook() {
           JSON.stringify(out.body) + ".";
         result.className = "hint sendresult-err";
       }
+      if (scheduler) scheduler.setPendingTurn(false);
+      pokeScheduler();
       return refreshThread();
     });
   }
@@ -549,11 +654,15 @@ function proposeLook() {
       if (!res.ok) throw new Error("stage HTTP " + res.status);
       return doSend(true);
     }).catch(function (err) {
+      if (scheduler) scheduler.setPendingTurn(false);
+      pokeScheduler();
       result.textContent = "Not sent: " + err.message + ".";
       result.className = "hint sendresult-err";
     });
   } else {
     doSend(false).catch(function (err) {
+      if (scheduler) scheduler.setPendingTurn(false);
+      pokeScheduler();
       result.textContent = "Not sent: " + err.message + ".";
       result.className = "hint sendresult-err";
     });
@@ -569,8 +678,12 @@ document.getElementById("sharePhotoBtn").addEventListener("click", function () {
   sharePhotoFile(document.getElementById("photoInput").files[0] || null);
 });
 document.getElementById("sendBtn").addEventListener("click", sendAsApp);
-document.getElementById("refreshBtn").addEventListener("click", refreshThread);
+document.getElementById("refreshBtn").addEventListener("click", function () {
+  pokeScheduler();
+  refreshThread().then(scheduleNextPoll, scheduleNextPoll);
+});
 document.getElementById("staleBtn").addEventListener("click", function () {
+  pokeScheduler();
   authed("/mock/incoming-text?age_hours=30", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -599,16 +712,30 @@ threadEl.addEventListener("drop", function (ev) {
   if (file) sharePhotoFile(file);
 });
 document.getElementById("autoPoll").addEventListener("change", function (ev) {
+  if (scheduler) scheduler.setEnabled(ev.target.checked);
   if (pollTimer) {
-    clearInterval(pollTimer);
+    clearTimeout(pollTimer);
     pollTimer = null;
   }
   if (ev.target.checked) {
-    pollTimer = setInterval(refreshThread, 5000);
+    pokeScheduler();
+    refreshThread().then(scheduleNextPoll, scheduleNextPoll);
   }
 });
+// Milestone 19f resume: visibility/focus restarts the 5s cadence; while
+// hidden the scheduler stops polling entirely (intervalAt -> null).
+document.addEventListener("visibilitychange", function () {
+  if (!document.hidden) {
+    pokeScheduler();
+    refreshThread().then(scheduleNextPoll, scheduleNextPoll);
+  } else {
+    scheduleNextPoll();
+  }
+});
+window.addEventListener("focus", function () {
+  pokeScheduler();
+});
 
-refreshThread();
-pollTimer = setInterval(refreshThread, 5000);
+refreshThread().then(scheduleNextPoll, scheduleNextPoll);
 })();
 </script>
