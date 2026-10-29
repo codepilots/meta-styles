@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>meta-styles · Milestone 13 — Mock Instagram DM chat (demo harness)</title>
+<title>meta-styles · Milestone 19a — Chat shell with full-look bubbles (demo harness)</title>
 <link rel="stylesheet" href="styles.css">
 <style>
   .thread { display: flex; flex-direction: column; gap: 0.5rem; margin: 1rem 0; min-height: 4rem; }
@@ -12,6 +12,15 @@
   .bubble.outgoing { align-self: flex-end; background: #dfe9d8; }
   .bubble img { max-width: 100%; display: block; border-radius: 0.5rem; }
   .bubble .when { display: block; font-size: 0.75rem; color: #666; margin-top: 0.25rem; }
+  .bubble .look-text { text-align: left; }
+  .bubble .look-title { font-weight: 700; margin: 0 0 0.25rem; }
+  .bubble .look-meta { font-size: 0.8rem; color: #3c4a3e; margin: 0 0 0.25rem; }
+  .bubble .look-pieces { margin: 0.25rem 0 0.25rem 1rem; padding: 0; }
+  .bubble .look-pieces li { margin: 0 0 0.2rem; }
+  .bubble .look-fit { font-size: 0.85rem; margin: 0.25rem 0; }
+  .bubble .look-note { font-size: 0.75rem; color: #555; margin: 0.25rem 0 0; }
+  .bubble .staged-wrap { margin-top: 0.4rem; }
+  .bubble .staged-cap { display: block; font-size: 0.75rem; color: #555; margin-top: 0.2rem; }
   .empty-note { color: #666; }
   .thread.dragover { outline: 2px dashed #666; }
   .sendresult-ok { color: #1a6b1a; }
@@ -21,10 +30,13 @@
 <body>
 <header class="topbar">
   <div>
-    <h1>meta-styles <span class="milestone">Milestone 13 · Mock DM chat</span></h1>
+    <h1>meta-styles <span class="milestone">Milestone 19a · Chat shell</span></h1>
     <p class="sub">Demo harness only — a synthetic, offline Instagram-DM thread backed by the
       local mock bot. Nothing here touches real Instagram. The chat starts empty:
-      there is no seed data; share a photo below to put the first bubble in the thread.</p>
+      there is no seed data; share a photo below to put the first bubble in the thread.
+      Every assistant turn below is a full-look proposal from the wardrobe: the outgoing
+      bubble leads with what was catalogued, the complete look the catalog produced,
+      and what the fit-rule validator said — never the raw classify-a-photo step in isolation.</p>
   </div>
   <p id="mockStatus" class="status" role="status" aria-live="polite">Mock: unknown.</p>
 </header>
@@ -46,19 +58,23 @@
     <p>Pick an image file below (or drag-drop it onto the thread) and hit
       Share. The photo is injected into the mock as an inbound share
       (<code>POST /mock/incoming-photo</code>) and appears as an incoming
-      bubble. Then open <code>index.html</code> — its inbox, pointed at the
-      mock, lists the new share; “Use this photo” loads it into the viewer.</p>
+      bubble. Type a message below to add an inbound text turn
+      (<code>POST /mock/incoming-text</code>). Either trigger is answered
+      in-thread with a full-look bubble, never a standalone card panel.</p>
     <h2>How to trigger a send-as-app</h2>
     <p>Pick the share to reply to, type the reply text (and optionally stage a
       share-card image), then hit “Send as app”. The page issues a byte-identical
       <code>POST /ig/send</code> with <code>"confirm": true</code>; the text
       appears as an outgoing bubble, fed by the mock’s own send handler.</p>
-    <h2>How to point <code>index.html</code> at the mock</h2>
-    <p>No step needed: <code>app/inbox-bridge.js</code> ships with
-      <code>BOT_BASE</code> pointed at the mock
-      (<code>http://127.0.0.1:8904</code>). To use the real bot on Autumn’s own
-      machine instead, edit that one line to
-      <code>http://127.0.0.1:8903</code> (documented in a comment there).</p>
+    <h2>How to propose a full look as a bubble</h2>
+    <p>Pick the share to reply to, fill in the look title, the fit-rule verdict
+      line, and one line per piece, then optionally attach the look preview
+      image. “Propose look” stages that image with
+      <code>POST /mock/stage-outbound-image/&lt;share_id&gt;</code> and then
+      sends the turn with <code>POST /ig/send {"image": true}</code>. The
+      thread renders the result as one outgoing bubble: text part first
+      (title + fit note + per-piece lines within the shared 300-word budget),
+      staged-image part second.</p>
     <h2>Stale-share + duplicate-send demos</h2>
     <p>“Inject stale share” below adds a share backdated 30 hours: sending to
       it honestly returns <code>422 reply_window_expired</code>. Sending the
@@ -113,6 +129,31 @@
     <p class="hint" id="sendResult" role="status" aria-live="polite"></p>
     <p class="hint">Duplicate demo: send the same text twice with fresh keys → second send shows <code>409 duplicate_send</code>. Replay demo: tick the box and re-send → <code>200</code> with the stored <code>message_id</code>.</p>
   </section>
+
+  <section class="panel" aria-label="Propose look" id="lookPanel">
+    <h2>Propose full look as bubble</h2>
+    <p class="hint">The judged turn shape: a full-look proposal from the wardrobe catalog —
+      title + fit-rule verdict + one line per piece (shared 300-word budget), with the
+      look preview staged via <code>POST /mock/stage-outbound-image/&lt;share_id&gt;</code>.
+      Replies to either trigger above (inbound photo share or inbound text turn).</p>
+    <div class="row">
+      <label>Reply to <select id="lookShareId"></select></label>
+    </div>
+    <div class="row">
+      <input id="lookTitle" type="text" size="48" placeholder="Look title, e.g. Wrap dress + cardigan — valid full look">
+    </div>
+    <div class="row">
+      <input id="lookFit" type="text" size="48" placeholder="Fit-rule verdict, e.g. base + exactly one finish · valid ✔">
+    </div>
+    <div class="row">
+      <textarea id="lookPieces" rows="3" cols="48" placeholder="One piece per line, e.g. [dress] …"></textarea>
+    </div>
+    <div class="row">
+      <label>Look preview image (optional) <input id="lookImageFile" type="file" accept="image/*"></label>
+      <button type="button" id="lookBtn">Propose look</button>
+    </div>
+    <p class="hint" id="lookResult" role="status" aria-live="polite"></p>
+  </section>
 </main>
 
 <script>
@@ -124,6 +165,8 @@ var statusEl = document.getElementById("mockStatus");
 var resultEl = document.getElementById("sendResult");
 var mediaCache = {}; // media_id -> object URL
 var outboundPreview = {}; // share_id -> object URL of the staged image (this browser)
+var lookStore = {}; // message_id -> {title, fit, pieces[]} text part of a full-look bubble (this browser)
+var lookByShareText = {}; // share_id + "\n" + text -> look parts fallback (server log carries text only)
 var pollTimer = null;
 var lastKey = null;
 
@@ -207,20 +250,70 @@ function renderIncoming(item) {
   return div;
 }
 
+function lookPartsFor(entry) {
+  return lookStore[entry.message_id] ||
+    lookByShareText[entry.share_id + "\n" + entry.text] || null;
+}
+
+function renderLookText(container, look, fallbackText) {
+  var wrap = document.createElement("div");
+  wrap.className = "look-text";
+  if (look && (look.title || look.fit || (look.pieces && look.pieces.length))) {
+    var title = document.createElement("p");
+    title.className = "look-title";
+    title.textContent = look.title || fallbackText;
+    wrap.appendChild(title);
+    var meta = document.createElement("p");
+    meta.className = "look-meta";
+    meta.textContent = "Full-look proposal from your wardrobe · " + (look.fit || "fit-rule verdict pending");
+    wrap.appendChild(meta);
+    if (look.pieces && look.pieces.length) {
+      var ul = document.createElement("ul");
+      ul.className = "look-pieces";
+      look.pieces.forEach(function (line) {
+        var li = document.createElement("li");
+        li.textContent = line;
+        ul.appendChild(li);
+      });
+      wrap.appendChild(ul);
+    }
+    var fit = document.createElement("p");
+    fit.className = "look-fit";
+    fit.textContent = look.fit || "";
+    wrap.appendChild(fit);
+    var note = document.createElement("p");
+    note.className = "look-note";
+    note.textContent = "Assembled and validated by the fit-rule engine · title + pieces + fit note share a 300-word budget.";
+    wrap.appendChild(note);
+  } else {
+    var text = document.createElement("div");
+    text.textContent = fallbackText;
+    wrap.appendChild(text);
+  }
+  container.appendChild(wrap);
+}
+
 function renderOutgoing(entry) {
   var div = document.createElement("div");
   div.className = bubbleClass(true);
   div.innerHTML = "";
+  var look = lookPartsFor(entry);
+  var fallbackText = entry.text + (entry.image_message_id && !outboundPreview[entry.share_id] ? " (+ photo)" : "");
+  renderLookText(div, look, fallbackText);
   var preview = outboundPreview[entry.share_id];
   if (preview) {
+    var staged = document.createElement("div");
+    staged.className = "staged-wrap";
     var img = document.createElement("img");
     img.src = preview;
-    img.alt = "Sent share-card image";
-    div.appendChild(img);
+    img.alt = "Staged look preview image";
+    staged.appendChild(img);
+    var cap = document.createElement("span");
+    cap.className = "staged-cap";
+    cap.textContent = "Staged look image via POST /mock/stage-outbound-image/" + entry.share_id;
+    staged.appendChild(cap);
+    div.appendChild(staged);
   }
-  var text = document.createElement("div");
-  text.textContent = entry.text + (entry.image_message_id && !preview ? " (+ photo)" : "");
-  div.appendChild(text);
   var when = document.createElement("span");
   when.className = "when";
   when.textContent = "sent by app · " + entry.message_id + " · " + whenLine(entry.sent_at);
@@ -265,25 +358,29 @@ function refreshThread() {
 }
 
 function refreshShareSelect(items) {
-  var select = document.getElementById("sendShareId");
-  var keep = select.value;
-  select.innerHTML = "";
-  items.forEach(function (item) {
-    var opt = document.createElement("option");
-    opt.value = item.id;
-    var label = item.id;
-    if (item.attachment && item.attachment.type === "text") {
-      label += " — " + ((item.attachment.payload && item.attachment.payload.text) || "").slice(0, 32);
-    } else if (item.attachment && item.attachment.payload && item.attachment.payload.title) {
-      label += " — " + item.attachment.payload.title.slice(0, 32);
-    } else {
-      label += " — photo";
-    }
-    if (item.media_available === false) label += " (media pending)";
-    opt.textContent = label;
-    select.appendChild(opt);
+  var selects = [document.getElementById("sendShareId"), document.getElementById("lookShareId")];
+  var keeps = selects.map(function (s) { return s && s.value; });
+  selects.forEach(function (select, si) {
+    if (!select) return;
+    var keep = keeps[si];
+    select.innerHTML = "";
+    items.forEach(function (item) {
+      var opt = document.createElement("option");
+      opt.value = item.id;
+      var label = item.id;
+      if (item.attachment && item.attachment.type === "text") {
+        label += " — " + ((item.attachment.payload && item.attachment.payload.text) || "").slice(0, 32);
+      } else if (item.attachment && item.attachment.payload && item.attachment.payload.title) {
+        label += " — " + item.attachment.payload.title.slice(0, 32);
+      } else {
+        label += " — photo";
+      }
+      if (item.media_available === false) label += " (media pending)";
+      opt.textContent = label;
+      select.appendChild(opt);
+    });
+    if (keep) select.value = keep;
   });
-  if (keep) select.value = keep;
 }
 
 function newKey() {
@@ -391,6 +488,79 @@ function sendAsApp() {
   }
 }
 
+function proposeLook() {
+  var shareId = document.getElementById("lookShareId").value;
+  var title = document.getElementById("lookTitle").value.trim();
+  var fit = document.getElementById("lookFit").value.trim();
+  var pieces = document.getElementById("lookPieces").value.split("\n").map(function (l) {
+    return l.trim();
+  }).filter(Boolean);
+  var imageFile = document.getElementById("lookImageFile").files[0] || null;
+  var result = document.getElementById("lookResult");
+  if (!shareId || !title) {
+    result.textContent = "Pick a share and type the look title first.";
+    result.className = "hint sendresult-err";
+    return;
+  }
+  var text = title + (fit ? " — " + fit : "");
+  if (pieces.length) text += "\n" + pieces.join("\n");
+  var key = newKey();
+  var look = { title: title, fit: fit, pieces: pieces };
+  lookByShareText[shareId + "\n" + text] = look;
+  function doSend(withImage) {
+    return authed("/ig/send", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        share_id: shareId,
+        text: text,
+        idempotency_key: key,
+        confirm: true,
+        image: withImage,
+      }),
+    }).then(function (res) {
+      return res.json().then(function (body) {
+        return { status: res.status, body: body };
+      });
+    }).then(function (out) {
+      if (out.status === 200) {
+        lastKey = key;
+        lookStore[out.body.message_id] = look;
+        result.textContent = "Look bubble sent: message_id " + out.body.message_id +
+          (out.body.image_message_id ? " + " + out.body.image_message_id : "") + ".";
+        result.className = "hint sendresult-ok";
+      } else {
+        result.textContent = "Not sent (HTTP " + out.status + "): " +
+          JSON.stringify(out.body) + ".";
+        result.className = "hint sendresult-err";
+      }
+      return refreshThread();
+    });
+  }
+  result.textContent = "Proposing look…";
+  result.className = "hint";
+  if (imageFile) {
+    outboundPreview[shareId] = URL.createObjectURL(imageFile);
+    authed("/mock/stage-outbound-image/" + encodeURIComponent(shareId), {
+      method: "POST",
+      headers: { "Content-Type": imageFile.type || "application/octet-stream" },
+      body: imageFile,
+    }).then(function (res) {
+      if (!res.ok) throw new Error("stage HTTP " + res.status);
+      return doSend(true);
+    }).catch(function (err) {
+      result.textContent = "Not sent: " + err.message + ".";
+      result.className = "hint sendresult-err";
+    });
+  } else {
+    doSend(false).catch(function (err) {
+      result.textContent = "Not sent: " + err.message + ".";
+      result.className = "hint sendresult-err";
+    });
+  }
+}
+
+document.getElementById("lookBtn").addEventListener("click", proposeLook);
 document.getElementById("sendTextBtn").addEventListener("click", shareTextAsUser);
 document.getElementById("chatText").addEventListener("keydown", function (ev) {
   if (ev.key === "Enter") shareTextAsUser();
