@@ -156,7 +156,31 @@
   </section>
 </main>
 
+<script src="ig-runtime-config.js" onerror="/* mock default — no live config */"></script>
 <script src="poll-scheduler.js"></script>
+<script>
+(function(){
+  // If live runtime config is present, default the connection fields to it.
+  try {
+    var RT = (typeof globalThis !== "undefined" && globalThis.__IG_RUNTIME__) || {};
+    if (RT.botBase) {
+      var b = document.getElementById("mockBase");
+      if (b) b.value = RT.botBase;
+    }
+    if (RT.readToken) {
+      var t = document.getElementById("mockToken");
+      if (t) t.value = RT.readToken;
+      // Also sync send token if fields share same input (read vs send are separate
+      // bearer credentials on the real bot; mock uses one token for all routes).
+    }
+    if (RT.sendToken) {
+      var st = document.getElementById("mockToken");
+      // In live mode the single mockToken field holds the read token;
+      // sends use window.__IG_RUNTIME__.sendToken via send-client.js directly.
+    }
+  } catch(e) {}
+})();
+</script>
 <script>
 (function () {
 "use strict";
@@ -191,7 +215,16 @@ function token() {
 function authed(path, opts) {
   var o = opts || {};
   o.headers = o.headers || {};
-  o.headers.Authorization = "Bearer " + token();
+  // Live mode: /ig/send uses its separate bearer (IG_API_SEND_TOKEN),
+  // /ig/catalog uses IG_API_STORAGE_TOKEN; reads use IG_API_TOKEN.
+  // The connection field holds the read token; send/client modules
+  // use __IG_RUNTIME__.sendToken directly — but this inline harness
+  // also respects it for POST /ig/send so the button works live.
+  var RT2 = (typeof globalThis !== "undefined" && globalThis.__IG_RUNTIME__) || {};
+  var tok = token();
+  if (RT2.sendToken && path.indexOf("/ig/send") === 0) tok = RT2.sendToken;
+  if (RT2.catalogToken && path.indexOf("/ig/catalog") === 0) tok = RT2.catalogToken;
+  o.headers.Authorization = "Bearer " + tok;
   return fetch(base() + path, o);
 }
 

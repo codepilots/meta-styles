@@ -84,10 +84,12 @@
   // received_at (user-anchored per §4 Gap 3), never per share_id.
   var REPLY_WINDOW_MS = 24 * 3600 * 1000;
 
-  // Milestone 19h — mock-bot base for the persisted catalog API. Same
-  // default as app/send-client.js SEND_BASE and inbox-bridge.js BOT_BASE:
-  // the local mock bot, never a real Instagram endpoint.
-  var CATALOG_BASE = "http://127.0.0.1:8904";
+  // Milestone 19h — catalog API base. Defaults to mock bot 8904;
+  // LIVE_IG=1 injects app/ig-runtime-config.js -> window.__IG_RUNTIME__
+  // with catalogBase + catalogToken for the real bot on 8903.
+  var _RT = (typeof globalThis !== "undefined" && globalThis.__IG_RUNTIME__) || {};
+  var CATALOG_BASE = _RT.catalogBase || _RT.botBase || "http://127.0.0.1:8904";
+  var RUNTIME_CATALOG_TOKEN = _RT.catalogToken || "";
 
   // Same result shape as send-client.normalizeResult(): HTTP statuses
   // resolve (surfaced), only a network failure resolves as status 0
@@ -120,7 +122,7 @@
   function createCatalogStore(opts) {
     var o = opts || {};
     var base = o.base || CATALOG_BASE;
-    var token = o.token || "";
+    var token = o.token || RUNTIME_CATALOG_TOKEN || "";
     var userRef = o.userRef || "";
 
     function url() {
@@ -157,8 +159,9 @@
     }
 
     // Whole-array read: GETs the stored array ([] when nothing stored).
-    // Resolves {ok:true, pieces:[...]}; a non-array 200 body is surfaced
-    // as bad_catalog, never passed through.
+    // Mock bot returns a raw array; real bot wraps as {"pieces": [...]};
+    // both are accepted. Resolves {ok:true, pieces:[...]}; non-array
+    // shapes are surfaced as bad_catalog, never passed through.
     function load() {
       if (!root.Promise) return null;
       return root.fetch(url(), {
@@ -166,12 +169,17 @@
       }).then(function (res) {
         return res.text().then(function (text) {
           var parsed = parseJsonBody(text);
-          if (res.status === 200 && !Array.isArray(parsed)) {
+          // Unwrap real-bot shape {"pieces": [...]} -> [...]
+          var arr = parsed;
+          if (parsed && typeof parsed === "object" && !Array.isArray(parsed) && Array.isArray(parsed.pieces)) {
+            arr = parsed.pieces;
+          }
+          if (res.status === 200 && !Array.isArray(arr)) {
             return { ok: false, status: 200, body: {}, error: "bad_catalog", op: "load" };
           }
           var out = normalizeStoreResult(
             res.status, Array.isArray(parsed) ? {} : (parsed || {}), "load");
-          if (out.ok) out.pieces = parsed;
+          if (out.ok) out.pieces = arr;
           return out;
         });
       }, function () {

@@ -34,6 +34,75 @@ three answer: the Meta-model proxy (`127.0.0.1:8905`), the mock DM bot
 stops all three. Ports can be overridden with `PROXY_PORT`, `MOCK_PORT`,
 `STATIC_PORT`.
 
+### Live Instagram bot mode (local-only, for Autumn's machine)
+
+The default judged path is mock-only (synthetic data). To test against
+the already-running real Instagram bot at `127.0.0.1:8903`:
+
+```sh
+LIVE_IG=1 sh start.sh
+# Optional: LIVE_BOT_BASE=http://127.0.0.1:8903 LIVE_IG=1 sh start.sh
+```
+
+**Prerequisites:**
+
+- The real bot must already be running on `127.0.0.1:8903` (local-only,
+  no nginx/public route — see `docs/instagram-bot-api.md` §As implemented).
+  Verify: `curl --noproxy '*' http://127.0.0.1:8903/healthz` → `ok`.
+- Your `.env/secrets` must contain the three local-only bearer tokens
+  (never committed, never printed): `ig-bot-token` (read, `IG_API_TOKEN`),
+  `ig-storage-token` (catalog, `IG_API_STORAGE_TOKEN`), and `ig-send-token`
+  (send, `IG_API_SEND_TOKEN`). The read token is the same var the bot's
+  own `secrets.env` calls `IG_API_TOKEN`; catalog/send use their separate
+  tokens — the Graph token `IG_GRAPH_SEND_TOKEN` is never used for reads.
+  If the file only has `ig-bot-token`, `start.sh` falls back to
+  `~/secure-webserver/igwebhook/secrets.env` for the other two (same
+  machine, same local-only scope).
+- No token value is printed in logs or in the browser; `start.sh` emits
+  only endpoint URLs.
+
+**What happens:**
+
+- `start.sh` generates `app/ig-runtime-config.js` from local secrets
+  (gitignored, browser-readable) mapping the three clients to `127.0.0.1:8903`
+  with their separate bearer credentials. The file is removed on exit
+  (if you had a hand-written `app/ig-runtime-config.js` before, it is left
+  untouched).
+- Only two processes start: proxy + static (no mock bot on 8904). The app at
+  `http://localhost:8000/mock-dm.html` then reads from / writes to the real
+  bot: inbox shares/media via `IG_API_TOKEN`, catalog via
+  `IG_API_STORAGE_TOKEN`, sends via `IG_API_SEND_TOKEN`.
+- Readiness checks `GET /health` (proxy), `GET /mock-dm.html` (static), and
+  `GET http://127.0.0.1:8903/healthz` (live bot). No bearer token appears in
+  any `curl` command line, process arg, stdout, or stderr.
+
+**What to do in Instagram:**
+
+- DM the connected account (SecondBloom / `17841417613087488`) — a photo, a
+  shared post/reel, or a plain text message. The share appears in the app
+  inbox after the next poll.
+- Since the live bot is consent-gated (see
+  `~/secure-webserver/igwebhook/docs/data-management-and-consent.md`),
+  the sending Instagram account must be onboarded/granted before items
+  appear: new senders receive a ToS/privacy/Meta-API-use disclosure and
+  must reply `YES` / agree within 24 h, or their data is scrubbed.
+  Un-consented shares never surface in `GET /ig/shares`.
+- The `user_ref` / catalog flow works for that account: `user_ref` is the
+  stable per-sender id on every `GET /ig/shares` item; `PUT /ig/catalog/<user_ref>`
+  and `GET /ig/catalog/<user_ref>` persist the wardrobe scoped to that
+  `user_ref` (per-user AES-256-GCM at rest on the bot).
+
+**Warning — real sends:**
+
+- In live mode the app's `Send as app` button and the `Propose look`
+  path route to the real bot's `POST /ig/send` (local-only,
+  `IG_API_SEND_TOKEN` + `IG_GRAPH_SEND_TOKEN` + 24 h window). **They only
+  fire on explicit user clicks** — no automatic sends, no background sends.
+  The mock's window/duplicate behaviour (422, 409) is enforced identically
+  on the live bot. Do not click Send unless you intend a real DM.
+- The judged demo (`sh start.sh` without `LIVE_IG`) never touches the live
+  bot and never sends a real DM — mock-only by default.
+
 ## The 2-minute judge walkthrough (the video arc)
 
 1. **Share photo 1** (a dress — use any local image): it lands as an

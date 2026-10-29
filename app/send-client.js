@@ -24,7 +24,9 @@
  */
 
 (function (root) {
-  var SEND_BASE = "http://127.0.0.1:8904";
+  var _RT = (typeof globalThis !== "undefined" && globalThis.__IG_RUNTIME__) || {};
+  var SEND_BASE = _RT.sendBase || _RT.botBase || "http://127.0.0.1:8904";
+  var RUNTIME_SEND_TOKEN = _RT.sendToken || "";
 
   var keyCounter = 0;
 
@@ -121,7 +123,7 @@
   function createSendClient(opts) {
     var o = opts || {};
     var base = o.base || SEND_BASE;
-    var token = o.token || "";
+    var token = o.token || RUNTIME_SEND_TOKEN || "";
     var lastTurn = null; // {key, payload} of the most recent sendTurn
 
     function authed(path, body) {

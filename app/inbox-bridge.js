@@ -48,6 +48,10 @@
   // backends implement the identical contract, so nothing else in this file
   // needs to change. There is deliberately no query-param override.
   var BOT_BASE = "http://127.0.0.1:8904";
+  // LIVE_IG=1 runtime override: app/ig-runtime-config.js sets
+  // window.__IG_RUNTIME__.botBase to the real bot. Default stays mock.
+  var RT = (typeof globalThis !== "undefined" && globalThis.__IG_RUNTIME__) || {};
+  if (RT.botBase) BOT_BASE = RT.botBase;
   var TOKEN_URL = "ig-bot-token.local.json";
   var TOKEN_STORAGE_KEY = "igBotToken";
   var FIXTURE_URL = "inbox-fixtures/shares.jsonl";
@@ -194,9 +198,14 @@
     return { Authorization: "Bearer " + token };
   }
 
-  // Resolve the bot credential: untracked local file first, then the
-  // localStorage fallback. Resolves to the token string or null.
+  // Resolve the bot credential priority:
+  // 1. window.__IG_RUNTIME__.readToken (LIVE_IG=1 generated config)
+  // 2. untracked local file app/ig-bot-token.local.json
+  // 3. localStorage fallback. Resolves to token string or null.
   function loadToken() {
+    if (RT.readToken && typeof RT.readToken === "string" && RT.readToken) {
+      return Promise.resolve(RT.readToken);
+    }
     return fetch(TOKEN_URL)
       .then(function (res) {
         if (!res.ok) throw new Error("no token file");
