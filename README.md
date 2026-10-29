@@ -44,6 +44,17 @@ LIVE_IG=1 sh start.sh
 # Optional: LIVE_BOT_BASE=http://127.0.0.1:8903 LIVE_IG=1 sh start.sh
 ```
 
+**Which URL to open (hard requirement, not a suggestion):** open
+`http://localhost:8000/mock-dm.html` directly in a browser on the same
+machine that runs the bot — **not** the Tailscale HTTPS remote link.
+The live bot deliberately trusts exactly one origin
+(`http://localhost:8000`) and serves plain HTTP only, so a page loaded
+through the HTTPS tunnel fails its preflight (`403`) and the browser
+blocks the calls with no server-side error. Verified 2026-10-29: same
+`GET /ig/shares` returns `200` from the local origin and a rejected
+preflight from the tailnet origin. This is an intentional limitation,
+not something to engineer around — the bot side stays as-is.
+
 **Prerequisites:**
 
 - The real bot must already be running on `127.0.0.1:8903` (local-only,
