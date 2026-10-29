@@ -444,13 +444,18 @@ REVISED 2026-10-29 for the user-keyed catalog + automatic polling +
 two-photo video arc. Order matters: contract first, then catalog, then
 the loop that reads it, then the surface and the tape.
 
-1. **19e (text-turn contract) first** — it unblocks everything: decide
-   the text message shape (mock + real bot together), extend the
-   client's accepted shapes without forking the read path, prove a
-   `POST /mock/incoming-text` → client-visible text turn round-trip.
-   Verify: `node`-runnable assertions for accept/reject shapes; live
-   bot parity noted. (Does NOT deliver the §8.9 user identifier —
-   independent gap, do not conflate.)
+1. **19e (text-turn contract) first** — **DONE 2026-10-29** (37 assertions
+   in `app/test/milestone19e-text-turn.test.js`, full suite green):
+   the text message shape is `attachment: {type: "text",
+   payload: {text}}` with `media_id: null` / `media_available: false`
+   (mock minted it already; documented in place), the client's accepted
+   shapes are extended without forking the read path (`isTextItem()` /
+   `textOf()` added to `app/inbox-bridge.js`), and the
+   `POST /mock/incoming-text` → client-visible text turn round-trip is
+   proven. Real-bot parity is a spec note only
+   (`docs/milestone-13-contract-parity.md`, "Text-turn contract" section —
+   Autumn's prior-work maintenance, outside this repo). (Does NOT deliver
+   the §8.9 user identifier — independent gap, do not conflate.)
 2. **19b (send client)** — new `app/` module issuing byte-identical
    `POST /ig/send` per turn (per-turn fresh keys, replay-on-retry,
    `409`/`422`/`401` surfaced in-thread, `is_echo` skip on poll).

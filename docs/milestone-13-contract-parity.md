@@ -49,7 +49,42 @@ probe. Legend: ✅ parity · ⚠️ client-neutral difference (documented) ·
 5. ❌ Outbound-media tokens are mock-local (`SYNTH_outbound_NNN`) rather than HMAC-signed; semantics match (24h TTL, single-use burn, no `Authorization` header, bare empty-`404` refusals). Restart amnesia matches the real bot's accepted tradeoff.
 6. ❌ No proxy-header `404`s, no fail2ban/nginx/TLS — host hardening is explicitly out of scope (plan §3/§6); the mock binds `127.0.0.1` only.
 7. ❌ No durable per-send stdout log line — observability only, invisible to the client.
-8. ❌ `/mock/*` operator routes and `text`-type injections are harness-only, never called by `inbox-bridge.js` (enforced by test). `text`-type shares are skipped by the judged client's shape filter and render only in the chat page; only photo injections use real shapes.
+8. ❌ `/mock/*` operator routes are harness-only, never called by `inbox-bridge.js` (enforced by test). `text`-type injections use real shapes since 19e (see below); only the staged-photo bytes stay synthetic.
+
+## Text-turn contract (Milestone 19e, 2026-10-29)
+
+First step of the M19 chat-first pivot (`docs/milestone-19-chat-first-pivot.md`
+§4 Gap 1, §7 task 1). A text turn is just another item in the same
+`GET /ig/shares` list — no new route family:
+
+- Shape: `attachment: {type: "text", payload: {text}}` (`text` a non-empty
+  string), `media_id: null`, `media_available: false`. No photo, so the
+  client skips the `GET /ig/media` / `DELETE` step entirely and reads the
+  text straight off the share via the new `isTextItem()` / `textOf()`
+  accessors in `app/inbox-bridge.js`.
+- Mock: `POST /mock/incoming-text` already minted exactly this shape; 19e
+  only documented it in place (`mock-ig-bot/server.js`, operator-routes
+  comment) — `publicShare()` exposes it like `image`/`ig_post` items.
+- Client: `isValidShareItem` accepts `type: "text"` with no media locator
+  required; `ig_post`/`image` validation is byte-for-byte unchanged, and the
+  fetch/paging/ack path is not forked. Proven by
+  `app/test/milestone19e-text-turn.test.js` (37 assertions, incl. the live
+  `POST /mock/incoming-text` → `GET /ig/shares` round-trip).
+
+**Spec note for the REAL bot (Autumn to implement as prior-work maintenance,
+outside this repo — not built here):** to carry the same shape, the real
+`igwebhook` read API (`docs/instagram-bot-api.md`) would need a third
+attachment type alongside `ig_post`/`image` — `GET /ig/shares` items shaped
+`{id, received_at, attachment: {type: "text", payload: {text}},
+media_id: null, media_available: false}`, with `text` being the inbound DM
+text. Same paging/cursor/auth/CORS rules, no media route involvement.
+Heads-up on the privacy tradeoff: the live contract today deliberately
+*omits* message text (`instagram-bot-api.md` line 123, "Omitted for
+privacy"), so exposing it to the client is a conscious privacy decision for
+Autumn to make on the bot side — the mock faces no such constraint because
+its text is synthetic operator input. Resolving this does NOT yield the
+per-user identifier (§8.9 of the pivot plan) — text items carry no sender
+field in either contract, by the same privacy design.
 
 ## Isolation (task 11) — static half done, live half needs a human
 

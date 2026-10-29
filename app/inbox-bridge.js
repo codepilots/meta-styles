@@ -80,18 +80,42 @@
     var t = entry.attachment && entry.attachment.type;
     if (t === "ig_post") return "shared post/reel";
     if (t === "image") return "direct photo";
+    if (t === "text") return "text message";
     return "share";
   }
 
+  // True when entry is a text turn: attachment.type === "text" with a
+  // non-empty string payload.text. Never throws.
+  function isTextItem(entry) {
+    if (!entry || typeof entry !== "object" || Array.isArray(entry)) return false;
+    var att = entry.attachment;
+    if (!att || typeof att !== "object" || att.type !== "text") return false;
+    var p = att.payload;
+    if (!p || typeof p !== "object") return false;
+    return typeof p.text === "string" && !!p.text;
+  }
+
+  // The chat text of a text turn, or "" when entry is not a text item.
+  // Text turns carry no media, so callers must NOT attempt
+  // GET /ig/media/<id> or DELETE for them — there is nothing to fetch.
+  // Never throws.
+  function textOf(entry) {
+    if (!isTextItem(entry)) return "";
+    return entry.attachment.payload.text;
+  }
+
   // Shape check for one element of GET /ig/shares `items[]` (or one fixture
-  // JSON line). Accepts the two real attachment shapes; requires a media
-  // locator of either the live form (media_id) or the fixture form
-  // (media_file). Never throws.
+  // JSON line). Accepts the two photo attachment shapes plus the Milestone
+  // 19e text-turn shape ({type: "text", payload: {text}}). Photo items
+  // require a media locator of either the live form (media_id) or the
+  // fixture form (media_file); text items carry no media and skip that
+  // requirement entirely. Never throws.
   function isValidShareItem(entry) {
     if (!entry || typeof entry !== "object" || Array.isArray(entry)) return false;
     if (typeof entry.id !== "string" || !entry.id) return false;
     var att = entry.attachment;
     if (!att || typeof att !== "object") return false;
+    var isText = att.type === "text";
     if (att.type === "ig_post") {
       var p = att.payload;
       if (!p || typeof p !== "object") return false;
@@ -100,12 +124,16 @@
       var q = att.payload;
       if (!q || typeof q !== "object") return false;
       if (typeof q.url !== "string" || !q.url) return false;
+    } else if (isText) {
+      if (!isTextItem(entry)) return false;
     } else {
       return false;
     }
-    var hasLiveMedia = typeof entry.media_id === "string" && !!entry.media_id;
-    var hasFixtureMedia = typeof entry.media_file === "string" && !!entry.media_file;
-    if (!hasLiveMedia && !hasFixtureMedia) return false;
+    if (!isText) {
+      var hasLiveMedia = typeof entry.media_id === "string" && !!entry.media_id;
+      var hasFixtureMedia = typeof entry.media_file === "string" && !!entry.media_file;
+      if (!hasLiveMedia && !hasFixtureMedia) return false;
+    }
     if ("media_available" in entry && typeof entry.media_available !== "boolean") return false;
     return true;
   }
@@ -139,6 +167,8 @@
   var InboxBridgePure = {
     captionFor: captionFor,
     kindFor: kindFor,
+    isTextItem: isTextItem,
+    textOf: textOf,
     isValidShareItem: isValidShareItem,
     parseJsonLines: parseJsonLines,
     buildSharesUrl: buildSharesUrl,

@@ -334,6 +334,12 @@ function createHandler(store, config) {
     }
     // --- Operator-only routes (mock-local /mock/... namespace, never called
     // --- by inbox-bridge.js or any judged surface). Same auth as above.
+    // Milestone 19e text-turn contract: a text turn is just another item in
+    // the same shares[]/paging model (no new route family) — attachment
+    // {type: "text", payload: {text}} with the raw chat text, media_id null
+    // and media_available false (no photo, so no GET /ig/media / DELETE step;
+    // the client reads the text straight off the share). publicShare()
+    // exposes it exactly like image/ig_post items.
     if (url.pathname === "/mock/incoming-text" && req.method === "POST") {
       readBody(req, MAX_SEND_BODY).then((parsed) => {
         let payload = null;
