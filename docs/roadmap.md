@@ -12,8 +12,8 @@ Nothing is called done on the strength of a plan doc alone.
 
 ## Critical path (in order)
 
-1. **M14 — real Meta Model API integration** (pass/fail gate; blocks
-   M15, M16's claims, and M4's video).
+1. ~~**M14 — real Meta Model API integration**~~ **DONE 2026-10-28**
+   (pass/fail gate closed; see the M14 status note below).
 2. **M18 — finish M13's live isolation proof** (blocks a trustworthy demo).
 3. **M16 — judge-ready hosted product** (blocks Demo 25%: judges assess
    the live product, not only the video).
@@ -72,13 +72,11 @@ parked item before the critical path is green.
   the Meta Model API calls in M14 stay live network dependencies and
   are explicitly not isolated away here.
 
-Test state at this review (run 2026-10-28, all green):
-`node app/test/milestone13-mock-bot.test.js` (74),
-`node app/test/milestone13-mock-dm-page.test.js` (32),
-`node app/test/milestone6-pipeline-wiring.test.js` (36) — 142
-assertions. Gap: these are pure-helper/static tests; there is no direct
-unit test for `assembleLook`'s fit rules or the Spark word budget, and
-no browser end-to-end test. Closed by M18/M14 acceptance tests.
+Test state (run 2026-10-28, all green): 181 assertions —
+`milestone13-mock-bot` (74), `milestone13-mock-dm-page` (32),
+`milestone6-pipeline-wiring` (36), `milestone14-meta-api` (39, includes
+the direct `assembleLook` fit-rule and copy-budget tests). Remaining
+gap: no browser end-to-end test — closed by M18.
 
 ## Superseded, parked, or descoped (do not build as written)
 
@@ -113,6 +111,15 @@ no browser end-to-end test. Closed by M18/M14 acceptance tests.
 ## Gap-closing milestones
 
 ### Milestone 14 (P0 — pass/fail gate): real Meta Model API integration
+
+**Status: IMPLEMENTED 2026-10-28** (Autumn's go recorded as decision #6
+in `docs/decisions.md`). Live-verified the same day: one real call per
+proxy endpoint against `api.meta.ai`, all 200 — SAM 3.1 segmentation,
+Spark vision classification, Spark copy, Spark assembly, Muse Image
+preview. Tests: `app/test/milestone14-meta-api.test.js` (39, fake
+upstream). Known limitation: SAM polygons are SAM box rectangles; mask
+rasters are metadata only until a `@meta-sam/parser` pass decodes them.
+Original gap analysis kept below for the record.
 
 **Gap:** the submission must "meaningfully use Meta Model API and/or
 Meta open-weight models" — a pass/fail gate before scoring (compliance

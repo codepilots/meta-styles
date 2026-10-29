@@ -6,9 +6,9 @@
  * where polygons are [{ label, points: [[x,y],...] }] and boxes are
  * [{ label, rect: [x,y,w,h] }], all in normalized 0..1 coordinates.
  *
- * TODO(SAM-3.1): replace StubSegmentationService with a real client that
- * POSTs the image to the SAM 3.1 API and converts its masks to the shape
- * above. Nothing else in this file needs to change.
+ * Milestone 14b: LiveSegmentationService implements this interface via
+ * SAM 3.1 through the local proxy (meta-client.js); StubSegmentationService
+ * remains the labelled offline fallback.
  */
 
 const DEMOS = [
@@ -26,13 +26,73 @@ const MASK_COLORS = {
 };
 
 // ---------------------------------------------------------------------------
-// Stub segmenter (stands in for SAM 3.1)
+// Stub segmenter (offline fallback for SAM 3.1)
 // ---------------------------------------------------------------------------
 class StubSegmentationService {
   async segment(_imageEl, sourceId) {
     // Fake latency so the UI pattern (pending -> result) is exercised.
     await new Promise((r) => setTimeout(r, 500));
-    return { polygons: mockPolygons(sourceId), boxes: [] };
+    return { polygons: mockPolygons(sourceId), boxes: [], source: "stub", placeholder: true };
+  }
+}
+
+// Milestone 14b: live SAM 3.1 via the local Meta API proxy (meta-client.js).
+// Sends the current photo as a data URL; the proxy holds the API key.
+// Any failure (proxy down, 429 quota, no garments found) falls back to the
+// stub above so the manual-box flow is never a dead end.
+class LiveSegmentationService {
+  async segment(imageEl, sourceId) {
+    const client = window.MetaStyles && window.MetaStyles.metaClient;
+    if (!client) throw new Error("meta client not loaded");
+    const dataUrl = imageToDataURL(imageEl);
+    if (!dataUrl) throw new Error("could not encode image");
+    const out = await client.segment(dataUrl);
+    if (!out || !Array.isArray(out.polygons) || out.polygons.length === 0) {
+      throw new Error("SAM found no garments in this photo");
+    }
+    return out;
+  }
+}
+
+function imageToDataURL(img) {
+  try {
+    const maxDim = 1024;
+    const scale = Math.min(1, maxDim / Math.max(img.naturalWidth || 1, img.naturalHeight || 1));
+    const c = document.createElement("canvas");
+    c.width = Math.max(1, Math.round((img.naturalWidth || 1) * scale));
+    c.height = Math.max(1, Math.round((img.naturalHeight || 1) * scale));
+    const g = c.getContext("2d");
+    g.fillStyle = "#ffffff";
+    g.fillRect(0, 0, c.width, c.height);
+    g.drawImage(img, 0, 0, c.width, c.height);
+    return c.toDataURL("image/jpeg", 0.88);
+  } catch (e) {
+    return "";
+  }
+}
+
+function cropDataURL(rect, maxPx) {
+  const img = state.img;
+  const [x, y, w, h] = rect;
+  const iw = img.naturalWidth;
+  const ih = img.naturalHeight;
+  if (!iw || !ih) return "";
+  const sx = Math.round(x * iw);
+  const sy = Math.round(y * ih);
+  const sw = Math.max(1, Math.round(w * iw));
+  const sh = Math.max(1, Math.round(h * ih));
+  const c = document.createElement("canvas");
+  const scale = Math.min(1, (maxPx || 512) / Math.max(sw, sh));
+  c.width = Math.max(1, Math.round(sw * scale));
+  c.height = Math.max(1, Math.round(sh * scale));
+  const g = c.getContext("2d");
+  g.fillStyle = "#ffffff";
+  g.fillRect(0, 0, c.width, c.height);
+  try {
+    g.drawImage(img, sx, sy, sw, sh, 0, 0, c.width, c.height);
+    return c.toDataURL("image/jpeg", 0.88);
+  } catch (e) {
+    return "";
   }
 }
 
@@ -105,7 +165,8 @@ const state = {
   drag: null,          // active pointer gesture
 };
 
-const segmenter = new StubSegmentationService();
+const segmenter = new LiveSegmentationService();
+const stubSegmenter = new StubSegmentationService();
 const HANDLE_R = 8; // px, hit-test radius for corner handles
 
 function setStatus(text) {
@@ -251,13 +312,23 @@ document.getElementById("segmentBtn").addEventListener("click", async () => {
   if (!state.sourceId) return;
   const btn = document.getElementById("segmentBtn");
   btn.disabled = true;
-  setStatus("Segmenting… (stubbed SAM 3.1 call)");
+  setStatus("Segmenting with SAM 3.1 (live via proxy)…");
   try {
     state.mask = await segmenter.segment(state.img, state.sourceId);
     const n = state.mask.polygons.length;
-    setStatus(`Stub mask ready: ${n} region${n === 1 ? "" : "s"} for ${state.sourceName}.`);
+    setStatus(
+      `SAM 3.1 mask ready${state.mask.cached ? " (cached live result)" : ""}: ${n} region${n === 1 ? "" : "s"} for ${state.sourceName}.`
+    );
   } catch (err) {
-    setStatus(`Segmentation failed (${err.message}). Draw a box manually instead.`);
+    try {
+      state.mask = await stubSegmenter.segment(state.img, state.sourceId);
+      const n = state.mask.polygons.length;
+      setStatus(
+        `Live SAM unavailable (${err.message}) — showing stub mask instead: ${n} region${n === 1 ? "" : "s"}. Draw a box manually for a real selection.`
+      );
+    } catch (err2) {
+      setStatus(`Segmentation failed (${err2.message}). Draw a box manually instead.`);
+    }
   } finally {
     btn.disabled = false;
     draw();
@@ -486,13 +557,33 @@ function esc(s) {
   }[c]));
 }
 
-document.getElementById("suggestBtn").addEventListener("click", () => {
+document.getElementById("suggestBtn").addEventListener("click", async () => {
   const region = selectedRegion();
   if (!region || !MS) {
     suggestHintEl.textContent = region
       ? "Classifier failed to load — pick a category by hand."
       : "Nothing to label yet: run segmentation or draw a box first.";
     return;
+  }
+  // Milestone 14c: Muse Spark vision via proxy first, stub heuristic as
+  // the labelled offline fallback.
+  const client = MS.metaClient;
+  if (client && typeof MS.classifyFromSpark === "function") {
+    suggestHintEl.textContent = "Asking Muse Spark to classify this region…";
+    try {
+      const crop = cropDataURL(region.rect, 512);
+      if (!crop) throw new Error("could not encode region crop");
+      const live = await client.classify(crop, region.labelHint);
+      const suggestion = MS.classifyFromSpark(region, live);
+      if (!suggestion) throw new Error("Spark returned an off-taxonomy category");
+      categorySelectEl.value = suggestion.category;
+      suggestHintEl.textContent =
+        `Muse Spark suggests “${suggestion.category}” (${suggestion.method}, confidence: ${suggestion.confidence}). ` +
+        "Confirm or change it, then add to your look.";
+      return;
+    } catch (err) {
+      suggestHintEl.textContent = `Live Spark unavailable (${err.message}) — falling back to the stub suggestion.`;
+    }
   }
   const suggestion = MS.classifyRegion(region);
   categorySelectEl.value = MS.TAXONOMY.includes(suggestion.category)
@@ -611,8 +702,36 @@ function buildShareText(card, spark) {
     lines.push(`[${p.category}] ${sparkText}`);
     lines.push("");
   });
-  lines.push(spark.lookStory, "", card.fitNote, "Placeholder card: Spark copy + preview image are stubbed mocks, not live AI output.");
+  lines.push(
+    spark.lookStory, "", card.fitNote,
+    spark.placeholder
+      ? "Placeholder card: Spark copy + preview image are stubbed mocks, not live AI output."
+      : "Look card: Muse Spark copy via the Meta Model API; assembled and validated by the fit-rule engine."
+  );
   return lines.join("\n");
+}
+
+let shareRenderSeq = 0;
+
+function paintShare(card, spark) {
+  shareCardEl.hidden = false;
+  shareTitleEl.textContent = spark.title;
+  shareMetaEl.textContent =
+    `finish: ${card.finish || "none"} · ${spark.wordCount} / 300 words` +
+    (spark.trimmed ? " · copy trimmed to budget" : "") +
+    (spark.cached ? " · cached live result" : "");
+  shareBadgeEl.innerHTML = card.valid
+    ? '<span class="badge badge-ok">Valid full look ✔</span>'
+    : '<span class="badge badge-bad">Not a full look yet</span>';
+  sharePiecesEl.innerHTML = card.pieces.map((p, i) => {
+    const text = (spark.perPiece[i] && spark.perPiece[i].text) || p.copy.text;
+    return `<div class="piece"><div><strong>${esc(p.category)}</strong> ` +
+      `<span class="tag">${spark.placeholder ? "placeholder" : esc(spark.source || "live")}</span><p>${esc(text)}</p></div></div>`;
+  }).join("");
+  shareStoryEl.textContent = spark.lookStory;
+  shareFitEl.textContent = card.fitNote;
+  shareStubNoteEl.textContent = `${spark.placeholderNote} ${spark.placeholder ? card.placeholderNote : ""}`;
+  lastShareText = buildShareText(card, spark);
 }
 
 async function renderShare(card) {
@@ -621,36 +740,109 @@ async function renderShare(card) {
     shareCardEl.hidden = true;
     return;
   }
-  const spark = MS.generateCopy(card);
-  shareCardEl.hidden = false;
-  shareTitleEl.textContent = spark.title;
-  shareMetaEl.textContent =
-    `finish: ${card.finish || "none"} · ${spark.wordCount} / 300 words` +
-    (spark.trimmed ? " · Spark copy trimmed to budget" : "");
-  shareBadgeEl.innerHTML = card.valid
-    ? '<span class="badge badge-ok">Valid full look ✔</span>'
-    : '<span class="badge badge-bad">Not a full look yet</span>';
-  sharePiecesEl.innerHTML = card.pieces.map((p, i) => {
-    const text = (spark.perPiece[i] && spark.perPiece[i].text) || p.copy.text;
-    return `<div class="piece"><div><strong>${esc(p.category)}</strong> ` +
-      `<span class="tag">placeholder</span><p>${esc(text)}</p></div></div>`;
-  }).join("");
-  shareStoryEl.textContent = spark.lookStory;
-  shareFitEl.textContent = card.fitNote;
-  shareStubNoteEl.textContent = `${spark.placeholderNote} ${card.placeholderNote}`;
-  lastShareText = buildShareText(card, spark);
+  const seq = ++shareRenderSeq;
+  // Paint the stub instantly, then upgrade in place when live Spark copy
+  // arrives. A newer render supersedes this one (seq guard).
+  let spark = MS.generateCopy(card);
+  paintShare(card, spark);
 
-  // Mock preview image (stubbed canvas collage, TODO(Image-API)).
-  if (MS && typeof MS.generateImage === "function" && previewCanvasEl) {
+  const client = MS.metaClient;
+  if (client && typeof MS.generateCopyFromModel === "function") {
+    try {
+      const live = await client.copy(card);
+      const liveSpark = MS.generateCopyFromModel(card, live);
+      if (liveSpark && seq === shareRenderSeq) {
+        spark = liveSpark;
+        paintShare(card, spark);
+      }
+    } catch (err) {
+      if (shareActionHintEl && seq === shareRenderSeq) {
+        shareActionHintEl.textContent = `Live Spark copy unavailable (${err.message}) — placeholder copy shown.`;
+      }
+    }
+  }
+
+  if (!previewCanvasEl) return;
+  // Milestone 14e: Muse Image live preview, collage as fallback.
+  if (client && typeof MS.buildPreviewPrompt === "function") {
+    try {
+      const prompt = MS.buildPreviewPrompt(card, spark);
+      const out = await client.preview(prompt);
+      if (seq !== shareRenderSeq || !out || !out.dataURL) throw new Error("superseded");
+      const img = new Image();
+      await new Promise((resolve, reject) => {
+        img.onload = resolve;
+        img.onerror = reject;
+        img.src = out.dataURL;
+      });
+      if (seq !== shareRenderSeq) return;
+      const cnv = previewCanvasEl;
+      cnv.width = 600;
+      cnv.height = 760;
+      const g = cnv.getContext("2d");
+      const scale = Math.max(cnv.width / img.naturalWidth, cnv.height / img.naturalHeight);
+      const dw = img.naturalWidth * scale;
+      const dh = img.naturalHeight * scale;
+      g.drawImage(img, (cnv.width - dw) / 2, (cnv.height - dh) / 2, dw, dh);
+      lastPreviewDataURL = cnv.toDataURL("image/png");
+      if (shareActionHintEl) {
+        shareActionHintEl.textContent = out.cached
+          ? "Muse Image preview (cached live result)."
+          : "Muse Image preview via Meta Model API.";
+      }
+      return;
+    } catch (err) {
+      if (seq !== shareRenderSeq) return;
+      // fall through to the collage fallback
+    }
+  }
+  if (MS && typeof MS.generateImage === "function") {
     try {
       const res = await MS.generateImage(previewCanvasEl, card);
-      lastPreviewDataURL = res.dataURL || "";
+      if (seq === shareRenderSeq) lastPreviewDataURL = res.dataURL || "";
     } catch (err) {
-      lastPreviewDataURL = "";
-      if (shareActionHintEl) shareActionHintEl.textContent = `Preview render failed (${err.message}).`;
+      if (seq === shareRenderSeq) {
+        lastPreviewDataURL = "";
+        if (shareActionHintEl) shareActionHintEl.textContent = `Preview render failed (${err.message}).`;
+      }
     }
   }
 }
+
+// Milestone 14d: Spark proposes complete looks; assembleLook validates.
+// Invalid proposals are shown with their rejection reasons — never hidden
+// or silently re-paired.
+const assembleBtnEl = document.getElementById("assembleBtn");
+const assembleHintEl = document.getElementById("assembleHint");
+if (assembleBtnEl) assembleBtnEl.addEventListener("click", async () => {
+  if (!MS || !MS.metaClient) {
+    if (assembleHintEl) assembleHintEl.textContent = "Meta client not loaded.";
+    return;
+  }
+  if (wardrobe.length < 2) {
+    if (assembleHintEl) assembleHintEl.textContent = "Add at least two pieces first — Spark proposes from what is in your look.";
+    return;
+  }
+  assembleHintEl.textContent = "Asking Muse Spark to propose complete looks…";
+  try {
+    const out = await MS.metaClient.assemble(wardrobe);
+    const looks = (out && out.looks) || [];
+    if (!looks.length) throw new Error("Spark proposed no looks");
+    const byId = {};
+    wardrobe.forEach((w) => { byId[w.id] = w; });
+    const lines = looks.map((look, i) => {
+      const items = (look.pieceIds || []).map((id) => byId[id]).filter(Boolean);
+      const card = MS.assembleLook(items);
+      const verdict = card.valid
+        ? `valid full look (${card.finish})`
+        : `rejected: ${card.reasons.join(" ")}`;
+      return `Look ${i + 1}: ${verdict}${look.rationale ? " — " + look.rationale : ""}`;
+    });
+    assembleHintEl.textContent = lines.join(" ");
+  } catch (err) {
+    assembleHintEl.textContent = `Spark assembly unavailable (${err.message}). Your manually assembled card above still stands.`;
+  }
+});
 
 document.getElementById("copyCardBtn").addEventListener("click", async () => {
   if (!lastShareText) return;

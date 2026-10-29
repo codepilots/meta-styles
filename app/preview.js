@@ -9,13 +9,10 @@
  * otherwise a category color block) under a title + validity pill, with a
  * "mock preview" watermark so it is never mistaken for AI imagery.
  *
- * STUB: pure client-side canvas drawing — no image model is called and
- * .env/secrets is never read here.
- *
- * TODO(Image-API): replace the body of generateImage with a real image call
- * — e.g. POST the look card (pieces + Spark copy) to the image endpoint and
- * draw the returned pixels into canvas instead of this collage. Keep the
- * return shape so the share-card UI needs no changes.
+ * Milestone 14e: generateImage below is the offline fallback — pure
+ * client-side canvas collage, watermarked so it is never mistaken for AI
+ * imagery. The live path (app.js + meta-client.js) draws a Muse Image
+ * result from the proxy into the same canvas. No key is read here.
  */
 (function (root) {
   var W = 600;
@@ -65,7 +62,7 @@
     ctx.closePath();
   }
 
-  // TODO(Image-API): swap this whole drawing body for the live image call.
+  // Offline fallback collage (live Muse Image path lives in app.js).
   function generateImage(canvas, lookCard) {
     var pieces = ((lookCard && lookCard.pieces) || []).map(function (p) {
       return { id: p.id, category: p.category, thumb: p.thumb };
@@ -155,7 +152,7 @@
     // Footer watermark.
     ctx.fillStyle = "#6b6259";
     ctx.font = "400 13px system-ui, sans-serif";
-    ctx.fillText("mock preview · placeholder:true (TODO(Image-API))", 28, H - 22);
+    ctx.fillText("mock preview · placeholder:true (offline fallback)", 28, H - 22);
 
     // Overlay real thumbnail crops where available; degrade to color blocks.
     var thumbs = pieces.map(function (p) { return loadThumb(p.thumb); });
@@ -197,14 +194,24 @@
         thumbsDrawn: thumbsDrawn,
         placeholder: true,
         placeholderNote:
-          "Placeholder preview: canvas collage, not AI imagery (TODO(Image-API)).",
+          "Placeholder preview: canvas collage, not AI imagery (offline fallback).",
         source: "stub",
       };
     });
   }
 
+  // Milestone 14e: prompt for the live Muse Image preview (proxy). The
+  // result is presented as a look-card visualisation, never a worn try-on.
+  function buildPreviewPrompt(lookCard, sparkCopy) {
+    var cats = ((lookCard && lookCard.pieces) || []).map(function (p) { return p.category; }).join(", ");
+    var title = (sparkCopy && sparkCopy.title) || "meta-styles look";
+    return "Editorial flat-lay look card titled \"" + title + "\", Y2K x fairycore styling, " +
+      "soft pastel background, garments laid out neatly: " + (cats || "a dress") + ". " +
+      "No people, no body, no worn try-on, no readable text.";
+  }
+
   root.MetaStyles = root.MetaStyles || {};
-  Object.assign(root.MetaStyles, { generateImage });
+  Object.assign(root.MetaStyles, { generateImage: generateImage, buildPreviewPrompt: buildPreviewPrompt });
   if (typeof module !== "undefined" && module.exports) {
     module.exports = root.MetaStyles;
   }

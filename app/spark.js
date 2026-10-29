@@ -10,15 +10,11 @@
  * shared ≤300-word card budget, trimmed at word boundaries and flagged —
  * same convention as assembler.js.
  *
- * STUB: all text below is invented placeholder copy (placeholder:true), Y2K x
- * fairycore voice, fit-aware for tall/curvy (6'2", size 18 top / 12 bottom).
- * No Meta API is called; .env/secrets is never read here.
- *
- * TODO(Spark-API): replace the body of generateCopy with a real Meta Muse
- * Spark call — e.g. POST the look card's pieces + fit note with a
- * ≤300-word Y2K-x-fairycore system prompt to the Model API and map the
- * response onto { title, perPiece, lookStory }. Keep the return shape and
- * the word-budget trim so the share-card UI needs no changes.
+ * Milestone 14d: generateCopy below is the offline stub fallback
+ * (invented placeholder copy, placeholder:true). The live path is
+ * generateCopyFromModel, fed by Muse Spark via the local proxy
+ * (meta-client.js). Neither path reads .env/secrets in the browser;
+ * the proxy holds the key server-side.
  */
 (function (root) {
   function wordCount(text) {
@@ -70,26 +66,12 @@
     none: "✨ Look In Progress",
   };
 
-  function generateCopy(lookCard) {
-    // TODO(Spark-API): live call goes here — POST lookCard.pieces +
-    // lookCard.fitNote to the Muse Spark Model API and map the response
-    // onto { title, perPiece, lookStory }. Everything below is stub.
+  // Shared ≤300-word budget trim (title + pieces + story, fit note on top).
+  function trimCopyFields(title, pieces, story, fitNote) {
     const ms = root.MetaStyles || {};
     const maxWords = ms.MAX_WORDS || 300;
-    const fitNote = (lookCard && lookCard.fitNote) || "";
     const fitWords = fitNote ? wordCount(fitNote) : 0;
     const budget = Math.max(1, maxWords - fitWords);
-
-    const pieces = ((lookCard && lookCard.pieces) || []).map((p) => ({
-      id: p.id,
-      category: p.category,
-      text: SPARK_BANK[p.category] || FALLBACK_TEXT,
-    }));
-    const finish = (lookCard && lookCard.finish) || null;
-    const title = TITLES[finish || "none"];
-    let story = STORIES[finish || "none"];
-
-    // Hold title + pieces + story to budget; trim longest text first.
     let trimmed = false;
     const totalWords = () =>
       wordCount(title) +
@@ -105,35 +87,84 @@
     let guard = 0;
     while (totalWords() > budget && guard++ < 50) {
       const fs = fields();
+      if (!fs.length) break;
       let longest = fs[0];
       for (const f of fs) {
         if (wordCount(f.get()) > wordCount(longest.get())) longest = f;
       }
-      const target = Math.max(
-        1,
-        wordCount(longest.get()) - (totalWords() - budget)
-      );
+      const target = Math.max(1, wordCount(longest.get()) - (totalWords() - budget));
       const out = trimTo(longest.get(), target);
       longest.set(out.text);
       trimmed = true;
       if (!out.trimmed) break;
     }
+    return { wordCount: totalWords() + fitWords, trimmed, story };
+  }
 
+  function generateCopy(lookCard) {
+    // Offline stub fallback. Live path is generateCopyFromModel below,
+    // fed by MetaStyles.metaClient.copy (Muse Spark via the local proxy).
+    const fitNote = (lookCard && lookCard.fitNote) || "";
+    const pieces = ((lookCard && lookCard.pieces) || []).map((p) => ({
+      id: p.id,
+      category: p.category,
+      text: SPARK_BANK[p.category] || FALLBACK_TEXT,
+    }));
+    const finish = (lookCard && lookCard.finish) || null;
+    const title = TITLES[finish || "none"];
+    const story = STORIES[finish || "none"];
+    const budget1 = trimCopyFields(title, pieces, story, fitNote);
     return {
       title,
       perPiece: pieces,
-      lookStory: story,
-      wordCount: totalWords() + fitWords,
-      trimmed,
+      lookStory: budget1.story,
+      wordCount: budget1.wordCount,
+      trimmed: budget1.trimmed,
       placeholder: true,
       placeholderNote:
-        "Placeholder Spark copy: invented longer-form text, not from the Muse Spark Model API — no live call yet (TODO(Spark-API)).",
+        "Placeholder Spark copy (offline fallback): invented text, not from Muse Spark. Start meta-api-proxy for live copy.",
       source: "stub",
     };
   }
 
+  // Milestone 14d: map a real Muse Spark copy response (proxy JSON) onto
+  // generateCopy's return shape. Per-piece texts are matched by piece id,
+  // falling back to the stub bank per piece when the model omits one.
+  function generateCopyFromModel(lookCard, modelResult) {
+    if (!modelResult || !Array.isArray(modelResult.perPiece)) return null;
+    const byId = {};
+    for (const p of modelResult.perPiece) {
+      if (p && p.id && typeof p.text === "string" && p.text) byId[p.id] = p.text;
+    }
+    const fitNote = (lookCard && lookCard.fitNote) || "";
+    const pieces = ((lookCard && lookCard.pieces) || []).map((p) => ({
+      id: p.id,
+      category: p.category,
+      text: byId[p.id] || SPARK_BANK[p.category] || FALLBACK_TEXT,
+    }));
+    const finish = (lookCard && lookCard.finish) || null;
+    const title = typeof modelResult.title === "string" && modelResult.title
+      ? modelResult.title : TITLES[finish || "none"];
+    const story = typeof modelResult.lookStory === "string" && modelResult.lookStory
+      ? modelResult.lookStory : STORIES[finish || "none"];
+    const budget2 = trimCopyFields(title, pieces, story, fitNote);
+    return {
+      title,
+      perPiece: pieces,
+      lookStory: budget2.story,
+      wordCount: budget2.wordCount,
+      trimmed: budget2.trimmed,
+      placeholder: false,
+      placeholderNote: modelResult.cached
+        ? "Muse Spark copy (cached live result, via Meta Model API proxy)."
+        : "Muse Spark copy via Meta Model API (proxy). Not a real resale listing.",
+      source: modelResult.source || "muse-spark-1.3",
+      cached: !!modelResult.cached,
+    };
+  }
+
   root.MetaStyles = root.MetaStyles || {};
-  Object.assign(root.MetaStyles, { generateCopy, SPARK_BANK });
+  Object.assign(root.MetaStyles, { generateCopy, generateCopyFromModel, SPARK_BANK });
   if (typeof module !== "undefined" && module.exports) {
     module.exports = root.MetaStyles;
   }

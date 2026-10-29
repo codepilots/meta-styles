@@ -10,10 +10,10 @@
  * over a cami/base, so hint labels like "tie-blouse" or "shrug" map to
  * "layer/cardigan", never to a base.
  *
- * TODO(model): replace classifyRegion's rule/hash heuristic with a real
- * garment model (open-weights first, Meta Model API when access lands).
- * The return shape { category, method, confidence, placeholder } is the
- * contract the UI and assembler rely on — keep it.
+ * Milestone 14c: classifyRegion below is the offline heuristic fallback.
+ * The live path is classifyFromSpark (Muse Spark vision via the proxy),
+ * which returns the same { category, method, confidence, placeholder }
+ * shape with placeholder:false.
  */
 (function (root) {
   const TAXONOMY = [
@@ -129,8 +129,8 @@
         placeholder: true,
       };
     }
-    // Mid-band ambiguity: deterministic hash tiebreak so the stub is
-    // stable across reloads. TODO(model): real model scores here.
+    // Mid-band ambiguity: deterministic hash tiebreak so the offline
+    // fallback is stable across reloads. Live scores come from Spark.
     const pick = TAXONOMY[fnv1a(JSON.stringify(region.rect)) % TAXONOMY.length];
     return {
       category: pick,
@@ -164,6 +164,33 @@
       "Mini Y2K shoulder bag in silver metallic faux leather with butterfly charm. Strap drop fits over layers without digging; just big enough for phone and gloss. Shine that ties the fairycore story together.",
   };
 
+  // Milestone 14c: validate a Muse Spark vision result (from the proxy in
+  // meta-client.js) onto this module's contract. Spark proposes; the fixed
+  // taxonomy + tie-blouse/shrug layer rule dispose. Returns null when the
+  // model output is off-taxonomy, so callers fall back to classifyRegion.
+  function classifyFromSpark(region, sparkResult) {
+    if (!sparkResult || typeof sparkResult.category !== "string") return null;
+    let category = sparkResult.category.toLowerCase().trim();
+    const aliases = {
+      top: "base/top", cami: "base/top", bottom: "base/bottom", skirt: "base/bottom",
+      cardigan: "layer/cardigan", "tie-blouse": "layer/cardigan", blouse: "layer/cardigan",
+      shrug: "layer/cardigan", blazer: "layer/blazer", jacket: "layer/blazer",
+      handbag: "bag", purse: "bag",
+    };
+    if (aliases[category]) category = aliases[category];
+    if (!TAXONOMY.includes(category)) return null;
+    const hint = (region && region.labelHint || "").toLowerCase().trim();
+    if ((hint === "tie-blouse" || hint === "shrug" || hint === "blouse") && category.startsWith("base/")) {
+      category = "layer/cardigan";
+    }
+    return {
+      category,
+      method: "spark-vision",
+      confidence: typeof sparkResult.confidence === "number" ? sparkResult.confidence : "live",
+      placeholder: false,
+    };
+  }
+
   function placeholderCopy(category) {
     return {
       category,
@@ -178,6 +205,7 @@
     TAXONOMY,
     HINT_MAP,
     classifyRegion,
+    classifyFromSpark,
     bboxOfPoints,
     placeholderCopy,
     PLACEHOLDER_NOTE,

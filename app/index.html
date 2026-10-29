@@ -3,14 +3,14 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>meta-styles · Milestone 3 — Share Cards</title>
+<title>meta-styles · Full-look cards (Meta AI live)</title>
 <link rel="stylesheet" href="styles.css">
 </head>
 <body>
 <header class="topbar">
   <div>
-    <h1>meta-styles <span class="milestone">Milestone 3 · Share cards</span></h1>
-    <p class="sub">Photo &rarr; mask overlay, tag regions with the garment-classifier stub, assemble a full look card, then preview Spark copy + a mock preview image in a shareable card. Segmentation, copy, and imagery are stubbed.</p>
+    <h1>meta-styles <span class="milestone">Full-look cards · Meta AI live</span></h1>
+    <p class="sub">Photo &rarr; SAM 3.1 segmentation, Muse Spark classification and look assembly validated by fit rules, Spark copy + Muse Image preview in a shareable card. Live via the local Meta API proxy (<code>meta-api-proxy/</code>); labelled stubs remain as offline fallbacks.</p>
   </div>
   <p id="status" class="status" role="status" aria-live="polite">Loading&hellip;</p>
 </header>
@@ -35,7 +35,7 @@
 
     <h2>2 · Segment</h2>
     <div class="row">
-      <button type="button" id="segmentBtn">Run segmentation (stub)</button>
+      <button type="button" id="segmentBtn">Run segmentation (SAM 3.1)</button>
       <button type="button" id="clearMaskBtn" class="ghost">Clear mask</button>
     </div>
 
@@ -60,9 +60,9 @@
       <select id="regionSource"></select>
     </label>
     <div class="row">
-      <button type="button" id="suggestBtn">Suggest label (stub)</button>
+      <button type="button" id="suggestBtn">Suggest label (Muse Spark)</button>
     </div>
-    <p class="hint" id="suggestHint">The classifier stub suggests a label from the fixed taxonomy — confirm it before adding.</p>
+    <p class="hint" id="suggestHint">Muse Spark suggests a label from the fixed taxonomy (stub heuristic offline) — confirm it before adding.</p>
     <label class="slider">Category
       <select id="categorySelect">
         <option value="base/top">base/top</option>
@@ -81,6 +81,10 @@
 
     <h2>Look (wardrobe)</h2>
     <div id="wardrobe" class="wardrobe"></div>
+    <div class="row">
+      <button type="button" id="assembleBtn" class="ghost">Propose complete looks (Muse Spark)</button>
+    </div>
+    <p class="hint" id="assembleHint">Spark proposes looks from your pieces; the fit-rule engine validates each one and shows rejections.</p>
   </section>
 
   <section class="stage" aria-label="Photo canvas">
@@ -96,7 +100,7 @@
 
 <section class="cardwrap" aria-label="Share card">
   <h2>6 · Share card</h2>
-  <p class="hint">The final assembled look: mock preview image, Spark copy, and validity badge in a shareable layout. Everything here is placeholder until the live APIs land.</p>
+  <p class="hint">The final assembled look: Muse Image preview, Spark copy, and validity badge in a shareable layout. Placeholder labels appear only when an offline fallback produced the content.</p>
   <article id="shareCard" class="sharecard" hidden>
     <div class="share-head">
       <div>
@@ -108,7 +112,7 @@
     <div class="share-body">
       <figure class="share-fig">
         <canvas id="previewCanvas" width="600" height="760"></canvas>
-        <figcaption class="hint">Mock preview image · placeholder — not AI imagery.</figcaption>
+        <figcaption class="hint">Look-card preview · Muse Image when live, labelled collage offline.</figcaption>
       </figure>
       <div class="share-copy">
         <div id="sharePieces"></div>
@@ -126,13 +130,14 @@
 </section>
 
 <footer class="foot">
-  <p>Stubs: <code>StubSegmentationService</code> in <code>app.js</code> stands in for SAM 3.1 (<code>TODO(SAM-3.1)</code>); <code>classifyRegion</code> in <code>classifier.js</code> is a rule/hash stub (<code>TODO(model)</code>); per-piece copy is invented placeholder text, marked <code>placeholder:true</code> — not real listings. Milestone 3: <code>generateCopy</code> in <code>spark.js</code> is a longer-form placeholder stub (<code>TODO(Spark-API)</code>); <code>generateImage</code> in <code>preview.js</code> draws a canvas collage, not AI imagery (<code>TODO(Image-API)</code>). No live Meta API calls; <code>.env/secrets</code> is never read. See <code>README.md</code>.</p>
+  <p>Live (Milestone 14): SAM 3.1 segmentation, Muse Spark classification/assembly/copy, and Muse Image preview run through <code>meta-api-proxy/</code> — the browser never sees the API key. Fallbacks stay labelled: stub mask (<code>app.js</code>), heuristic classifier and placeholder copy banks (<code>classifier.js</code>/<code>spark.js</code>, <code>placeholder:true</code>, never real listings), canvas-collage preview (<code>preview.js</code>). Run <code>sh meta-api-proxy/start.sh</code> plus a static server to go live. See <code>README.md</code>.</p>
 </footer>
 
 <script src="classifier.js"></script>
 <script src="assembler.js"></script>
 <script src="spark.js"></script>
 <script src="preview.js"></script>
+<script src="meta-client.js"></script>
 <script src="app.js"></script>
 <script src="inbox-bridge.js"></script>
 </body>

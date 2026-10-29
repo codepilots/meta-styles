@@ -1,17 +1,25 @@
-# meta-styles · Milestone 3 — Share cards
+# meta-styles · Full-look cards (Meta AI live, Milestone 14)
 
-Minimal zero-install web app: pick a photo, view a garment-segmentation mask
-overlay (or draw a manual box), tag regions with the garment-classifier stub,
-and assemble a full look card under the hardcoded fit rules (base + one layer,
-or scarf + bag — never shoes).
+Minimal zero-install web app: pick a photo, segment garments with SAM 3.1,
+classify and assemble complete looks with Muse Spark validated by the
+hardcoded fit rules (base + one layer, or scarf + bag — never shoes), then
+share a card with Spark copy and a Muse Image preview. Every live call
+keeps a labelled stub as its offline fallback.
 
 ## Run it
 
-No build step, no dependencies. Either:
+Live mode (two local processes, no build step, no dependencies):
 
-- Open `index.html` directly in a browser (double-click it), or
-- Serve the folder: `python3 -m http.server 8000` from `app/`, then open
-  [http://localhost:8000](http://localhost:8000) in a browser.
+1. From the repo root: `sh meta-api-proxy/start.sh` — the Meta Model API
+   proxy on `http://127.0.0.1:8905`. It reads the API key from
+   `.env/secrets` into its own process env (never printed, never sent to
+   the browser). Check it: open `http://127.0.0.1:8905/health`.
+2. From `app/`: `python3 -m http.server 8000`, then open
+   [http://localhost:8000](http://localhost:8000) in a browser.
+
+Offline mode: skip step 1. The app still runs end-to-end on its stub
+fallbacks and says so (`placeholder:true`). Opening `index.html` via
+`file://` works for the core flow; the inbox bridge needs HTTP.
 
 ## What's real vs stubbed
 
@@ -21,9 +29,8 @@ No build step, no dependencies. Either:
 - **Stubbed:** segmentation itself. `StubSegmentationService` in `app.js`
   returns deterministic placeholder polygons per demo image (generic shape for
   uploads) after a short fake delay. No external AI API is called.
-- **To go live:** implement the `TODO(SAM-3.1)` in `app.js` — POST the image
-  to the SAM 3.1 API and return `{ polygons, boxes }` in normalized 0–1
-  coordinates. The UI needs no other changes.
+- **Superseded (Milestone 14):** live SAM 3.1 now runs via the proxy —
+  see "Live Meta AI" below. This stub remains the offline fallback.
 
 ## What's real vs stubbed (Milestone 2)
 
@@ -90,3 +97,31 @@ No build step, no dependencies. Either:
   call. Both keep their return shapes, so the share-card UI needs no
   changes. No live Meta API calls yet; `.env/secrets` is never read —
   Autumn reviews the env plumbing before anything goes live.
+
+## Live Meta AI (Milestone 14 — implemented 2026-10-28)
+
+- **Architecture:** browser → `app/meta-client.js` → local proxy
+  (`meta-api-proxy/server.js`, Node stdlib, `127.0.0.1:8905`) → Meta Model
+  API (`https://api.meta.ai/v1`, key from the proxy's env only). The
+  browser never sees the key. API shapes verified against the official
+  docs (dev.meta.ai) and live calls, 2026-10-28.
+- **SAM 3.1** (`POST /api/segment`): one noun-phrase call per garment type
+  via `/v1/responses`; SAM box records are parsed into normalized
+  polygons (mask rasters are reported as metadata — true mask outlines
+  via `@meta-sam/parser` are future work). Zero matches falls back to the
+  stub/manual box, never a dead end.
+- **Muse Spark 1.3** (`/api/classify`, `/api/copy`, `/api/assemble`):
+  vision classification onto the fixed taxonomy (Spark proposes, the
+  taxonomy + fit rules dispose), look proposals validated by
+  `assembleLook` with rejections shown, and ≤300-word copy through
+  `generateCopyFromModel`. `placeholder:false` only on live results.
+- **Muse Image 1.0** (`/api/preview`): flat-lay look-card preview (never a
+  worn try-on), drawn into the share-card canvas; the watermarked canvas
+  collage remains the offline fallback.
+- **Cached mode:** successful segment/copy results cache in the proxy and
+  in `localStorage`; proxy-down replays them labelled `cached:true`.
+- **Tests:** `node app/test/milestone14-meta-api.test.js` (39 assertions,
+  fake upstream — no key needed). Live proof 2026-10-28: one real call
+  per endpoint through the proxy, all 200.
+- Also update the file table: `meta-client.js` is the proxy client;
+  `../meta-api-proxy/` holds the server (`server.js` + `start.sh`).
