@@ -98,6 +98,10 @@ gap: no browser end-to-end test — closed by M18.
 - Milestone 11 — PARKED (post-hackathon, not designed): bot data-storage
   API. No contract doc, and the replace-vs-supplement localStorage
   question is still unanswered. Not needed for the demo.
+  (2026-10-29: M19h un-parks the MOCK side only — `mock-ig-bot/server.js`
+  now persists per-user catalogs via `PUT/GET /ig/catalog/<user_ref>`
+  with per-user AES-256-GCM at rest, wired to `app/wardrobe-catalog.js`
+  `save()`/`load()`; the real-bot side stays parked per the compliance skill.)
 - Milestone 12 — BOT SIDE LIVE, CLIENT NOT BUILT: bot write API
   (`POST /ig/send`, public outbound-media host, fail2ban+Cloudflare —
   see `docs/instagram-bot-send-api.md` "As implemented"/"Applied").

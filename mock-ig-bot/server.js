@@ -29,10 +29,83 @@
  */
 
 const http = require("http");
+const crypto = require("crypto");
+const fs = require("fs");
+const path = require("path");
 
 const DEFAULT_PORT = 8904;
 const DEFAULT_TOKEN = "SYNTH_mock_token";
 const DEFAULT_ORIGIN = "http://localhost:8000";
+
+// Milestone 19h — mock-bot catalog persistence + encryption parity.
+// Mirrors ONLY the route contract of the real (prior-work, out-of-repo)
+// bot's local-only catalog API; fresh independent implementation, never
+// a port of that service's source. Whole-array-replace, last-write-wins,
+// opaque bytes. Per-user AES-256-GCM via Node builtins only (no new dep).
+const DEFAULT_CATALOG_SECRET = "SYNTH_mock_catalog_secret (non-secret demo default, never real data)";
+const CATALOG_DATA_DIR = process.env.MOCK_CATALOG_DIR
+  || path.join(__dirname, "data", "catalog");
+// Real-bot user_ref shape (docs/instagram-bot-api.md): "u_" + 32 lowercase
+// hex chars. The mock enforces the same shape so malformed/empty values
+// (including path-traversal-looking strings) are rejected, never stored.
+const USER_REF_RE = /^u_[0-9a-f]{32}$/;
+const CATALOG_IV_BYTES = 12;
+const CATALOG_TAG_BYTES = 16;
+
+function catalogSecret(config) {
+  if (config && typeof config.catalogSecret === "string" && config.catalogSecret) {
+    return config.catalogSecret;
+  }
+  if (process.env.MOCK_CATALOG_SECRET) return process.env.MOCK_CATALOG_SECRET;
+  return DEFAULT_CATALOG_SECRET;
+}
+
+function catalogDir(config) {
+  if (config && typeof config.catalogDir === "string" && config.catalogDir) {
+    return config.catalogDir;
+  }
+  return CATALOG_DATA_DIR;
+}
+
+// Per-user key: scrypt(server secret, per-user salt) so different users'
+// stored files are not decryptable with naively reused key material.
+function catalogKeyFor(secret, userRef) {
+  return crypto.scryptSync(secret, "mock-catalog-v1:" + userRef, 32);
+}
+
+// On-disk bytes are raw binary: iv(12) || tag(16) || ciphertext. Never
+// JSON, never plaintext — a raw read of the file proves ciphertext.
+function encryptCatalog(secret, userRef, pieces) {
+  const plaintext = Buffer.from(JSON.stringify(pieces), "utf8");
+  const iv = crypto.randomBytes(CATALOG_IV_BYTES);
+  const cipher = crypto.createCipheriv("aes-256-gcm", catalogKeyFor(secret, userRef), iv);
+  const ciphertext = Buffer.concat([cipher.update(plaintext), cipher.final()]);
+  const tag = cipher.getAuthTag();
+  return Buffer.concat([iv, tag, ciphertext]);
+}
+
+function decryptCatalog(secret, userRef, blob) {
+  if (!Buffer.isBuffer(blob) || blob.length < CATALOG_IV_BYTES + CATALOG_TAG_BYTES + 1) {
+    throw new Error("catalog blob too short");
+  }
+  const iv = blob.slice(0, CATALOG_IV_BYTES);
+  const tag = blob.slice(CATALOG_IV_BYTES, CATALOG_IV_BYTES + CATALOG_TAG_BYTES);
+  const ciphertext = blob.slice(CATALOG_IV_BYTES + CATALOG_TAG_BYTES);
+  const decipher = crypto.createDecipheriv("aes-256-gcm", catalogKeyFor(secret, userRef), iv);
+  decipher.setAuthTag(tag);
+  const plaintext = Buffer.concat([decipher.update(ciphertext), decipher.final()]);
+  const parsed = JSON.parse(plaintext.toString("utf8"));
+  if (!Array.isArray(parsed)) throw new Error("catalog payload is not an array");
+  return parsed;
+}
+
+// The raw user_ref NEVER touches the filesystem: the filename is a
+// hex digest, so traversal-looking refs cannot escape the data dir even
+// if validation were bypassed.
+function catalogPath(dir, userRef) {
+  const name = crypto.createHash("sha256").update("mock-catalog-v1:" + userRef).digest("hex");
+  return path.join(dir, name + ".bin");
+}
 
 function createStore() {
   return {
@@ -235,7 +308,7 @@ function createHandler(store, config) {
       }
       res.writeHead(204, {
         "Access-Control-Allow-Origin": corsOrigin,
-        "Access-Control-Allow-Methods": "GET, POST, DELETE, OPTIONS",
+        "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
         "Access-Control-Allow-Headers": "Authorization, Content-Type",
         "Cache-Control": "no-store",
       });
@@ -262,6 +335,97 @@ function createHandler(store, config) {
         res.end(JSON.stringify({ error: "unauthorized" }));
         return;
       }
+    }
+
+    // Milestone 19h — local-only per-user catalog persistence (M11 seam).
+    // PUT body is the full catalog array (whole-array replace,
+    // last-write-wins; the bot treats it as opaque bytes and never
+    // validates piece contents). GET returns the stored array, or []
+    // when nothing is stored yet (never 404 for "no data").
+    if (url.pathname === "/ig/catalog" || url.pathname.indexOf("/ig/catalog/") === 0) {
+      const secret = catalogSecret(config);
+      const dir = catalogDir(config);
+      let userRef = null;
+      if (url.pathname.indexOf("/ig/catalog/") === 0) {
+        const raw = url.pathname.slice("/ig/catalog/".length);
+        // Extra path segments (e.g. a second "/" from a traversal-looking
+        // value) are malformed refs, not deeper routes.
+        if (raw && raw.indexOf("/") === -1) {
+          try {
+            userRef = decodeURIComponent(raw);
+          } catch (err) {
+            userRef = null;
+          }
+        }
+      }
+      if (typeof userRef !== "string" || !USER_REF_RE.test(userRef)) {
+        sendJson(res, 400, { error: "bad_user_ref" }, corsOrigin);
+        return;
+      }
+      if (req.method === "PUT") {
+        readBody(req, MAX_SEND_BODY).then((parsed) => {
+          if (parsed.tooLarge) {
+            sendJson(res, 413, { error: "body_too_large" }, corsOrigin);
+            return;
+          }
+          let pieces = null;
+          try {
+            pieces = JSON.parse((parsed.bytes || Buffer.alloc(0)).toString("utf8"));
+          } catch (err) {
+            pieces = null;
+          }
+          if (!Array.isArray(pieces)) {
+            sendJson(res, 400, { error: "bad_request" }, corsOrigin);
+            return;
+          }
+          let blob;
+          try {
+            blob = encryptCatalog(secret, userRef, pieces);
+          } catch (err) {
+            sendJson(res, 500, { error: "catalog_store_failed" }, corsOrigin);
+            return;
+          }
+          try {
+            fs.mkdirSync(dir, { recursive: true });
+            fs.writeFileSync(catalogPath(dir, userRef), blob);
+          } catch (err) {
+            sendJson(res, 500, { error: "catalog_store_failed" }, corsOrigin);
+            return;
+          }
+          res.writeHead(204, {
+            "Cache-Control": "no-store",
+            ...(corsOrigin ? { "Access-Control-Allow-Origin": corsOrigin } : {}),
+          });
+          res.end();
+        });
+        return;
+      }
+      if (req.method === "GET") {
+        let blob = null;
+        try {
+          blob = fs.readFileSync(catalogPath(dir, userRef));
+        } catch (err) {
+          if (err && err.code !== "ENOENT") {
+            sendJson(res, 500, { error: "catalog_unreadable" }, corsOrigin);
+            return;
+          }
+        }
+        if (blob === null) {
+          sendJson(res, 200, [], corsOrigin);
+          return;
+        }
+        let pieces;
+        try {
+          pieces = decryptCatalog(secret, userRef, blob);
+        } catch (err) {
+          sendJson(res, 500, { error: "catalog_unreadable" }, corsOrigin);
+          return;
+        }
+        sendJson(res, 200, pieces, corsOrigin);
+        return;
+      }
+      sendJson(res, 405, { error: "method_not_allowed" }, corsOrigin);
+      return;
     }
 
     if (req.method === "GET" && url.pathname === "/ig/shares") {
@@ -460,6 +624,8 @@ function startServer(opts) {
   const server = http.createServer(createHandler(store, {
     token: options.token,
     allowOrigin: options.allowOrigin,
+    catalogDir: options.catalogDir,
+    catalogSecret: options.catalogSecret,
   }));
   return new Promise((resolve, reject) => {
     server.once("error", reject);

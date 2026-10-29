@@ -27,16 +27,21 @@
  * user-anchored reply-window check (24h measured against THIS user's
  * latest inbound received_at, not per share_id — §4 Gap 3).
  *
- * M11 BOT-SIDE STORAGE CONTRACT — SKETCH ONLY (not implemented; no bot
- * DB code is built or touched by this task):
- *   store(user_ref, pieces[])       // bot persists the interface-agnostic
- *                                   // piece records above under an opaque
- *                                   // user_ref it resolves server-side
- *   retrieve(user_ref) -> {pieces[]} // app fetches the same shape back;
- *                                   // payload is NEVER an IG shape
- * The seam this module leaves for that future milestone is the injected
- * user key + the interface-agnostic piece schema. Nothing here writes
- * to any bot, database, or network.
+ * M11 BOT-SIDE STORAGE CONTRACT — WIRED BY MILESTONE 19h (memory +
+ * persisted). The mock bot (`mock-ig-bot/server.js`, NEW hackathon work,
+ * never the prior-work `igwebhook` service) exposes a local-only
+ *   PUT /ig/catalog/<user_ref>  // body: full piece array (whole-array
+ *                               // replace, last-write-wins, opaque bytes)
+ *   GET /ig/catalog/<user_ref>  // -> the stored array, or [] when empty
+ * with per-user AES-256-GCM encryption at rest (Node builtins only).
+ * The seam is the injected user key + the interface-agnostic piece
+ * schema, now joined by an injected store: pass
+ * `createCatalog({ userKey, store })` where store is built by
+ * `createCatalogStore({ base, token, userRef })` (same base/token/error
+ * conventions as app/send-client.js). `catalog.save()` PUTs the current
+ * pieces on update; `catalog.load()` GETs and whole-array-replaces local
+ * memory on load. With no store attached the catalog stays memory-only
+ * exactly as before (save/load resolve an honest `no_store` error).
  *
  * All ids/text below are synthetic (SYNTH_ prefix, example.invalid
  * URLs) — never real Instagram data.
@@ -79,6 +84,109 @@
   // received_at (user-anchored per §4 Gap 3), never per share_id.
   var REPLY_WINDOW_MS = 24 * 3600 * 1000;
 
+  // Milestone 19h — mock-bot base for the persisted catalog API. Same
+  // default as app/send-client.js SEND_BASE and inbox-bridge.js BOT_BASE:
+  // the local mock bot, never a real Instagram endpoint.
+  var CATALOG_BASE = "http://127.0.0.1:8904";
+
+  // Same result shape as send-client.normalizeResult(): HTTP statuses
+  // resolve (surfaced), only a network failure resolves as status 0
+  // `bot_unreachable`. Never throws for transport/HTTP outcomes.
+  function normalizeStoreResult(status, body, op) {
+    var ok = status === 200 || status === 204;
+    var error = body && typeof body.error === "string" ? body.error : null;
+    return {
+      ok: ok,
+      status: status,
+      body: body || {},
+      error: ok ? null : (error || ("http_" + status)),
+      op: op,
+    };
+  }
+
+  function parseJsonBody(text) {
+    if (!text) return {};
+    try {
+      return JSON.parse(text);
+    } catch (err) {
+      return null;
+    }
+  }
+
+  // One persisted-catalog client per user wardrobe; mirrors
+  // send-client.createSendClient (base/token opts, Bearer auth, honest
+  // error results). Payloads are the interface-agnostic piece arrays —
+  // NEVER an IG shape. Requires root.fetch (browser + Node 18+).
+  function createCatalogStore(opts) {
+    var o = opts || {};
+    var base = o.base || CATALOG_BASE;
+    var token = o.token || "";
+    var userRef = o.userRef || "";
+
+    function url() {
+      return base + "/ig/catalog/" + encodeURIComponent(userRef);
+    }
+
+    function authed(method, body) {
+      return root.fetch(url(), {
+        method: method,
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: "Bearer " + token,
+        },
+        body: body === undefined ? undefined : JSON.stringify(body),
+      });
+    }
+
+    // Whole-array replace: PUTs the FULL catalog array for this user_ref.
+    // Last write wins server-side. Resolves {ok:true} on 200/204.
+    function save(pieces) {
+      if (!root.Promise) return null;
+      if (!Array.isArray(pieces)) {
+        return root.Promise.resolve({
+          ok: false, status: 0, body: {}, error: "bad_catalog", op: "save",
+        });
+      }
+      return authed("PUT", pieces).then(function (res) {
+        return res.text().then(function (text) {
+          return normalizeStoreResult(res.status, parseJsonBody(text) || {}, "save");
+        });
+      }, function () {
+        return { ok: false, status: 0, body: {}, error: "bot_unreachable", op: "save" };
+      });
+    }
+
+    // Whole-array read: GETs the stored array ([] when nothing stored).
+    // Resolves {ok:true, pieces:[...]}; a non-array 200 body is surfaced
+    // as bad_catalog, never passed through.
+    function load() {
+      if (!root.Promise) return null;
+      return root.fetch(url(), {
+        headers: { Authorization: "Bearer " + token },
+      }).then(function (res) {
+        return res.text().then(function (text) {
+          var parsed = parseJsonBody(text);
+          if (res.status === 200 && !Array.isArray(parsed)) {
+            return { ok: false, status: 200, body: {}, error: "bad_catalog", op: "load" };
+          }
+          var out = normalizeStoreResult(
+            res.status, Array.isArray(parsed) ? {} : (parsed || {}), "load");
+          if (out.ok) out.pieces = parsed;
+          return out;
+        });
+      }, function () {
+        return { ok: false, status: 0, body: {}, error: "bot_unreachable", op: "load" };
+      });
+    }
+
+    return {
+      base: base,
+      userRef: userRef,
+      save: save,
+      load: load,
+    };
+  }
+
   function isPlainObject(v) {
     return !!v && typeof v === "object" && !Array.isArray(v);
   }
@@ -117,6 +225,10 @@
       );
     }
     var userKey = o.userKey;
+    // Injected persistence (Milestone 19h): a createCatalogStore() client.
+    // Absent by default — the catalog stays memory-only exactly as before.
+    var store = o.store && typeof o.store.save === "function" &&
+      typeof o.store.load === "function" ? o.store : null;
 
     var pieces = [];           // piece records, §3 schema (never deleted)
     var turns = [];            // turn records {turn, userText, proposal, verdict, reasons[]}
@@ -144,6 +256,62 @@
         copy_preview_keys: Object.assign({}, p.copy_preview_keys),
         status: p.status,
       };
+    }
+
+    // Fail-closed validation for one piece record read back from the
+    // persisted store (Milestone 19h load path). Same interface-agnostic
+    // schema as addPiece, except stored pieces may carry any of the three
+    // lifecycle statuses (active/rejected/superseded), not just 'active'.
+    // Throws on anything else; memory is only replaced after the WHOLE
+    // array validates, so a corrupt stored array never half-loads.
+    function validateStoredPiece(p, seenIds) {
+      if (!isPlainObject(p)) {
+        throw new Error("wardrobe-catalog: stored catalog holds a non-object piece");
+      }
+      rejectUnknownKeys(p, PIECE_KEYS, "stored piece");
+      if (typeof p.piece_id !== "string" || p.piece_id.length === 0) {
+        throw new Error("wardrobe-catalog: stored piece needs a non-empty piece_id");
+      }
+      if (seenIds[p.piece_id]) {
+        throw new Error("wardrobe-catalog: stored catalog has duplicate piece_id '" + p.piece_id + "'");
+      }
+      seenIds[p.piece_id] = true;
+      if (typeof p.category !== "string" || TAXONOMY.indexOf(p.category) === -1) {
+        throw new Error("wardrobe-catalog: stored piece has an unknown category");
+      }
+      if (!isPlainObject(p.attributes)) {
+        throw new Error("wardrobe-catalog: stored piece attributes must be an object");
+      }
+      rejectUnknownKeys(p.attributes, ATTRIBUTE_KEYS, "stored piece attributes");
+      if (typeof p.source_share_id !== "string" || p.source_share_id.length === 0) {
+        throw new Error("wardrobe-catalog: stored piece needs source_share_id");
+      }
+      isoOrThrow(p.added_at, "stored added_at");
+      if (!isPlainObject(p.copy_preview_keys)) {
+        throw new Error("wardrobe-catalog: stored copy_preview_keys must be an object");
+      }
+      rejectUnknownKeys(p.copy_preview_keys, COPY_PREVIEW_KEYS, "stored copy_preview_keys");
+      if (PIECE_STATUSES.indexOf(p.status) === -1) {
+        throw new Error("wardrobe-catalog: stored piece has an unknown status");
+      }
+      return copyPiece(p);
+    }
+
+    // Validate a whole stored array; returns { pieces, maxCounter } where
+    // maxCounter is the highest SYNTH_piece_NNN suffix seen, so the next
+    // app-assigned id cannot collide with a loaded one.
+    function checkStoredArray(arr) {
+      if (!Array.isArray(arr)) {
+        throw new Error("wardrobe-catalog: stored catalog is not an array");
+      }
+      var seenIds = {};
+      var maxCounter = 0;
+      var next = arr.map(function (p) { return validateStoredPiece(p, seenIds); });
+      next.forEach(function (p) {
+        var m = /^SYNTH_piece_(\d+)$/.exec(p.piece_id);
+        if (m && Number(m[1]) > maxCounter) maxCounter = Number(m[1]);
+      });
+      return { pieces: next, maxCounter: maxCounter };
     }
 
     // Provenance pointer for the 24h window + turn linkage. Opaque:
@@ -402,8 +570,47 @@
       };
     }
 
+    function noStore(op) {
+      if (!root.Promise) return null;
+      return root.Promise.resolve({ ok: false, status: 0, body: {}, error: "no_store", op: op });
+    }
+
+    // PUT on catalog update: persists the FULL piece array through the
+    // injected store (whole-array replace, last write wins). Resolves
+    // send-client-style {ok,...}; with no store attached resolves an
+    // honest no_store error and changes nothing.
+    function save() {
+      if (!store) return noStore("save");
+      return store.save(getPieces());
+    }
+
+    // GET on load: fetches the stored array and whole-array-replaces
+    // local memory with it (validated fail-closed first — a corrupt
+    // stored array resolves an error and leaves memory untouched).
+    function load() {
+      if (!store) return noStore("load");
+      return store.load().then(function (result) {
+        if (!result.ok) return result;
+        var checked;
+        try {
+          checked = checkStoredArray(result.pieces);
+        } catch (err) {
+          return {
+            ok: false, status: result.status, body: {},
+            error: String((err && err.message) || err), op: "load",
+          };
+        }
+        pieces = checked.pieces;
+        if (checked.maxCounter > pieceCounter) pieceCounter = checked.maxCounter;
+        return { ok: true, status: result.status, body: {}, error: null, op: "load", count: pieces.length };
+      });
+    }
+
     return {
       userKey: userKey,
+      store: store,
+      save: save,
+      load: load,
       noteInboundShare: noteInboundShare,
       replyWindowStatus: replyWindowStatus,
       addPiece: addPiece,
@@ -432,7 +639,9 @@
     ATTRIBUTE_KEYS: ATTRIBUTE_KEYS,
     TURN_KEYS: TURN_KEYS,
     REPLY_WINDOW_MS: REPLY_WINDOW_MS,
+    CATALOG_BASE: CATALOG_BASE,
     createCatalog: createCatalog,
+    createCatalogStore: createCatalogStore,
   };
 
   if (root.MetaStyles === undefined) root.MetaStyles = {};
