@@ -142,7 +142,7 @@
 
   <section class="panel" aria-label="Assistant activity">
     <h2>Assistant activity</h2>
-    <p class="hint">Every automatic reply is listed here in plain language, newest at the bottom. No codes, no tokens — just what the assistant did.</p>
+    <p class="hint">The wardrobe service lists every automatic reply here in plain language, newest at the bottom. No codes, no tokens — just what the assistant did.</p>
     <ol id="autoLog" class="autolog" aria-live="polite"></ol>
   </section>
 
@@ -199,7 +199,6 @@
 <script src="send-client.js"></script>
 <script src="meta-client.js"></script>
 <script src="turn-loop.js"></script>
-<script src="auto-reply.js"></script>
 <script>
 (function(){
   // If live runtime config is present, default the connection fields to it.
@@ -209,17 +208,11 @@
       var b = document.getElementById("mockBase");
       if (b) b.value = RT.botBase;
     }
-    if (RT.readToken) {
-      var t = document.getElementById("mockToken");
-      if (t) t.value = RT.readToken;
-      // Also sync send token if fields share same input (read vs send are separate
-      // bearer credentials on the real bot; mock uses one token for all routes).
-    }
-    if (RT.sendToken) {
-      var st = document.getElementById("mockToken");
-      // In live mode the single mockToken field holds the read token;
-      // sends use window.__IG_RUNTIME__.sendToken via send-client.js directly.
-    }
+    // No token prefill: the generated config carries no tokens (Milestone 20
+    // -- the wardrobe service owns all bot credentials server-side). The
+    // Token field stays operator-supplied for read-only display and
+    // deliberate manual sends.
+
   } catch(e) {}
 })();
 </script>
@@ -246,126 +239,56 @@ var lastSharesById = {}; // share id -> received_at (for the user-anchored windo
 var lastShareTotal = 0;
 var lastOutboundTotal = 0;
 
-// Turn-loop live wiring (chat-first pivot): ONE shared pipeline for both
-// modes — the only difference between MOCK and LIVE is the base/token
-// arguments resolved below (connection field + __IG_RUNTIME__), never a
-// mode fork in the pipeline itself. The module dedupes by share id
-// (in-session + persisted + catalog sent-turn log) so a share triggers at
-// most one automatic reply, even across poll ticks and page reloads.
-var autoReply = null;
-var autoReplyBusy = false;
-
-function appendAutoLog(line) {
+// Milestone 20: this page runs NO reply pipeline anymore. The
+// wardrobe-service (one server-side process, the SOLE writer/sender)
+// polls the bot, catalogues shares, and sends each automatic reply.
+// This page is display-only: the thread below is read-only, and the
+// Assistant activity panel renders the service's own status feed. The
+// only /ig/send calls this page still issues are the deliberate
+// human-triggered "Send as app" / "Propose look" buttons below.
+function renderServiceActivity(lines) {
   var list = document.getElementById("autoLog");
   if (!list) return;
-  var li = document.createElement("li");
-  li.textContent = line;
-  list.appendChild(li);
-  if (typeof li.scrollIntoView === "function") {
+  list.innerHTML = "";
+  var rows = Array.isArray(lines) && lines.length ? lines :
+    ["Wardrobe service is watching - no assistant activity yet."];
+  rows.forEach(function (line) {
+    var li = document.createElement("li");
+    li.textContent = String(line);
+    list.appendChild(li);
+  });
+  var last = list.lastChild;
+  if (last && typeof last.scrollIntoView === "function") {
     try {
-      li.scrollIntoView({ block: "nearest" });
+      last.scrollIntoView({ block: "nearest" });
     } catch (e) {
-      // Older browsers without options support — the line is still listed.
+      // Older browsers without options support - the line is still listed.
     }
   }
 }
 
-function createAutoReplyClient() {
-  try {
-    var MS = window.MetaStyles || {};
-    if (!MS.autoReply || typeof MS.autoReply.createAutoReply !== "function") return null;
-    var RT3 = (typeof globalThis !== "undefined" && globalThis.__IG_RUNTIME__) || {};
-    // Single demo wardrobe (single-user assumption until §8.9 resolves):
-    // one fixed user key + one fixed synthetic user ref in BOTH modes.
-    // The catalog store reuses wardrobe-catalog.js's own live wiring —
-    // same-origin "/ig" + catalog token live, mock base + field token mock.
-    return MS.autoReply.createAutoReply({
-      base: base(),
-      token: token(),
-      sendBase: base(),
-      sendToken: (IS_LIVE && RT3.sendToken) ? RT3.sendToken : token(),
-      catalogBase: base(),
-      catalogToken: (IS_LIVE && RT3.catalogToken) ? RT3.catalogToken : token(),
-      userKey: "SYNTH_demo_user",
-      userRef: "u_deadbeefdeadbeefdeadbeefdeadbeef",
-      storage: (function () {
-        try {
-          return window.localStorage;
-        } catch (e) {
-          return null;
-        }
-      })(),
-      log: appendAutoLog,
-    });
-  } catch (e) {
-    return null;
-  }
+// Status base: same-origin "/wardrobe" in live mode (served through
+// live-proxy-server.js from the generated runtime config), absolute
+// loopback default in mock mode (the mock static server is cross-origin
+// to the service port; the status endpoint allows it - public status,
+// never any token or id).
+function serviceStatusBase() {
+  var RT4 = (typeof globalThis !== "undefined" && globalThis.__IG_RUNTIME__) || {};
+  if (RT4.statusBase) return String(RT4.statusBase);
+  return "http://127.0.0.1:8906";
 }
 
-// Fire-and-forget: the poll cadence never waits on a styling turn.
-// newItems are this session's not-yet-attempted arrivals (anything absent
-// from seenShareIds). An id joins seenShareIds ONLY once the pipeline
-// settles it to a terminal outcome (sent / duplicate / window_closed /
-// unsupported). Every other path — no pipeline yet, busy, a rejected
-// pipeline promise, a synchronous throw, a result flagged retry, or an
-// input id the pipeline returned no result for at all — leaves the id
-// eligible for the next tick. The pipeline's own persisted at-most-once
-// map still guards real sends, so re-offering is safe; stranding is not.
-// (Marking on fetch stranded the whole pre-existing backlog the first time
-// the pipeline failed without flagging a retry — never do that again.)
-function runAutoReply(newItems) {
-  if (!autoReply || !newItems || !newItems.length) {
-    return Promise.resolve({ processed: 0, sent: 0, skipped: 0, results: [] });
-  }
-  if (autoReplyBusy) {
-    unmarkShares(newItems);
-    return Promise.resolve({ processed: 0, sent: 0, skipped: 0, results: [] });
-  }
-  autoReplyBusy = true;
-  var attempted;
-  try {
-    attempted = autoReply.processShares(newItems);
-  } catch (err) {
-    autoReplyBusy = false;
-    unmarkShares(newItems);
-    appendAutoLog("Auto-reply hit a snag — will try again on the next check.");
-    return Promise.resolve({ processed: 0, sent: 0, skipped: 0, results: [] });
-  }
-  return attempted.then(function (res) {
-    autoReplyBusy = false;
-    markSettledShares(newItems, res);
-    return res;
-  }, function () {
-    autoReplyBusy = false;
-    unmarkShares(newItems);
-    appendAutoLog("Auto-reply hit a snag — will try again on the next check.");
-    return { processed: 0, sent: 0, skipped: 0, results: [] };
-  });
-}
-
-// Drop every id back to retry-eligible (the next tick re-offers it).
-function unmarkShares(list) {
-  (list || []).forEach(function (item) {
-    if (item && item.id) delete seenShareIds[item.id];
-  });
-}
-
-// Mark seen ONLY the input ids the pipeline settled to a terminal outcome
-// (a result entry present and not flagged retry). Retry-flagged ids — and
-// input ids the pipeline returned no result for at all — stay eligible, so
-// no code path can strand a share with zero recorded outcome.
-function markSettledShares(list, res) {
-  var retryIds = {};
-  var decidedIds = {};
-  (((res && res.results) || [])).forEach(function (r) {
-    if (!r || !r.id) return;
-    decidedIds[r.id] = true;
-    if (r.retry) retryIds[r.id] = true;
-  });
-  (list || []).forEach(function (item) {
-    if (item && item.id && decidedIds[item.id] && !retryIds[item.id]) {
-      seenShareIds[item.id] = true;
-    }
+// Fire-and-forget: the thread render never waits on (or fails on) the
+// service status. A stopped service reads as "automatic replies are off",
+// never as a broken thread.
+function refreshServiceStatus() {
+  return fetch(joinBase(serviceStatusBase(), "/wardrobe/status")).then(function (res) {
+    if (!res.ok) throw new Error("status HTTP " + res.status);
+    return res.json();
+  }).then(function (st) {
+    renderServiceActivity(st && st.activity);
+  }).catch(function () {
+    renderServiceActivity(["Wardrobe service isn't running - automatic replies are off until it starts."]);
   });
 }
 
@@ -391,11 +314,11 @@ function setConnMode() {
   if (IS_LIVE) {
     el.textContent = "LIVE — talking to your Instagram bot at " + BOT_LABEL +
       ". Photos, wardrobe saving, and replies all go through it." +
-      " Auto-replying to new messages — replies send as real DMs without a per-message click.";
+      " Automatic replies are sent by the wardrobe service running alongside this page - this page only displays.";
   } else {
     el.textContent = "MOCK — demo only, using the pretend bot on this computer. " +
       "Nothing here touches real Instagram." +
-      " Auto-reply is on: new shares get an automatic styled reply, no click needed.";
+      " Automatic replies are sent by the wardrobe service running alongside this page - this page only displays.";
   }
 }
 
@@ -455,15 +378,11 @@ function token() {
 function authed(path, opts) {
   var o = opts || {};
   o.headers = o.headers || {};
-  // Live mode: /ig/send uses its separate bearer (IG_API_SEND_TOKEN),
-  // /ig/catalog uses IG_API_STORAGE_TOKEN; reads use IG_API_TOKEN.
-  // The connection field holds the read token; send/client modules
-  // use __IG_RUNTIME__.sendToken directly — but this inline harness
-  // also respects it for POST /ig/send so the button works live.
-  var RT2 = (typeof globalThis !== "undefined" && globalThis.__IG_RUNTIME__) || {};
+  // Milestone 20: the page holds no service-provided tokens - the
+  // generated runtime config carries none. The Token field above stays
+  // operator-supplied (read-only display plus the deliberate manual
+  // Send-as-app / Propose-look buttons).
   var tok = token();
-  if (RT2.sendToken && path.indexOf("/ig/send") === 0) tok = RT2.sendToken;
-  if (RT2.catalogToken && path.indexOf("/ig/catalog") === 0) tok = RT2.catalogToken;
   o.headers.Authorization = "Bearer " + tok;
   return fetch(joinBase(base(), path), o);
 }
@@ -653,10 +572,8 @@ function refreshThread() {
     var freshItems = (parts[0].items || []).filter(function (item) {
       return item && item.id && !seenShareIds[item.id];
     });
-    // seenShareIds is updated inside runAutoReply once the pipeline settles
-    // each id (terminal outcomes only) — never marked here on fetch. Marking
-    // the whole fetch seen up front stranded pre-existing backlog shares
-    // whenever the first attempt failed without flagging a retry.
+    // seenShareIds is display-only now (the service owns all send decisions
+    // server-side): it only drives the banner's new-arrival notice below.
     var newPrefix = "";
     if (bannerPrimed && freshItems.length > 0) {
       var anyPhoto = freshItems.some(function (item) {
@@ -667,6 +584,9 @@ function refreshThread() {
         : "Got a new message — it is in the thread below. ");
     }
     bannerPrimed = true;
+    (parts[0].items || []).forEach(function (item) {
+      if (item && item.id) seenShareIds[item.id] = true;
+    });
     if (IS_LIVE) {
       if (parts[0].items.length === 0) {
         setConnHealth(true, "Connected to your Instagram bot — no new messages. " +
@@ -679,16 +599,10 @@ function refreshThread() {
       setConnHealth(true, "Demo bot is responding.");
     }
     setConnActivity(checkedAtLine(newPrefix, parts[0].items.length, outs.length));
-    // Automatic replies ride on the same poll that just rendered: only this
-    // session's not-yet-attempted arrivals (absent from seenShareIds) are offered, and
-    // the pipeline itself dedupes — one share, at most one reply, ever.
-    // Fire-and-forget so a slow styling turn never stalls the poll cadence.
-    // Unconditional: mock and live share this exact call (no mode fork).
-    if (freshItems.length > 0) {
-      runAutoReply(freshItems).then(function (res) {
-        if (res && res.sent > 0 && !IS_LIVE) refreshThread();
-      });
-    }
+    // Automatic replies are the wardrobe service's job now (sole writer):
+    // refresh its status feed fire-and-forget so a stopped service never
+    // stalls or fails the thread render.
+    refreshServiceStatus();
   }).catch(function (err) {
     setStatus("Mock: " + err.message + " — is node mock-ig-bot/server.js running?");
     var msg = err && err.message ? err.message : String(err);
@@ -1079,8 +993,7 @@ window.addEventListener("focus", function () {
   pokeScheduler();
 });
 
-autoReply = createAutoReplyClient();
-if (autoReply) autoReply.init();
+refreshServiceStatus();
 refreshThread().then(scheduleNextPoll, scheduleNextPoll);
 })();
 </script>

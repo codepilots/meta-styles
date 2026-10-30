@@ -26,6 +26,8 @@
  *   /api/health  -> http://127.0.0.1:8905/health (the proxy's health route
  *                   lives at /health, not /api/health — single documented
  *                   exception so the browser health check stays same-origin)
+ *   /wardrobe/*  -> http://127.0.0.1:8906 + full path (wardrobe-service
+ *                   status; Milestone 20 thin client — same-origin remotely)
  *   anything else -> static file from app/ (same directory/files the judged
  *                   mock path serves via `python3 -m http.server`)
  *
@@ -36,7 +38,7 @@
  *
  * Usage: node live-proxy-server.js [--port 8000]
  *          [--bot http://127.0.0.1:8903] [--proxy http://127.0.0.1:8905]
- *          [--dir app]
+ *          [--wardrobe http://127.0.0.1:8906] [--dir app]
  * Mock mode is untouched: `sh start.sh` without LIVE_IG=1 still uses the
  * python static server exactly as before.
  */
@@ -49,6 +51,7 @@ const path = require("path");
 const DEFAULT_PORT = 8000;
 const DEFAULT_BOT = "http://127.0.0.1:8903";
 const DEFAULT_PROXY = "http://127.0.0.1:8905";
+const DEFAULT_WARDROBE = "http://127.0.0.1:8906";
 
 // Upstream targets are always loopback by construction, so an ambient
 // HTTP(S)_PROXY must never route these server-to-server hops anywhere
@@ -126,6 +129,7 @@ function parseArgs(argv) {
     if (args[i] === "--port" && args[i + 1]) opts.port = Number(args[++i]);
     else if (args[i] === "--bot" && args[i + 1]) opts.bot = args[++i];
     else if (args[i] === "--proxy" && args[i + 1]) opts.proxy = args[++i];
+    else if (args[i] === "--wardrobe" && args[i + 1]) opts.wardrobe = args[++i];
     else if (args[i] === "--dir" && args[i + 1]) opts.dir = args[++i];
   }
   return opts;
@@ -226,6 +230,7 @@ function createHandler(opts) {
   const rootDir = path.resolve((opts && opts.dir) || DEFAULT_DIR);
   const bot = (opts && opts.bot) || DEFAULT_BOT;
   const proxy = (opts && opts.proxy) || DEFAULT_PROXY;
+  const wardrobe = (opts && opts.wardrobe) || DEFAULT_WARDROBE;
   return function handler(req, res) {
     const rawPath = (req.url || "/").split("?")[0];
     let pathname = rawPath;
@@ -244,6 +249,10 @@ function createHandler(opts) {
       // else keeps its /api/* path upstream.
       const upstream = pathname === "/api/health" ? "/health" : req.url;
       proxyTo(proxy, upstream, "proxy", req, res);
+      return;
+    }
+    if (pathname === "/wardrobe" || pathname.startsWith("/wardrobe/")) {
+      proxyTo(wardrobe, req.url, "wardrobe", req, res);
       return;
     }
     serveStatic(rootDir, rawPath, req, res);
@@ -265,7 +274,7 @@ if (require.main === module) {
   startServer(opts).then(({ server, port }) => {
     console.log(
       "live-proxy listening on 127.0.0.1:" + port +
-      " (static dir served; /ig/* and /api/* proxied same-origin)"
+      " (static dir served; /ig/*, /api/* and /wardrobe/* proxied same-origin)"
     );
   }).catch((err) => {
     console.error("live-proxy failed to start: " + err.message);
@@ -280,4 +289,5 @@ module.exports = {
   DEFAULT_PORT,
   DEFAULT_BOT,
   DEFAULT_PROXY,
+  DEFAULT_WARDROBE,
 };
