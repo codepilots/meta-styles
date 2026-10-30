@@ -73,6 +73,11 @@
     if (/\b(fabric|price|cost|how much|cheaper|discount|vendor|listing|material|what.*made of)\b/.test(text)) {
       return { skill: "answer_no_data", confidence: 87, reason: "descoped fabric/price/vendor question" };
     }
+    // Purchase confirmation: an explicit "I bought it" always wins over
+    // the generic should-i-get-this trigger below (checked first).
+    if (/\b(i bought it|i got it|i bought that|bought it|i picked it up)\b/.test(text)) {
+      return { skill: "Evaluate_prospective_purchase", confidence: 88, reason: "purchase confirmation trigger" };
+    }
     // Evaluate prospective purchase text-only trigger
     if (/\b(should i get|is this worth|thinking.*buying|found this.*should)\b/.test(text)) {
       return { skill: "Evaluate_prospective_purchase", confidence: 75, reason: "prospective purchase text trigger" };

@@ -60,12 +60,15 @@
     "bag",
   ];
 
-  var PIECE_STATUSES = ["active", "rejected", "superseded"];
+  var PIECE_STATUSES = ["active", "rejected", "superseded", "held"];
 
   // Exact allowed keys — fail-closed: anything else throws.
   // photo_thumb is the small PNG data-URL reference captured at catalogue
   // time by app/photo-thumb.js makeSync() (M21 photo-reference work);
   // optional — old pieces catalogued before the feature simply lack it.
+  // held_until is the ISO-8601 expiry of a prospective-purchase 24h hold
+  // (M22 item 3); optional — only "held" pieces carry it, and it is
+  // cleared to null when the hold is confirmed via activatePiece().
   var PIECE_KEYS = [
     "piece_id",
     "category",
@@ -74,6 +77,7 @@
     "added_at",
     "copy_preview_keys",
     "photo_thumb",
+    "held_until",
     "status",
   ];
   // Per-thumb size bound, mirrors app/photo-thumb.js MAX_CHARS so a stored
@@ -286,6 +290,7 @@
         added_at: p.added_at,
         copy_preview_keys: Object.assign({}, p.copy_preview_keys),
         photo_thumb: p.photo_thumb === undefined || p.photo_thumb === null ? null : p.photo_thumb,
+        held_until: p.held_until === undefined || p.held_until === null ? null : p.held_until,
         status: p.status,
       };
     }
@@ -308,12 +313,22 @@
       return value;
     }
 
+    // Optional hold expiry: null/absent is valid (every non-held piece,
+    // and old pieces from before the field existed). A present value
+    // must be an ISO-8601 timestamp string; anything else throws
+    // (fail-closed, same as every other piece field).
+    function checkHeldUntil(value, label) {
+      if (value === undefined || value === null) return null;
+      return isoOrThrow(value, label);
+    }
+
     // Fail-closed validation for one piece record read back from the
     // persisted store (Milestone 19h load path). Same interface-agnostic
-    // schema as addPiece, except stored pieces may carry any of the three
-    // lifecycle statuses (active/rejected/superseded), not just 'active'.
-    // Throws on anything else; memory is only replaced after the WHOLE
-    // array validates, so a corrupt stored array never half-loads.
+    // schema as addPiece, except stored pieces may carry any of the four
+    // lifecycle statuses (active/rejected/superseded/held), not just
+    // 'active'/'held'. Throws on anything else; memory is only replaced
+    // after the WHOLE array validates, so a corrupt stored array never
+    // half-loads.
     function validateStoredPiece(p, seenIds) {
       if (!isPlainObject(p)) {
         throw new Error("wardrobe-catalog: stored catalog holds a non-object piece");
@@ -342,6 +357,7 @@
       }
       rejectUnknownKeys(p.copy_preview_keys, COPY_PREVIEW_KEYS, "stored copy_preview_keys");
       checkPhotoThumb(p.photo_thumb, "stored photo_thumb");
+      checkHeldUntil(p.held_until, "stored held_until");
       if (PIECE_STATUSES.indexOf(p.status) === -1) {
         throw new Error("wardrobe-catalog: stored piece has an unknown status");
       }
@@ -445,6 +461,10 @@
         }
         id = v.piece_id;
       }
+      var status = v.status === undefined ? "active" : v.status;
+      if (status !== "active" && status !== "held") {
+        throw new Error("wardrobe-catalog: new pieces enter as 'active' or 'held'");
+      }
       var piece = {
         piece_id: id,
         category: v.category,
@@ -453,11 +473,9 @@
         added_at: v.added_at === undefined ? nowIso() : isoOrThrow(v.added_at, "added_at"),
         copy_preview_keys: { copy: cpk.copy === undefined ? null : cpk.copy, preview: cpk.preview === undefined ? null : cpk.preview },
         photo_thumb: checkPhotoThumb(v.photo_thumb, "photo_thumb"),
-        status: "active",
+        held_until: checkHeldUntil(v.held_until, "held_until"),
+        status: status,
       };
-      if (v.status !== undefined && v.status !== "active") {
-        throw new Error("wardrobe-catalog: new pieces enter as 'active'");
-      }
       pieces.push(piece);
       return copyPiece(piece);
     }
@@ -497,6 +515,19 @@
       var i = findPieceIndex(pieceId);
       if (i === -1) throw new Error("wardrobe-catalog: unknown piece_id '" + pieceId + "'");
       pieces[i].status = "rejected";
+      return copyPiece(pieces[i]);
+    }
+
+    // Purchase confirmation (M22 item 3): a "held" piece whose hold has
+    // not expired becomes fully "active". held_until is cleared to null
+    // (not deleted — the key stays in the fail-closed schema, null like
+    // photo_thumb on pieces without one) so a confirmed piece never
+    // reads as still-held. Throws on unknown ids, same as rejectPiece.
+    function activatePiece(pieceId) {
+      var i = findPieceIndex(pieceId);
+      if (i === -1) throw new Error("wardrobe-catalog: unknown piece_id '" + pieceId + "'");
+      pieces[i].status = "active";
+      pieces[i].held_until = null;
       return copyPiece(pieces[i]);
     }
 
@@ -671,6 +702,7 @@
       getActivePieces: getActivePieces,
       setCopyPreviewKeys: setCopyPreviewKeys,
       rejectPiece: rejectPiece,
+      activatePiece: activatePiece,
       markSuperseded: markSuperseded,
       recordTurn: recordTurn,
       getTurns: getTurns,

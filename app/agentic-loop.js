@@ -57,7 +57,7 @@
       proxy._realCatalog = catalog;
       [
         "addPiece", "getPiece", "getPieces", "getActivePieces", "setCopyPreviewKeys",
-        "rejectPiece", "markSuperseded", "recordTurn", "getTurns", "historyForPrompt",
+        "rejectPiece", "activatePiece", "markSuperseded", "recordTurn", "getTurns", "historyForPrompt",
         "askQuestion", "resolveQuestion", "getPendingQuestions", "recordSentTurn",
         "getSentTurns", "toJSON", "save", "load", "noteInboundShare", "replyWindowStatus"
       ].forEach(function (k) {
