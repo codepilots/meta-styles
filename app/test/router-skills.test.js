@@ -123,10 +123,14 @@ async function run() {
     cat.addPiece({ category:"scarf", attributes:{}, source_share_id:"SYNTH_share_002" });
     const h = require("../skills/Evaluate_prospective_purchase/handler.js");
     const r = await h.handle({ catalog: cat, imagePresent:true, imageDataUrl:"data:image/png;base64,SYNTH_prospective" });
-    assert.ok(/1\./.test(r.text) && /2\./.test(r.text), "2-3 outfits listed");
+    // Opus finding #12: dress + scarf + the held dress has no finish that
+    // validates (no layer, no scarf+bag pair) — the honest zero-combo
+    // branch, never a fabricated outfit count.
+    assert.ok(/can\u2019t quite picture a complete look/.test(r.text), "honest zero-combo branch");
+    assert.ok(!/lovely outfit/.test(r.text), "no fabricated outfit count");
     assert.ok(/24/.test(r.text), "24hr hold note");
     assert.strictEqual(r.image, null, "preview null (text-first)");
-    console.log("  pass: Evaluate_prospective_purchase text-first + 24hr");
+    console.log("  pass: Evaluate_prospective_purchase honest zero-combo + 24hr");
   }
   {
     const h = require("../skills/What_suits/handler.js");
