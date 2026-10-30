@@ -15,8 +15,26 @@ Nothing is called done on the strength of a plan doc alone.
 1. ~~**M14 — real Meta Model API integration**~~ **DONE 2026-10-28**
    (pass/fail gate closed; see the M14 status note below).
 2. **M18 — finish M13's live isolation proof** (blocks a trustworthy demo).
-3. **M16 — judge-ready hosted product** (blocks Demo 25%: judges assess
-   the live product, not only the video).
+   **Note (Bramble, 2026-10-30):** M18 as literally written targets the
+   old `app/app.js` static-panel path, which decision #8(1) parked as an
+   unlinked dev/debug tool, not demoed. The actually-judged surface per
+   decision #7/#8 is the chat-first `wardrobe-service` + M21/M22 skills.
+   `start.sh` already wires `wardrobe-service/server.js` into the one-
+   command judged demo (`README.md`), so M18's real remaining ask is a
+   live isolation/E2E pass against *that* surface (mock bot stopped is
+   N/A here since the chat flow already defaults to the mock bot by
+   design) — not the M13 static-panel walk as scoped in 2026-10-28.
+3. **M16 — judge-ready local install+run** (blocks Demo 25%: judges
+   assess the live product, not only the video). **Status update
+   (Bramble, 2026-10-30):** per decision #8(3), M16 is a local one-shot
+   install+run, not a hosted URL — M16a's "hosted static URL" sub-task is
+   superseded by that decision, not outstanding. M16b (root `README.md` +
+   judge framing) is substantially done: `README.md` documents the
+   one-command `start.sh` path, which already launches the real
+   `wardrobe-service` chat product, not just the old static panel.
+   Remaining under M16: confirm `README.md`'s architecture section
+   mentions the M21/M22 skill router (not just the M13/M14 pipeline), and
+   close M16d's stale-decision cleanup.
 4. **M4 — submission cut** (video, public repo, package; start the
    script early, finish last).
 
