@@ -303,30 +303,69 @@ function createAutoReplyClient() {
 }
 
 // Fire-and-forget: the poll cadence never waits on a styling turn.
-// newItems are this session's genuinely-new arrivals (the existing
-// seenShareIds set above); ids that need a retry are un-marked so the
-// next tick re-offers them — the same set, extended, not a second one.
+// newItems are this session's not-yet-attempted arrivals (anything absent
+// from seenShareIds). An id joins seenShareIds ONLY once the pipeline
+// settles it to a terminal outcome (sent / duplicate / window_closed /
+// unsupported). Every other path — no pipeline yet, busy, a rejected
+// pipeline promise, a synchronous throw, a result flagged retry, or an
+// input id the pipeline returned no result for at all — leaves the id
+// eligible for the next tick. The pipeline's own persisted at-most-once
+// map still guards real sends, so re-offering is safe; stranding is not.
+// (Marking on fetch stranded the whole pre-existing backlog the first time
+// the pipeline failed without flagging a retry — never do that again.)
 function runAutoReply(newItems) {
   if (!autoReply || !newItems || !newItems.length) {
     return Promise.resolve({ processed: 0, sent: 0, skipped: 0, results: [] });
   }
   if (autoReplyBusy) {
-    newItems.forEach(function (item) {
-      if (item && item.id) delete seenShareIds[item.id];
-    });
+    unmarkShares(newItems);
     return Promise.resolve({ processed: 0, sent: 0, skipped: 0, results: [] });
   }
   autoReplyBusy = true;
-  return autoReply.processShares(newItems).then(function (res) {
+  var attempted;
+  try {
+    attempted = autoReply.processShares(newItems);
+  } catch (err) {
     autoReplyBusy = false;
-    (res.results || []).forEach(function (r) {
-      if (r && r.retry && r.id) delete seenShareIds[r.id];
-    });
+    unmarkShares(newItems);
+    appendAutoLog("Auto-reply hit a snag — will try again on the next check.");
+    return Promise.resolve({ processed: 0, sent: 0, skipped: 0, results: [] });
+  }
+  return attempted.then(function (res) {
+    autoReplyBusy = false;
+    markSettledShares(newItems, res);
     return res;
   }, function () {
     autoReplyBusy = false;
+    unmarkShares(newItems);
     appendAutoLog("Auto-reply hit a snag — will try again on the next check.");
     return { processed: 0, sent: 0, skipped: 0, results: [] };
+  });
+}
+
+// Drop every id back to retry-eligible (the next tick re-offers it).
+function unmarkShares(list) {
+  (list || []).forEach(function (item) {
+    if (item && item.id) delete seenShareIds[item.id];
+  });
+}
+
+// Mark seen ONLY the input ids the pipeline settled to a terminal outcome
+// (a result entry present and not flagged retry). Retry-flagged ids — and
+// input ids the pipeline returned no result for at all — stay eligible, so
+// no code path can strand a share with zero recorded outcome.
+function markSettledShares(list, res) {
+  var retryIds = {};
+  var decidedIds = {};
+  (((res && res.results) || [])).forEach(function (r) {
+    if (!r || !r.id) return;
+    decidedIds[r.id] = true;
+    if (r.retry) retryIds[r.id] = true;
+  });
+  (list || []).forEach(function (item) {
+    if (item && item.id && decidedIds[item.id] && !retryIds[item.id]) {
+      seenShareIds[item.id] = true;
+    }
   });
 }
 
@@ -614,9 +653,10 @@ function refreshThread() {
     var freshItems = (parts[0].items || []).filter(function (item) {
       return item && item.id && !seenShareIds[item.id];
     });
-    (parts[0].items || []).forEach(function (item) {
-      if (item && item.id) seenShareIds[item.id] = true;
-    });
+    // seenShareIds is updated inside runAutoReply once the pipeline settles
+    // each id (terminal outcomes only) — never marked here on fetch. Marking
+    // the whole fetch seen up front stranded pre-existing backlog shares
+    // whenever the first attempt failed without flagging a retry.
     var newPrefix = "";
     if (bannerPrimed && freshItems.length > 0) {
       var anyPhoto = freshItems.some(function (item) {
@@ -640,7 +680,7 @@ function refreshThread() {
     }
     setConnActivity(checkedAtLine(newPrefix, parts[0].items.length, outs.length));
     // Automatic replies ride on the same poll that just rendered: only this
-    // session's genuinely-new arrivals (seenShareIds above) are offered, and
+    // session's not-yet-attempted arrivals (absent from seenShareIds) are offered, and
     // the pipeline itself dedupes — one share, at most one reply, ever.
     // Fire-and-forget so a slow styling turn never stalls the poll cadence.
     // Unconditional: mock and live share this exact call (no mode fork).
