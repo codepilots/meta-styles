@@ -210,6 +210,25 @@
     placeholderCopy,
     PLACEHOLDER_NOTE,
   });
+  // Also register under the nested "classifier" key: auto-reply.js's
+  // sibling() resolves modules by this file's own hyphen-free name
+  // ("classifier"), but this file has always registered its functions
+  // flat on MetaStyles (no nested namespace at all) for app.js's existing
+  // MS.classifyFromSpark(...) call style. Without this alias,
+  // sibling("classifier") finds nothing, auto-reply.js's classifyPhoto()
+  // fallback calls null.classifyRegion(), the resulting TypeError is
+  // swallowed by its own try/catch, and every real photo silently gets
+  // "Couldn't make sense of that photo" with category:null -- found live
+  // 30 Oct 2026 debugging why auto-reply never sent a single real reply.
+  root.MetaStyles.classifier = {
+    TAXONOMY,
+    HINT_MAP,
+    classifyRegion,
+    classifyFromSpark,
+    bboxOfPoints,
+    placeholderCopy,
+    PLACEHOLDER_NOTE,
+  };
   if (typeof module !== "undefined" && module.exports) {
     module.exports = root.MetaStyles;
   }

@@ -86,7 +86,17 @@
   };
 
   function sibling(name) {
-    if (root.MetaStyles && root.MetaStyles[name]) return root.MetaStyles[name];
+    if (root.MetaStyles) {
+      if (root.MetaStyles[name]) return root.MetaStyles[name];
+      // Browser registration uses camelCase keys (MetaStyles.wardrobeCatalog,
+      // .turnLoop, .sendClient, .metaClient, .pollScheduler) while sibling()
+      // is called with this module's hyphenated filename ("wardrobe-catalog",
+      // "turn-loop", etc.) -- convert before giving up, or every multi-word
+      // sibling silently resolves to null and createAutoReply throws
+      // "<name> is unavailable" on the very first dependency check.
+      var camel = name.replace(/-([a-z])/g, function (_, c) { return c.toUpperCase(); });
+      if (root.MetaStyles[camel]) return root.MetaStyles[camel];
+    }
     if (typeof require !== "undefined") {
       try {
         return require("./" + name + ".js");
