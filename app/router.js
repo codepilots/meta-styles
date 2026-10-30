@@ -58,11 +58,11 @@
       return { skill: "revise_look", confidence: 89, reason: "revise phrasing matched" };
     }
     // Propose look
-    if (/\b(show me a look|propose.*look|what goes together|suggest.*look|put.*look together|style me|outfit idea)\b/.test(text)) {
+    if (/\b(show me a look|propose.*look|what goes together|suggest.*look|put.*look together|style me|outfit idea|find.*bag|can you find)\b/.test(text)) {
       return { skill: "propose_look", confidence: 91, reason: "propose-look trigger" };
     }
     // Describe wardrobe
-    if (/\b(what do i have|show.*wardrobe|my wardrobe|what.*in.*wardrobe|list.*pieces)\b/.test(text)) {
+    if (/\b(what do i have|show.*wardrobe|my wardrobe|what.*in.*wardrobe|list.*pieces|find.*(bag|dress|scarf|top|wardrobe))\b/.test(text)) {
       return { skill: "describe_wardrobe", confidence: 93, reason: "describe-wardrobe trigger" };
     }
     // Explain fit
