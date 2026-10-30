@@ -60,6 +60,49 @@ remains prior work. Because the API is local-only, that live path works
 only on the machine running the bot; elsewhere the fixture bridge is the
 fallback.
 
+**Extension (built 2026-10-30 as maintenance of this prior-work project,
+outside this repo):** closed the real-image-send gap and fixed a
+production bug discovered while verifying it live. Three changes to
+`~/secure-webserver/igwebhook/app.py` (all prior-work maintenance, never
+vendored into this repo):
+
+1. `POST /ig/outbound-stage/<share_id>` — local-only (same
+   `IG_API_SEND_TOKEN` auth as `POST /ig/send`) route that accepts raw
+   image bytes, validates them (Content-Type + magic-byte sniff,
+   `MAX_MEDIA` size cap), and encrypts+writes them to
+   `data/outbound/<share_id>.jpg` using the bot's existing
+   `encrypt_bytes()`/`dek_for_igsid()` helpers (the same scheme
+   `GET /ig/outbound-media/<token>` already decrypted with). This closes
+   the gap `outbound_path()`'s old docstring named directly: "a future
+   client module puts it there."
+2. `HEAD /ig/outbound-media/<token>` — the server had no `do_HEAD` at
+   all (bare `501`); added, sharing `_outbound_media`'s validation path
+   with GET, never counting toward or starting the serve-limit window
+   below.
+3. **Root-cause fix, found via a live test send with Autumn's explicit
+   go-ahead:** the outbound-media token was single-use (burn on first
+   GET). Real Instagram Graph API sends fetch the same attachment URL
+   2-3 times (different Meta-infrastructure IPs, within ~2s) before
+   confirming delivery — every real send failed with a generic Graph
+   "attachment format not supported" error because fetch #2/#3 hit the
+   already-burned token. Fixed by bounding reuse instead of removing it:
+   a token now serves up to 5 successful GETs within 60s of its first
+   GET, then burns permanently — tolerates Meta's real behavior
+   (observed max 3 fetches) with a safety margin, while keeping the
+   original single-use *security intent* (a leaked token is only live
+   for ~1 minute, not its full 24h TTL).
+
+Live-verified end-to-end 2026-10-30: a real test image was staged,
+sent via `POST /ig/send` with `image:true`, and landed in Autumn's
+actual Instagram DMs (two separate confirmed `image_message_id`
+deliveries, one before and one after the final reviewed/tested commit
+landed). meta-styles' hackathon-built `wardrobe-service` (new work, this
+repo) now calls the staging route in live mode exactly as it already
+called the mock bot's staging route — the client wiring is new,
+hackathon-built work; the bot-side route, HEAD support, and multi-fetch
+fix are prior-work maintenance, same split as every other extension
+above.
+
 ## Full detail
 
 The complete integration runbook (App Review gates, webhook connection
