@@ -175,6 +175,94 @@ fi
 
 node meta-api-proxy/server.js --port "$PROXY_PORT" &
 PROXY_PID=$!
+# Persistent wardrobe service (sole writer/sender, M20) — runs in BOTH modes.
+# It polls GET /ig/shares and drives router→skill→summariser. Needs bot
+# credentials in live mode — resolved below from .env/secrets + fallback to
+# the bot's own secrets.env, same as the live runtime-config block.
+# Exports IG_API_TOKEN etc so wardrobe-service/config.js can pick them up
+# (it falls back through WARDROBE_* → IG_API_* → mock demo token).
+if [ -n "$LIVE_IG" ]; then
+  # Parse bot tokens from .env/secrets + ~/secure-webserver/igwebhook/secrets.env
+  # (same logic as the live runtime-config block — hyphenated keys, never source)
+  IG_API_TOKEN="$(python3 -c '
+import pathlib
+def parse(p):
+    d={}
+    try:
+        for l in open(p):
+            l=l.strip()
+            if not l or l.startswith("#") or "=" not in l: continue
+            k,v=l.split("=",1)
+            d[k.strip()]=v.strip()
+        return d
+    except: return {}
+sources=[]
+for p in [".env/secrets", "/home/autumn/secure-webserver/igwebhook/secrets.env"]:
+    sources.append(parse(p))
+merged={}
+for d in reversed(sources): merged.update(d)
+def pick(*ks):
+    for k in ks:
+        if k in merged and merged[k]: return merged[k]
+    return ""
+print(pick("ig-bot-token","ig_api_token","IG_API_TOKEN"))
+' 2>/dev/null)" || true
+  IG_API_STORAGE_TOKEN="$(python3 -c '
+import pathlib
+def parse(p):
+    d={}
+    try:
+        for l in open(p):
+            l=l.strip()
+            if not l or l.startswith("#") or "=" not in l: continue
+            k,v=l.split("=",1)
+            d[k.strip()]=v.strip()
+        return d
+    except: return {}
+sources=[]
+for p in [".env/secrets", "/home/autumn/secure-webserver/igwebhook/secrets.env"]:
+    sources.append(parse(p))
+merged={}
+for d in reversed(sources): merged.update(d)
+def pick(*ks):
+    for k in ks:
+        if k in merged and merged[k]: return merged[k]
+    return ""
+print(pick("ig-storage-token","ig_catalog_token","IG_API_STORAGE_TOKEN", "ig-store-token"))
+' 2>/dev/null)" || true
+  IG_API_SEND_TOKEN="$(python3 -c '
+import pathlib
+def parse(p):
+    d={}
+    try:
+        for l in open(p):
+            l=l.strip()
+            if not l or l.startswith("#") or "=" not in l: continue
+            k,v=l.split("=",1)
+            d[k.strip()]=v.strip()
+        return d
+    except: return {}
+sources=[]
+for p in [".env/secrets", "/home/autumn/secure-webserver/igwebhook/secrets.env"]:
+    sources.append(parse(p))
+merged={}
+for d in reversed(sources): merged.update(d)
+def pick(*ks):
+    for k in ks:
+        if k in merged and merged[k]: return merged[k]
+    return ""
+print(pick("ig-send-token","IG_API_SEND_TOKEN"))
+' 2>/dev/null)" || true
+  export IG_API_TOKEN IG_API_STORAGE_TOKEN IG_API_SEND_TOKEN
+  # Also export WARDROBE_* aliases so config.js picks them up directly
+  export WARDROBE_READ_TOKEN="$IG_API_TOKEN"
+  export WARDROBE_CATALOG_TOKEN="$IG_API_STORAGE_TOKEN"
+  export WARDROBE_SEND_TOKEN="$IG_API_SEND_TOKEN"
+fi
+export WARDROBE_PORT="${WARDROBE_PORT:-8906}"
+node wardrobe-service/server.js >/dev/null 2>&1 &
+WARDROBE_PID=$!
+
 if [ -z "$LIVE_IG" ]; then
   node mock-ig-bot/server.js --port "$MOCK_PORT" &
   MOCK_PID=$!
@@ -201,6 +289,7 @@ cleanup() {
   if [ -n "${PROXY_PID:-}" ]; then kill "$PROXY_PID" 2>/dev/null || true; fi
   if [ -n "${MOCK_PID:-}" ]; then kill "$MOCK_PID" 2>/dev/null || true; fi
   if [ -n "${STATIC_PID:-}" ]; then kill "$STATIC_PID" 2>/dev/null || true; fi
+  if [ -n "${WARDROBE_PID:-}" ]; then kill "$WARDROBE_PID" 2>/dev/null || true; fi
   wait 2>/dev/null || true
 }
 trap cleanup INT TERM EXIT
