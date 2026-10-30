@@ -103,9 +103,10 @@ function main() {
   check("19c: photo 1 catalogues a piece with an app-assigned SYNTH_ id",
     /^SYNTH_piece_/.test(pieceA.piece_id) && pieceA.status === "active",
     JSON.stringify(pieceA));
-  check("19c: piece record carries exactly the §3 field names",
+  check("19c: piece record carries exactly the §3 field names (incl. optional photo_thumb)",
     JSON.stringify(Object.keys(pieceA).sort()) ===
-    JSON.stringify(["added_at", "attributes", "category", "copy_preview_keys", "piece_id", "source_share_id", "status"].sort()),
+    JSON.stringify(["added_at", "attributes", "category", "copy_preview_keys", "photo_thumb", "piece_id", "source_share_id", "status"].sort()) &&
+    pieceA.photo_thumb === null,
     Object.keys(pieceA).join(","));
   const pieceB = wardrobe.addPiece({
     category: "bag",

@@ -351,6 +351,30 @@
       " together? " + rationale + " Want me to tweak anything?";
 
     // 5. Preview only after a validated look; honour the real return shape.
+    // Photo-reference (M21 photo-reference work, option b): pass the single
+    // most relevant stored thumb — the first chosen piece that carries one
+    // (chosen order is base-first, so this is the look's base garment) — as
+    // the preview's reference image. metaClient.preview(prompt,
+    // imageDataUrl) and the proxy's /api/preview {prompt, image?} route
+    // only demonstrate single-image use upstream (images/edits with one
+    // image_url), so multi-piece referencing stays a known limitation for a
+    // future pass. No thumb anywhere -> the existing text-only prompt path.
+    var byId = byIdMap(active);
+    var refThumb = null;
+    var refPieces = 0;
+    for (var ti = 0; ti < chosen.items.length; ti++) {
+      var lp = byId[chosen.items[ti].id];
+      if (lp && typeof lp.photo_thumb === "string" && /^data:image\//.test(lp.photo_thumb)) {
+        refPieces += 1;
+        if (!refThumb) refThumb = lp.photo_thumb;
+      }
+    }
+    var previewPrompt =
+      "Y2K fairycore flat-lay look card, soft pastel background, garments laid out neatly: " +
+      nouns + ". No people, no worn try-on, no readable text.";
+    if (refThumb) {
+      previewPrompt += " Use the attached reference garment photo for the true colors and silhouette.";
+    }
     var imageDelivery = { requested: false, generated: false, delivered: false, reason: "no_preview_client" };
     var image = null;
     if (metaClient && typeof metaClient.preview === "function") {
@@ -358,10 +382,7 @@
       imageDelivery.reason = "preview_failed";
       toolSteps += 1;
       try {
-        var pr = await metaClient.preview(
-          "Y2K fairycore flat-lay look card, soft pastel background, garments laid out neatly: " +
-          nouns + ". No people, no worn try-on, no readable text."
-        );
+        var pr = await metaClient.preview(previewPrompt, refThumb || null);
         var durl = pr && (pr.dataURL || pr.dataUrl || pr.data_url);
         if (typeof durl === "string" && /^data:image\//.test(durl)) {
           imageDelivery.generated = true;
@@ -402,7 +423,8 @@
       skill: "propose_look",
       meta: {
         source: source, selectedCount: chosen.items.length, rejectedReason: rejectedReason,
-        toolSteps: toolSteps, rationale: rationale, imageDelivery: imageDelivery
+        toolSteps: toolSteps, rationale: rationale, imageDelivery: imageDelivery,
+        referenceThumb: refThumb ? true : false, referencePieces: refPieces
       }
     };
   }

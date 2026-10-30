@@ -63,6 +63,9 @@
   var PIECE_STATUSES = ["active", "rejected", "superseded"];
 
   // Exact allowed keys — fail-closed: anything else throws.
+  // photo_thumb is the small PNG data-URL reference captured at catalogue
+  // time by app/photo-thumb.js makeSync() (M21 photo-reference work);
+  // optional — old pieces catalogued before the feature simply lack it.
   var PIECE_KEYS = [
     "piece_id",
     "category",
@@ -70,8 +73,14 @@
     "source_share_id",
     "added_at",
     "copy_preview_keys",
+    "photo_thumb",
     "status",
   ];
+  // Per-thumb size bound, mirrors app/photo-thumb.js MAX_CHARS so a stored
+  // thumb always fits the bot-side 1MB whole-catalog PUT cap (mock-ig-bot
+  // MAX_SEND_BODY) with room for dozens of pieces. There is no separate
+  // per-piece byte cap in this file — this IS the per-piece bound.
+  var PHOTO_THUMB_MAX_CHARS = 20 * 1024;
   // Visible evidence only: color / silhouette / layer role (§3, §8.4).
   // Never inferred fabric — "fabric" is not an allowed key, on purpose.
   var ATTRIBUTE_KEYS = ["color", "silhouette", "layer_role"];
@@ -276,8 +285,27 @@
         source_share_id: p.source_share_id,
         added_at: p.added_at,
         copy_preview_keys: Object.assign({}, p.copy_preview_keys),
+        photo_thumb: p.photo_thumb === undefined || p.photo_thumb === null ? null : p.photo_thumb,
         status: p.status,
       };
+    }
+
+    // Optional thumbnail reference: null/absent is valid (pieces
+    // catalogued before the photo-reference feature, or catalogued from an
+    // undecodable image, carry no thumb and still catalogue). A present
+    // value must be a small PNG/JPEG data URL within the per-thumb bound;
+    // anything else throws (fail-closed, same as every other piece field).
+    function checkPhotoThumb(value, label) {
+      if (value === undefined || value === null) return null;
+      if (typeof value !== "string" || value.length > PHOTO_THUMB_MAX_CHARS ||
+          !(value.indexOf("data:image/png;base64,") === 0 ||
+            value.indexOf("data:image/jpeg;base64,") === 0)) {
+        throw new Error(
+          "wardrobe-catalog: " + label + " must be a small PNG/JPEG data URL " +
+          "(<=" + PHOTO_THUMB_MAX_CHARS + " chars)"
+        );
+      }
+      return value;
     }
 
     // Fail-closed validation for one piece record read back from the
@@ -313,6 +341,7 @@
         throw new Error("wardrobe-catalog: stored copy_preview_keys must be an object");
       }
       rejectUnknownKeys(p.copy_preview_keys, COPY_PREVIEW_KEYS, "stored copy_preview_keys");
+      checkPhotoThumb(p.photo_thumb, "stored photo_thumb");
       if (PIECE_STATUSES.indexOf(p.status) === -1) {
         throw new Error("wardrobe-catalog: stored piece has an unknown status");
       }
@@ -423,6 +452,7 @@
         source_share_id: v.source_share_id,
         added_at: v.added_at === undefined ? nowIso() : isoOrThrow(v.added_at, "added_at"),
         copy_preview_keys: { copy: cpk.copy === undefined ? null : cpk.copy, preview: cpk.preview === undefined ? null : cpk.preview },
+        photo_thumb: checkPhotoThumb(v.photo_thumb, "photo_thumb"),
         status: "active",
       };
       if (v.status !== undefined && v.status !== "active") {
@@ -658,6 +688,7 @@
     TAXONOMY: TAXONOMY,
     PIECE_STATUSES: PIECE_STATUSES,
     PIECE_KEYS: PIECE_KEYS,
+    PHOTO_THUMB_MAX_CHARS: PHOTO_THUMB_MAX_CHARS,
     ATTRIBUTE_KEYS: ATTRIBUTE_KEYS,
     TURN_KEYS: TURN_KEYS,
     REPLY_WINDOW_MS: REPLY_WINDOW_MS,
