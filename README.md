@@ -146,17 +146,20 @@ listing. The full 3-minute narration is in
 The browser never sees your key: `meta-api-proxy/server.js` holds it
 server-side from the process environment and exposes only narrow local
 routes (`/api/segment`, `/api/classify`, `/api/copy`, `/api/assemble`,
-`/api/preview`, `/health`). The demo chat is mock-only — real Instagram
-DM sends are an explicit stretch goal, not wired in.
+`/api/preview`, `/health`). The demo chat auto-replies in both modes: the mock bot in MOCK mode,
+real DMs in LIVE mode (automatic replies are armed — the page banner says
+so plainly). The manual Send-as-app panel stays for operator-composed turns.
 
 ## Repo map
 
 - [`start.sh`](start.sh) — one-shot install+run (this README's command).
 - `app/mock-dm.html` — the judged chat surface (thread + operator panels).
 - `app/turn-loop.js`, `app/wardrobe-catalog.js`, `app/send-client.js`,
-  `app/poll-scheduler.js` — the conversation loop, per-user wardrobe,
-  mock-only send client, and polling/window discipline (all synthetic
-  `SYNTH_` ids; `node --test app/test/*.test.js` runs the suite).
+  `app/poll-scheduler.js`, `app/auto-reply.js` — the conversation loop,
+  per-user wardrobe, send client, polling/window discipline, and the
+  turn-loop live wiring `refreshThread()` calls once per poll tick in both
+  modes (all synthetic `SYNTH_` ids; `node --test app/test/*.test.js` runs
+  the suite).
 - `app/index.html` — unlinked dev/debug tool (manual segment/tag/assemble
   without chat); not part of the judged demo.
 - `meta-api-proxy/` — key-holding proxy (`server.js` + standalone
