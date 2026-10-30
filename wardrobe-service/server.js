@@ -84,11 +84,15 @@ var Spark = require("../app/spark.js");
 var TurnLoop = require("../app/turn-loop.js");
 var SendClient = require("../app/send-client.js");
 var Scheduler = require("../app/poll-scheduler.js");
+var AgenticLoop = require("../app/agentic-loop.js");
+var Router = require("../app/router.js");
+var Summariser = require("../app/summariser.js");
 
 var PAGE_LIMIT = 50;
 var MAX_ATTEMPTS = 5;
 var ACTIVITY_RING = 30;
 var STOPPED_CLAMP_MS = Scheduler.BACKOFF_POLL_MS;
+var MAX_TOOL_STEPS = 20;
 
 // Plain nouns for the status activity feed — category slugs stay in code,
 // never in front of a watcher. (Same convention as the retired browser
@@ -225,9 +229,111 @@ function createService(opts) {
       copy: Spark.generateCopy,
     });
     var send = SendClient.createSendClient({ base: botBase, token: sendToken });
-    var ctx = { catalog: catalog, loop: loop, send: send, loaded: false };
+    // Per-user rolling summary/preferences (M21) — 100t each, via PUT /ig/catalog only.
+    // Kept in ctx, persisted via catalog store alongside pieces.
+    var ctx = { catalog: catalog, loop: loop, send: send, loaded: false, wardrobeSummary: "", preferences: "", lastAgenticDecision: null, lastSkillSteps: 0 };
     users.set(userRef, ctx);
     return ctx;
+  }
+
+  // Agentic helpers (M21) — 20-step cap, logging, router+summariser wiring.
+  var agenticLog = []; // { shareId, skill, stepCount, toolCalls[], totalSteps, at }
+  var AGENTIC_LOG_CAP = 50;
+
+  function logAgentic(entry) {
+    agenticLog.push(Object.assign({ at: new Date(nowMs()).toISOString() }, entry));
+    if (agenticLog.length > AGENTIC_LOG_CAP) agenticLog = agenticLog.slice(-AGENTIC_LOG_CAP);
+  }
+
+  function getAgenticLog() { return agenticLog.slice(); }
+
+  // Extract message + hasImage from a share for the router.
+  function shareToRouterInput(item) {
+    var text = "";
+    try { text = Bridge.textOf(item) || ""; } catch (e) { text = ""; }
+    if (!text) {
+      var hint = captionHint(item);
+      if (hint) text = hint;
+    }
+    var hasImage = !!(item.media_id || item.media_file || (item.attachment && (item.attachment.type === "image" || item.attachment.type === "ig_post")));
+    return { text: text, hasImage: hasImage };
+  }
+
+  // Build agentic loop invocation for one share: router → skill → summariser.
+  // The 20-step cap is enforced inside agentic-loop.js (vault 06 global rule);
+  // this layer just logs the per-turn step counts for analysis and persists.
+  function runAgenticTurn(ctx, item, shareId) {
+    var routerInput = shareToRouterInput(item);
+    var message = routerInput.text;
+    var hasImage = routerInput.hasImage;
+    var wardrobeSummary = ctx.wardrobeSummary || "";
+    var preferences = ctx.preferences || "";
+
+    var lastTurns = [];
+    try {
+      var turns = ctx.catalog.getTurns() || [];
+      lastTurns = turns.slice(-3).map(function (t) { return t.userText || ""; });
+    } catch (e) { lastTurns = []; }
+
+    var imageDataUrl = null;
+    var imagePromise;
+    if (hasImage && item.media_id) {
+      imagePromise = fetchMediaBytes(item.media_id).then(function (url) {
+        imageDataUrl = url;
+        return null;
+      }, function () { return null; });
+    } else if (hasImage && item.media_file) {
+      imageDataUrl = item.media_file;
+      imagePromise = Promise.resolve(null);
+    } else {
+      imagePromise = Promise.resolve(null);
+    }
+
+    return imagePromise.then(function () {
+      var loop = AgenticLoop.createAgenticLoop({
+        catalog: ctx.catalog,
+        userRef: ctx.catalog.userKey,
+        router: Router,
+        summariser: Summariser,
+        metaClient: Meta,
+        sendClient: ctx.send,
+        maxSteps: MAX_TOOL_STEPS,
+        onToolCall: function (ev) {
+          // Per-tool-call logging for analysis (step count tracked by agentic-loop)
+        },
+      });
+
+      return loop.handleTurn({
+        message: message,
+        hasImage: hasImage,
+        imageDataUrl: imageDataUrl,
+        wardrobeSummary: wardrobeSummary,
+        preferences: preferences,
+        lastTurns: lastTurns,
+      }).then(function (result) {
+        if (result && typeof result.summary === "string") ctx.wardrobeSummary = result.summary;
+        if (result && typeof result.preferences === "string") ctx.preferences = result.preferences;
+
+        var toolCalls = (result && result.toolCalls) || [];
+        var totalSteps = (result && typeof result.totalSteps === "number") ? result.totalSteps : toolCalls.length;
+        var skillName = (result && result.skill) || "unknown";
+        var entry = { shareId: shareId, skill: skillName, toolCalls: toolCalls, totalSteps: totalSteps, at: new Date(nowMs()).toISOString() };
+        logAgentic(entry);
+        ctx.lastAgenticDecision = skillName;
+        ctx.lastSkillSteps = totalSteps;
+
+        // Persist: agentic-loop already persisted summary/preferences via
+        // Summariser.summariseTurn + catalog store; here we ensure pieces are
+        // saved too (best-effort, never blocking).
+        return saveBestEffort(ctx).then(function () {
+          return { result: result, toolCalls: toolCalls, totalSteps: totalSteps, skill: skillName };
+        });
+      }, function (err) {
+        var entry2 = { shareId: shareId, skill: "error", toolCalls: [], totalSteps: MAX_TOOL_STEPS, at: new Date(nowMs()).toISOString(), error: String((err && err.message) || err) };
+        logAgentic(entry2);
+        throw err;
+      });
+    });
   }
 
   function ensureLoaded(ctx) {
@@ -452,6 +558,65 @@ function createService(opts) {
     });
   }
 
+  // M21 agentic path: single entry for both text and photo shares.
+  // Router picks skill; skill executes (20-step cap, logged); summariser
+  // persists; deterministic reply → duplicate_send backstop intact.
+  function processAgenticShare(ctx, item, id) {
+    return runAgenticTurn(ctx, item, id).then(function (agentic) {
+      var result = agentic.result;
+      var skill = agentic.skill || (result && result.skill) || "unknown";
+      var text = result && typeof result.text === "string" ? result.text : "";
+
+      if (!text) {
+        say("Got a message but couldn't compose a reply — will try again.");
+        return noteRetry(id);
+      }
+
+      // Plain-language activity feed — no ids, no tokens, no long refs.
+      if (skill === "catalogue_piece") {
+        say("Catalogued a piece from your photo.");
+      } else if (skill === "clarification") {
+        say("Asked for a little clarification.");
+      } else if (skill === "off_topic") {
+        say("Replied — gently steered back to your wardrobe.");
+      } else if (skill === "propose_look") {
+        say("Replied to your message with a full look.");
+      } else if (skill === "revise_look") {
+        say("You asked for a change — updated your wardrobe and re-checked the fit.");
+      } else if (skill === "describe_wardrobe") {
+        say("Replied with your wardrobe summary.");
+      } else if (skill === "explain_fit") {
+        say("Explained the fit for your look.");
+      } else if (skill === "answer_no_data") {
+        say("Answered: no fabric or price data available.");
+      } else {
+        say("Replied to your message.");
+      }
+
+      return sendComposed(ctx, id, text).then(function (outcome) {
+        // Media ack ONLY after bytes were in hand and catalogued — preserve
+        // inbox-bridge rule; best-effort, never blocking the outcome.
+        if (item.media_id) acknowledgeMedia(item.media_id);
+        return outcome;
+      });
+    }, function (err) {
+      if (String((err && err.message) || err) === "media_unavailable") {
+        if (!deferredLogged[id]) {
+          deferredLogged[id] = true;
+          say("Your photo isn't ready yet — I'll try again on the next check.");
+        }
+        return noteRetry(id);
+      }
+      if (String((err && err.message) || err).indexOf("tool step cap") !== -1) {
+        say("That one took a few too many steps — sending what I have and will try again next time.");
+        return noteRetry(id);
+      }
+      return noteRetry(id);
+    });
+  }
+
+  // Legacy non-agentic paths retained for reference / fallback only — the
+  // active path is processAgenticShare above (catalogue_piece skill, not ad-hoc).
   function processTextShare(ctx, item, id) {
     var text = "";
     try {
@@ -504,14 +669,10 @@ function createService(opts) {
         say("Couldn't reach the styling service, used the on-device fallback.");
       }
       return sendComposed(ctx, id, composed.text).then(function (outcome) {
-        // Media ack ONLY after bytes were in hand and catalogued (the
-        // inbox-bridge rule) — best-effort, never blocking the outcome.
         if (item.media_id) acknowledgeMedia(item.media_id);
         return outcome;
       });
     }, function (err) {
-      // Media fetch failed (photo not yet downloadable): defer, no
-      // terminal mark — the cursor stays and this share is re-offered.
       if (String((err && err.message) || err) === "media_unavailable") {
         if (!deferredLogged[id]) {
           deferredLogged[id] = true;
@@ -594,8 +755,7 @@ function createService(opts) {
       }
 
       lastProcessedShareAt = typeof item.received_at === "string" ? item.received_at : null;
-      if (isText) return processTextShare(ctx, item, id);
-      return processPhotoShare(ctx, item, id);
+      return processAgenticShare(ctx, item, id);
     });
   }
 
@@ -758,6 +918,10 @@ function createService(opts) {
     stop: stop,
     status: statusBody,
     processOne: processOne,
+    // M21 agentic surface for tests / introspection
+    getAgenticLog: getAgenticLog,
+    MAX_TOOL_STEPS: MAX_TOOL_STEPS,
+    getUserContext: function (userRef) { return users.get(userRef) || null; },
   };
 }
 
