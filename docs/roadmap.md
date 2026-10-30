@@ -338,6 +338,8 @@ and a pass/fail Meta-model gate in front of it.
 
 **Status: core loop built (router/skills/loop wired into wardrobe-service); propose_look server-side Spark choice + preview-delivery truth landed 2026-10-30.** See `docs/milestone-21-agentic-skills-router.md` + vault `05` + `06` (skill cards).
 
+2026-10-30 service fix (unplanned M20 maintenance): collected shares whose media is gone after the reply no longer retry-forever — a read-only `source_share_id` catalog match resolves them terminal as already-answered, and media-gone shares past the 24h window resolve `window_closed` at once (both need the catalogue skill's new real-share-id provenance, same change). Failed catalog saves are now loud (activity line + `counts.catalog_save_failed`) instead of silent. Suite that day: 22 files, 21 pass, 1 pre-existing environmental fail (`live-proxy` static-serve 502 in sandbox; fails on the clean tree too).
+
 11 bounded skills (catalogue → propose → revise → describe → explain → no-data → off-topic + Match_look, Complete_the_look, What_suits, Evaluate_prospective_purchase) behind a router (Muse Spark, confidence 0-100, <70 → clarification). Every reply is one skill invocation, logged. Base persona: cheery green witch, fairy-core whimsical. Per-user rolling 100t summary + 100t preferences via bot catalog API. IG-ready look cards (logo+handle on image, caption separate). Builds on M20's persistent service; synthesises cleanly with existing assembler/validator/SAM/Spark stack.
 
 Delegate to Muse (Muse Spark): `app/router.js` + `app/skills/` + `app/summariser.js`, wired through `wardrobe-service/server.js` polling loop. See milestone doc for full build spec.

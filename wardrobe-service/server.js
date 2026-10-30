@@ -44,7 +44,18 @@
  * stored), so any re-attempt replays the bot's stored result or 409s
  * instead of sending a second time. The dedicated duplicate-send
  * regression test proves exactly one outbound send per share across
- * restarts and concurrent pollers.
+ * restarts and concurrent pollers. (c) A photo share whose media is gone
+ * (collected and deleted after the reply) but whose piece is catalogued
+ * resolves terminal as already-answered — read-only match, never a
+ * second send, and deliberately never an idempotent-send probe (a probe
+ * would itself deliver a message for fresh shares, and would
+ * duplicate-send shares first answered before the stable key existed).
+ * (d) A media-gone share whose own timestamp is already outside the 24h
+ * window resolves terminal window_closed at once — the send gate below
+ * would refuse it anyway, so this only skips the futile retries.
+ * Catalog saves stay best-effort (never block the reply) but are loud:
+ * every failed save logs an activity line and bumps
+ * counts.catalog_save_failed instead of vanishing silently.
  *
  * Restart-safety note: Spark copy is nondeterministic per call, so
  * byte-identical regeneration across restarts is impossible — safety
@@ -225,6 +236,7 @@ function createService(opts) {
   var counts = {
     polled: 0, processed: 0, sent: 0, skipped: 0,
     duplicates: 0, errors: 0, gave_up: 0, images_delivered: 0,
+    catalog_save_failed: 0,
   };
   // Observed-call truth, one value each: "unprobed" (never attempted),
   // "live" (proxy answered and the result was used), "fallback" (proxy
@@ -576,15 +588,32 @@ function createService(opts) {
   }
 
   function saveBestEffort(ctx) {
+    // Best-effort only: the reply already went out, so a save failure never
+    // blocks or rejects — but it is LOUD, never silently discarded. A
+    // failed save is how pieces go missing with no record, so every failure
+    // logs an activity line and bumps counts.catalog_save_failed.
+    function loud(res) {
+      if (res && res.ok) return null;
+      var detail = (res && (res.error || ("http_" + res.status))) || "unknown_error";
+      counts.catalog_save_failed += 1;
+      lastError = "wardrobe save failed (" + detail + ") — will try again on the next check";
+      say("Couldn't save the wardrobe just now — will try again on the next check.");
+      return null;
+    }
     try {
       var r = ctx.catalog.save();
       if (r && typeof r.then === "function") {
-        return r.then(function () { return null; }, function () { return null; });
+        return r.then(loud, function (err) {
+          return loud({ error: String((err && err.message) || err) });
+        });
       }
+      // Sync return (never the real catalog — it always promises): only an
+      // explicit {ok:false} counts as a failure; anything else stays silent.
+      if (r && typeof r === "object" && r.ok === false) return Promise.resolve(loud(r));
+      return Promise.resolve(null);
     } catch (err) {
-      // Best-effort only: the reply already went out.
+      return Promise.resolve(loud({ error: String((err && err.message) || err) }));
     }
-    return Promise.resolve(null);
   }
 
   // --- Per-share processing -------------------------------------------------
@@ -865,6 +894,37 @@ function createService(opts) {
         return noteTerminal(id, "unsupported", true, false);
       }
       if (!isText && item.media_available === false && item.media_id) {
+        // Already answered in an earlier turn or a previous process? The
+        // media was collected and deleted after the reply went out, so it
+        // can never be re-fetched — but the piece is in the wardrobe, so
+        // there is nothing left to do. Read-only match on the provenance
+        // pointer the catalogue skill stores: terminal, never a second
+        // send. Deliberately NOT an idempotent-send probe — with no prior
+        // send the probe itself would deliver a message, and for shares
+        // first answered before the stable per-share key existed it would
+        // duplicate-send instead of 409ing.
+        var already = false;
+        try {
+          already = ctx.catalog.getPieces().some(function (p) {
+            return !!p && p.source_share_id === id;
+          });
+        } catch (err) {
+          already = false;
+        }
+        if (already) {
+          counts.duplicates += 1;
+          say("That photo was already answered earlier — keeping the earlier reply.");
+          return noteTerminal(id, "duplicate", true, false);
+        }
+        // Reply window already closed on the share's own timestamp? Then no
+        // reply can ever go out for it — terminal now instead of retrying
+        // until give-up on every restart forever. Outcome-identical to the
+        // send gate below (which also requires the share's own timestamp
+        // to be inside the window); this only skips the futile retries.
+        if (!Scheduler.isWindowOpen(item.received_at, nowMs())) {
+          say("Reply window expired, didn't send a reply.");
+          return noteTerminal(id, "window_closed", true, false);
+        }
         if (!deferredLogged[id]) {
           deferredLogged[id] = true;
           say("Your photo isn't ready yet — I'll try again on the next check.");
