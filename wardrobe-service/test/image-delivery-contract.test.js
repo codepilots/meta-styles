@@ -14,10 +14,14 @@
  *
  * Each case runs end-to-end through the service (processOne + a REAL
  * mock bot, genuine stage/send semantics): when the handler reports
- * delivered:true, the outbound log must show an image send; when
- * delivery fails, the reply must stay text-only AND keep its caveat.
+ * delivered:true under meta.imageDelivery, the outbound log must show
+ * an image send; when preview or staging fails, the reply must stay
+ * text-only AND keep its caveat, with no fabricated image bytes or URLs.
  * Handler-only assertions cannot catch this — the M22 tests passed
- * while the service dropped every image.
+ * while the service dropped every image. A direct result-shape pin
+ * (meta.imageDelivery present, no top-level imageDelivery leak) per
+ * skill guards the exact finding-#1 regression alongside the
+ * end-to-end proof.
  *
  * All ids are SYNTH_-prefixed; the preview bytes are a 1x1 PNG.
  * No real network: the proxy is a fetch stub, the bot is local.
@@ -75,9 +79,15 @@ async function run() {
   // Preview stub flag: when false, /api/preview rejects and every skill
   // must fall back to honest text-only (fail-closed path).
   const proxyCfg = { previewOk: true };
+  // Staging kill-switch: when false, the mock stage route is unreachable
+  // so stageImage resolves {ok:false} while the preview itself succeeded.
+  const stageCfg = { stageOk: true };
   const sendBodies = [];
   global.fetch = function (url, opts) {
     const u = String(url);
+    if (u.indexOf("/mock/stage-outbound-image/") !== -1 && !stageCfg.stageOk) {
+      return Promise.reject(new Error("stage unreachable (stub)"));
+    }
     if (u.indexOf(PROXY_BASE) === 0) {
       if (u.indexOf("/api/preview") !== -1 && proxyCfg.previewOk) {
         return Promise.resolve({
@@ -165,7 +175,32 @@ async function run() {
     assert.ok(last && last.image_message_id, label + ": bot confirmed an image_message_id");
     assert.strictEqual(svc.status().counts.images_delivered, 1,
       label + ": image counted only on bot proof");
+    assert.ok(!/data:image\//.test(sendBodies[0].text), label + ": no dataURL in reply text");
+    assert.ok(!/example\.invalid/.test(sendBodies[0].text), label + ": no fabricated URLs");
     console.log("  pass: " + label + " staged image sent with image:true, no caveat");
+  }
+
+  // Fail-closed: a preview or staging failure MUST stay text-only WITH
+  // the honest caveat and never a fabricated image — per skill, since
+  // each skill owns its own caveat copy and staging call.
+  async function expectTextOnlyWithCaveat(label, item, skill) {
+    sendBodies.length = 0;
+    const svc = freshService();
+    const out = await svc.processOne(item);
+    assert.ok(typeof out === "string" && out.indexOf("terminal:") === 0,
+      label + " terminal, got " + out);
+    const log = svc.getAgenticLog();
+    assert.ok(log.length >= 1 && log[log.length - 1].skill === skill,
+      label + " routed to " + skill + ", got " + JSON.stringify(log.map(function (e) { return e.skill; })));
+    assert.strictEqual(sendBodies.length, 1, label + ": one send, got " + sendBodies.length);
+    assert.ok(!sendBodies[0].image, label + ": failure stays text-only");
+    assert.ok(new RegExp(APOS).test(sendBodies[0].text),
+      label + ": fallback reply keeps the honest caveat");
+    assert.ok(!/data:image\//.test(sendBodies[0].text), label + ": no dataURL in reply text");
+    assert.ok(!/example\.invalid/.test(sendBodies[0].text), label + ": no fabricated URLs");
+    assert.ok(!/SYNTH_/.test(sendBodies[0].text), label + ": no ids leak into reply");
+    assert.strictEqual(svc.status().counts.images_delivered, 0, label + ": nothing counted as delivered");
+    console.log("  pass: " + label + " fails closed to honest text-only");
   }
 
   try {
@@ -237,6 +272,92 @@ async function run() {
       const items = await shares();
       const item = items.filter(function (s) { return s.id === posted.body.share.id; })[0];
       await expectImageSent("revise_look", item, "revise_look");
+    }
+
+    // --- Fail-closed, remaining skills: preview down -> text-only + caveat.
+    // Runs after the revise re-seed above so a valid look still exists
+    // once the bag is set aside (dress+scarf alone is honestly no look).
+    console.log("\n[preview failure stays text-only with caveat: Match_look + revise_look]");
+    {
+      proxyCfg.previewOk = false;
+      try {
+        const postedM = await botJson("POST",
+          "/mock/incoming-photo?kind=post&caption=" + encodeURIComponent("pinterest inspiration, recreate this look"),
+          undefined, Buffer.from(TINY_PNG_B64, "base64"), "image/png");
+        assert.strictEqual(postedM.status, 200, "photo share accepted");
+        const itemsM = await shares();
+        const itemM = itemsM.filter(function (s) { return s.id === postedM.body.share.id; })[0];
+        await expectTextOnlyWithCaveat("Match_look preview failure", itemM, "Match_look");
+
+        const postedR = await botJson("POST", "/mock/incoming-text", { text: "drop the bag please" });
+        assert.strictEqual(postedR.status, 200, "text share accepted");
+        const itemsR = await shares();
+        const itemR = itemsR.filter(function (s) { return s.id === postedR.body.share.id; })[0];
+        await expectTextOnlyWithCaveat("revise_look preview failure", itemR, "revise_look");
+      } finally {
+        proxyCfg.previewOk = true;
+      }
+    }
+
+    // --- Fail-closed, staging leg: preview succeeds but the stage call
+    // fails -> generated:true, delivered:false, text-only + caveat, and
+    // the service gate (hr.meta.imageDelivery.delivered) keeps image off
+    // the send even though preview bytes exist.
+    console.log("\n[staging failure stays text-only with caveat]");
+    {
+      stageCfg.stageOk = false;
+      try {
+        const posted = await botJson("POST", "/mock/incoming-text", { text: "complete the look, what could i buy" });
+        const items = await shares();
+        const item = items.filter(function (s) { return s.id === posted.body.share.id; })[0];
+        await expectTextOnlyWithCaveat("Complete_the_look staging failure", item, "Complete_the_look");
+      } finally {
+        stageCfg.stageOk = true;
+      }
+    }
+
+    // --- Result-contract shape: meta.imageDelivery, never top-level ---
+    // The exact finding-#1 regression: the service gate reads
+    // hr.meta.imageDelivery.delivered, so a top-level imageDelivery is
+    // silently dropped (staged preview thrown away, no caveat). Pin the
+    // shape directly per skill alongside the end-to-end proof above.
+    console.log("\n[result shape uses meta.imageDelivery]");
+    {
+      const DURL = "data:image/png;base64," + TINY_PNG_B64;
+      const pieces = seedPieces().concat([{
+        piece_id: "SYNTH_piece_704", category: "layer/cardigan", attributes: {},
+        source_share_id: "SYNTH_share_seed_704", added_at: new Date().toISOString(),
+        copy_preview_keys: { copy: null, preview: null }, status: "active",
+      }]);
+      const stubCatalog = { getActivePieces: function () { return pieces; } };
+      const okClient = {
+        preview: function () { return Promise.resolve({ dataURL: DURL }); },
+        classify: function () { return Promise.resolve({ category: "dress" }); },
+      };
+      const okStage = function () { return Promise.resolve({ ok: true }); };
+      const Revise = require("../../app/skills/revise_look/handler.js");
+      const Match = require("../../app/skills/Match_look/handler.js");
+      const Complete = require("../../app/skills/Complete_the_look/handler.js");
+      const r1 = await Revise.handle({
+        catalog: stubCatalog, text: "drop the bag please",
+        metaClient: okClient, shareId: "SYNTH_share_contract_1", stageImage: okStage,
+      });
+      const r2 = await Match.handle({
+        catalog: stubCatalog, imageDataUrl: DURL,
+        metaClient: okClient, shareId: "SYNTH_share_contract_2", stageImage: okStage,
+      });
+      const r3 = await Complete.handle({
+        catalog: stubCatalog,
+        metaClient: okClient, shareId: "SYNTH_share_contract_3", stageImage: okStage,
+      });
+      [["revise_look", r1], ["Match_look", r2], ["Complete_the_look", r3]].forEach(function (pair) {
+        const name = pair[0], r = pair[1];
+        assert.ok(r && r.meta && r.meta.imageDelivery, name + ": result uses meta.imageDelivery");
+        assert.strictEqual(r.meta.imageDelivery.delivered, true, name + ": staged delivery reported");
+        assert.strictEqual(r.imageDelivery, undefined, name + ": no top-level imageDelivery leak");
+        assert.ok(r.image && typeof r.image.dataURL === "string", name + ": staged preview attached");
+      });
+      console.log("  pass: all three skills report delivery under meta.imageDelivery");
     }
 
     console.log("\nAll image-delivery contract tests passed.");
