@@ -228,15 +228,21 @@ the live product only runs on Autumn's machine (static server + local
 Node mock on `127.0.0.1:8904`); a remote judge who opens the repo gets
 no runnable product, and there is no root `README.md` at all.
 
-- **16a — Hosted live URL.** Deploy the static app somewhere a judge
-  can open with one link and no local processes (e.g. GitHub Pages or
-  equivalent static host). The hosted build must run the full judged
-  flow self-contained: cached/M14f demo mode and the fixture inbox work
-  without the local mock or the real bot. If M14's proxy is needed for
-  live calls, host that too or make the hosted build cached-first with
-  live calls clearly optional. Acceptance: fresh browser, logged out,
-  one URL → complete look card, no console errors, no `127.0.0.1`
-  dependency in the primary flow.
+- **16a — Hosted live URL — SUPERSEDED 2026-10-30, not required.**
+  Decision #8(3) (M19 pivot, Autumn, 2026-10-29) settled judge delivery
+  as a **local one-shot install+run** (judge supplies only their own
+  Meta API key); a hosted live URL is an explicit stretch goal, not a
+  submission requirement. Leaving this item's original text below for
+  record, but do not spend build time on it before the deadline unless
+  Autumn reopens it.
+  ~~Deploy the static app somewhere a judge can open with one link and
+  no local processes (e.g. GitHub Pages or equivalent static host). The
+  hosted build must run the full judged flow self-contained: cached/M14f
+  demo mode and the fixture inbox work without the local mock or the
+  real bot. If M14's proxy is needed for live calls, host that too or
+  make the hosted build cached-first with live calls clearly optional.
+  Acceptance: fresh browser, logged out, one URL → complete look card,
+  no console errors, no `127.0.0.1` dependency in the primary flow.~~
 - **16b — Root README + judge framing.** Add `README.md` at repo root:
   one-line pitch centred on full-look assembly + fit rules +
   resale-grounded copy (**not** the classify-a-photo mechanic — the
