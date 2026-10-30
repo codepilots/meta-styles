@@ -107,7 +107,8 @@
       }
     }
     var noun=pieces.length? plainNoun(pieces[0].category):"piece";
-    var replyText="Got your "+noun+" \u2014 noted, loveling! \u2728 It's tucked safely in your wardrobe. Want me to put a look together from what you've got?";
+    var replyText=pieces.length? "Got your "+noun+" \u2014 noted, loveling! \u2728 It's tucked safely in your wardrobe. Want me to put a look together from what you've got?"
+      : "Oh loveling, I couldn't get that piece tucked into your wardrobe just now \u2728 Mind resending the photo and I'll give it another go? Want me to put a look together from what you've got?";
     recordLookExpectation(catalog, replyText);
     return { text:replyText, image:null, persist:{ summaryDelta:"Catalogued "+noun+".", preferencesDelta:"" }, skill:"catalogue_piece" };
   }

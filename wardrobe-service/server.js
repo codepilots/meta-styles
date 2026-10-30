@@ -355,7 +355,7 @@ function createService(opts) {
       imagePromise = fetchMediaBytes(item.media_id).then(function (url) {
         imageDataUrl = url;
         return null;
-      }, function () { return null; });
+      }, function () { throw new Error("media_unavailable"); });
     } else if (hasImage && item.media_file) {
       imageDataUrl = item.media_file;
       imagePromise = Promise.resolve(null);
