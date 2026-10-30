@@ -17,9 +17,25 @@
     return words.slice(0,-1).join(", ")+" and "+words[words.length-1];
   }
 
+  // Pending expectation (Milestone 24): the consent prompt below is a
+  // "we are mid-flow, awaiting a photo reply" moment. Record it on the
+  // catalog (the single source of truth agentic-loop.js checks before
+  // routing) so the user's bare-photo answer routes back here instead of
+  // falling through to catalogue_piece. Never throws: a catalog failure
+  // must not break the reply itself.
+  function recordPhotoExpectation(catalog, questionText){
+    try{
+      if(catalog && typeof catalog.askQuestion==="function"){
+        catalog.askQuestion({ text:questionText, skill:"What_suits", expects:"image" });
+      }
+    }catch(e){}
+  }
+
+  var CONSENT_TEXT="Oh, I\u2019d love to help with that, darling \u2728 If you\u2019d like personalised colour advice, you can share a head shot and a full-body photo \u2014 I\u2019ll keep them encrypted and you can say \u201Cdelete my photos\u201D anytime. Would you like to share them? (Only with your consent, loveling)";
+
   async function handle(opts){
     var o=opts||{};
-    if(!o.imagePresent && !o.imageDataUrl) return { text:"Oh, I\u2019d love to help with that, darling \u2728 If you\u2019d like personalised colour advice, you can share a head shot and a full-body photo \u2014 I\u2019ll keep them encrypted and you can say \u201Cdelete my photos\u201D anytime. Would you like to share them? (Only with your consent, loveling)", image:null, persist:{ summaryDelta:"Asked for What_suits consent.", preferencesDelta:"" }, skill:"What_suits" };
+    if(!o.imagePresent && !o.imageDataUrl){ recordPhotoExpectation(o.catalog, CONSENT_TEXT); return { text:CONSENT_TEXT, image:null, persist:{ summaryDelta:"Asked for What_suits consent.", preferencesDelta:"" }, skill:"What_suits" }; }
     var imageDataUrl=o.imageDataUrl||null;
     var metaClient=o.metaClient||null;
     if(imageDataUrl && metaClient && typeof metaClient.palette==="function"){

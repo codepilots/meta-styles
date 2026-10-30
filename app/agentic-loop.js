@@ -75,8 +75,38 @@
       var lastTurns = inp.lastTurns || inp.history || [];
       var imageDataUrl = inp.imageDataUrl || null;
 
+      // Pending expectation (Milestone 24): a skill that just asked a
+      // follow-up (e.g. What_suits consent awaiting a photo reply)
+      // recorded it via catalog.askQuestion({ skill, expects }). Check
+      // BEFORE the router: a satisfied expectation routes straight back
+      // to that skill deterministically and the router is never consulted
+      // for that turn. An unsatisfied or expired expectation is cleared
+      // and the turn falls through to normal routing — never stuck.
+      var pendingDecision = null;
+      if (catalog && typeof catalog.getPendingQuestions === "function") {
+        try {
+          var pendings = catalog.getPendingQuestions() || [];
+          for (var pi = 0; pi < pendings.length; pi++) {
+            var pq = pendings[pi];
+            if (!pq || !pq.expects) continue;
+            if (pq.expects !== "image") continue; // unknown vocabulary: leave alone, route normally
+            var expired = pq.expires_at ? (Date.parse(pq.expires_at) <= Date.now()) : false;
+            try { if (typeof catalog.resolveQuestion === "function") catalog.resolveQuestion(pq.id); } catch (re) {}
+            if (!expired && hasImage && pq.skill) {
+              pendingDecision = { skill: pq.skill, confidence: 96, reason: "pending expectation satisfied (photo reply to just-asked question)" };
+            }
+            break; // one expectation at a time: oldest first, never stacked
+          }
+        } catch (e) { pendingDecision = null; }
+      }
+
       var decision = { skill: "off_topic", confidence: 75, reason: "no router" };
-      if (router) {
+      if (pendingDecision) {
+        decision = pendingDecision;
+        if (router && router.logDecision) {
+          try { router.logDecision({ skill: decision.skill, confidence: decision.confidence, reason: decision.reason, input: message.slice(0, 80) }); } catch (e) {}
+        }
+      } else if (router) {
         try {
           if (typeof router.classify === "function") {
             decision = await router.classify({ text: message, imagePresent: hasImage, wardrobeSummary: wardrobeSummary, preferences: preferences, lastTurns: lastTurns }, o.metaClient || null);

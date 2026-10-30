@@ -406,7 +406,7 @@ function createHandler(config) {
         if (routeCacheKey && cache.has(routeCacheKey)) { sendJson(res, 200, Object.assign({}, cache.get(routeCacheKey), { cached: true }), corsOrigin); return; }
         var skillList = SKILL_NAMES.join(", ");
         var triggers = [
-          "catalogue_piece: Photo(s) shared (image present, no other trigger)",
+          "catalogue_piece: Photo(s) shared (image present, no other trigger — but FIRST check Recent turns: if the assistant just asked the user to share a photo, route to that skill instead)",
           "propose_look: user wants a look suggested — e.g. \"show me a look\", \"what goes together\", \"style me\", \"outfit idea\", \"cook up a look\", \"make me a look\", \"find the bag\", \"can you find …\"",
           "revise_look: user wants to change last look — e.g. \"no bag\", \"without blazer\", \"swap scarf\", \"drop the bag\"",
           "describe_wardrobe: user wants to see/list wardrobe — e.g. \"what do I have\", \"show my wardrobe\", \"find the bag\"",
@@ -415,7 +415,7 @@ function createHandler(config) {
           "off_topic: unrelated topic or greeting with no wardrobe intent",
           "Match_look: inspiration photo + wants to recreate that look — e.g. \"do this look\", \"like this\" with image",
           "Complete_the_look: wants buying advice to finish a look — e.g. \"complete the look\", \"what could I buy\"",
-          "What_suits: asks what colours/styles suit them — e.g. \"what suits me\", \"what colours suit me\"",
+          "What_suits: asks what colours/styles suit them — e.g. \"what suits me\", \"what colours suit me\"; also the photo reply when Recent turns show the assistant just asked for head-shot/full-body photos",
           "Evaluate_prospective_purchase: image of item they consider buying — e.g. \"should I buy\", \"worth buying\" with image"
         ].join("\n");
         var systemText =
@@ -423,6 +423,7 @@ function createHandler(config) {
           "Skills and their triggers:\n" + triggers + "\n" +
           "Valid skills: " + skillList + "\n" +
           "Rules: Return STRICT JSON only with exactly this shape: {\"skill\":\"<one of 11>\",\"confidence\":0-100,\"reason\":\"short\"}. " +
+          "Before defaulting a bare photo to catalogue_piece, check Recent turns for a just-asked pending question (e.g. a request to share photos); if present, route to that skill. " +
           "Use confidence 85-95 for clear matches, 40-65 for vague/ambiguous inputs like \"hmm\" or greetings. " +
           "Vague single-word or greeting inputs should get confidence <70 so the system can ask for clarification.";
         var userStr =

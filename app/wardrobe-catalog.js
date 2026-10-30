@@ -91,7 +91,18 @@
   var COPY_PREVIEW_KEYS = ["copy", "preview"];
   var TURN_KEYS = ["turn", "userText", "proposal", "verdict", "reasons"];
   var SENT_TURN_KEYS = ["seq", "text", "sent_at", "in_reply_to_share"];
-  var QUESTION_KEYS = ["id", "text", "asked_at", "resolved"];
+  var QUESTION_KEYS = ["id", "text", "asked_at", "resolved", "skill", "expects", "expires_at"];
+
+  // Pending-expectation window (Milestone 24): a skill awaiting a specific
+  // kind of reply (e.g. What_suits consent asking for photos) holds it for
+  // the same 24h window the M22 purchase hold and the user-anchored reply
+  // window use — an ISO-8601 expiry compared the same way, not a new
+  // ad-hoc format. Anything older reads as already resolved.
+  var PENDING_EXPECTATION_TTL_MS = 24 * 3600 * 1000;
+  // Fail-closed vocabulary for what a pending question can await. Only
+  // "image" exists today; anything else throws rather than silently
+  // matching a turn it was never meant to match.
+  var EXPECTS_VALUES = ["image"];
 
   // 24h reply window, measured against the USER's latest inbound
   // received_at (user-anchored per §4 Gap 3), never per share_id.
@@ -585,16 +596,53 @@
       };
     }
 
-    function askQuestion(text) {
-      if (typeof text !== "string" || text.length === 0) {
+    // Pending-expectation form (Milestone 24): askQuestion({ text, skill,
+    // expects }) records "we are mid-flow, awaiting a specific kind of
+    // reply" state a later turn can route on. Bare-string askQuestion(text)
+    // stays valid (existing callers, e.g. turn-loop.js) and records a
+    // plain question with no expectation attached. expires_at defaults to
+    // asked_at + PENDING_EXPECTATION_TTL_MS for expectations, null for
+    // plain questions; callers may pass an explicit ISO expires_at the
+    // same way addPiece accepts an explicit added_at.
+    function askQuestion(input) {
+      var v;
+      if (typeof input === "string") {
+        v = { text: input };
+      } else if (isPlainObject(input)) {
+        v = input;
+        rejectUnknownKeys(v, ["text", "skill", "expects", "expires_at"], "question input");
+      } else {
+        throw new Error("wardrobe-catalog: question needs text (string or { text, ... })");
+      }
+      if (typeof v.text !== "string" || v.text.length === 0) {
         throw new Error("wardrobe-catalog: question text is required");
+      }
+      var skill = v.skill === undefined ? null : v.skill;
+      if (skill !== null && (typeof skill !== "string" || skill.length === 0)) {
+        throw new Error("wardrobe-catalog: question skill must be a non-empty skill name");
+      }
+      var expects = v.expects === undefined ? null : v.expects;
+      if (expects !== null && EXPECTS_VALUES.indexOf(expects) === -1) {
+        throw new Error("wardrobe-catalog: question expects must be one of (" + EXPECTS_VALUES.join(", ") + ")");
+      }
+      var askedAt = nowIso();
+      var expiresAt;
+      if (v.expires_at === undefined) {
+        expiresAt = expects === null ? null : new Date(Date.parse(askedAt) + PENDING_EXPECTATION_TTL_MS).toISOString();
+      } else if (v.expires_at === null) {
+        expiresAt = null;
+      } else {
+        expiresAt = isoOrThrow(v.expires_at, "expires_at");
       }
       questionCounter += 1;
       var q = {
         id: "SYNTH_q_" + String(questionCounter).padStart(3, "0"),
-        text: text,
-        asked_at: nowIso(),
+        text: v.text,
+        asked_at: askedAt,
         resolved: false,
+        skill: skill,
+        expects: expects,
+        expires_at: expiresAt,
       };
       pendingQuestions.push(q);
       return Object.assign({}, q);
@@ -724,6 +772,7 @@
     ATTRIBUTE_KEYS: ATTRIBUTE_KEYS,
     TURN_KEYS: TURN_KEYS,
     REPLY_WINDOW_MS: REPLY_WINDOW_MS,
+    PENDING_EXPECTATION_TTL_MS: PENDING_EXPECTATION_TTL_MS,
     CATALOG_BASE: CATALOG_BASE,
     joinBase: joinBase,
     createCatalog: createCatalog,
