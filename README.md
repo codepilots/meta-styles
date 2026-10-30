@@ -154,12 +154,22 @@ so plainly). The manual Send-as-app panel stays for operator-composed turns.
 
 - [`start.sh`](start.sh) — one-shot install+run (this README's command).
 - `app/mock-dm.html` — the judged chat surface (thread + operator panels).
+- `wardrobe-service/server.js` — the persistent service `start.sh`
+  actually launches for the judged chat loop. It wraps `app/turn-loop.js`
+  (per-reply orchestration) with the **M21 agentic router + 11 skills**
+  (`app/router.js`, `app/skills/*`, confidence-gated: <70 asks for
+  clarification instead of guessing) and `app/summariser.js` (per-user
+  rolling preference summary). Each inbound share/message becomes exactly
+  one skill invocation — catalogue, propose/revise/match a look, explain,
+  evaluate a prospective purchase (real 24h hold + expiry), suggest a
+  completion, or decline off-topic/no-data — logged per turn.
 - `app/turn-loop.js`, `app/wardrobe-catalog.js`, `app/send-client.js`,
-  `app/poll-scheduler.js`, `app/auto-reply.js` — the conversation loop,
-  per-user wardrobe, send client, polling/window discipline, and the
-  turn-loop live wiring `refreshThread()` calls once per poll tick in both
-  modes (all synthetic `SYNTH_` ids; `node --test app/test/*.test.js` runs
-  the suite).
+  `app/poll-scheduler.js`, `app/auto-reply.js` — the lower-level
+  conversation loop, per-user wardrobe (with per-piece SAM-cropped photo
+  thumbnails), send client, polling/window discipline, and the turn-loop
+  live wiring `refreshThread()` calls once per poll tick in both modes
+  (all synthetic `SYNTH_` ids; `node --test app/test/*.test.js
+  wardrobe-service/test/*.test.js` runs the full suite).
 - `app/index.html` — unlinked dev/debug tool (manual segment/tag/assemble
   without chat); not part of the judged demo.
 - `meta-api-proxy/` — key-holding proxy (`server.js` + standalone
