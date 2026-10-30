@@ -292,7 +292,34 @@
     return out;
   }
 
-  // --- Resample + entry points ------------------------------------------------
+  // --- Crop + resample + entry points -------------------------------------------
+  // Crop decoded RGB pixels to a fractional rect [x, y, w, h] in [0,1]
+  // (the SAM box shape: fractions of full width/height, NOT pixels).
+  // Out-of-range edges are clamped to the image; a rect that is missing,
+  // non-numeric, non-positive, or empty after clamping returns the image
+  // unchanged (the caller then stores the whole-photo thumbnail).
+  function cropPixels(img, rect) {
+    if (!img || !img.rgb) return img;
+    if (!Array.isArray(rect) || rect.length !== 4) return img;
+    for (var i = 0; i < 4; i++) {
+      if (typeof rect[i] !== "number" || !isFinite(rect[i])) return img;
+    }
+    if (rect[2] <= 0 || rect[3] <= 0) return img;
+    var x0 = Math.max(0, Math.floor(rect[0] * img.w));
+    var y0 = Math.max(0, Math.floor(rect[1] * img.h));
+    var x1 = Math.min(img.w, Math.ceil((rect[0] + rect[2]) * img.w));
+    var y1 = Math.min(img.h, Math.ceil((rect[1] + rect[3]) * img.h));
+    if (x1 <= x0 || y1 <= y0) return img;
+    var w = x1 - x0, h = y1 - y0, out = new Uint8Array(w * h * 3);
+    for (var y = 0; y < h; y++) {
+      for (var x = 0; x < w; x++) {
+        var s = ((y0 + y) * img.w + (x0 + x)) * 3, d = (y * w + x) * 3;
+        out[d] = img.rgb[s]; out[d + 1] = img.rgb[s + 1]; out[d + 2] = img.rgb[s + 2];
+      }
+    }
+    return { w: w, h: h, rgb: out };
+  }
+
   // Box-average downscale of RGB to fit longest side <= dim (upscales never).
   function resampleFit(src, dim) {
     var scale = Math.min(1, dim / Math.max(src.w, src.h));
@@ -331,12 +358,16 @@
 
   // Synchronous pure-JS path (Node stdlib; works anywhere node:zlib loads).
   // Returns a small data:image/png;base64,... thumbnail or null.
-  // Never throws for bad input — null means "catalogue without a thumb".
-  function makeSync(dataUrl) {
+  // Optional cropRect ([x,y,w,h] fractions in [0,1], the SAM box shape)
+  // crops the decoded pixels BEFORE resampling; invalid rects keep the
+  // whole photo. Never throws for bad input — null means "catalogue
+  // without a thumb".
+  function makeSync(dataUrl, cropRect) {
     try {
       var parsed = parseDataUrl(dataUrl);
       if (!parsed) return null;
       var img = decodePixels(parsed.bytes);
+      if (cropRect) img = cropPixels(img, cropRect);
       var dims = [96, 80, 64, 48].filter(function (d) { return d <= MAX_DIM; });
       if (dims.length === 0) dims = [MAX_DIM];
       for (var di = 0; di < dims.length; di++) {
@@ -404,6 +435,7 @@
     parseDataUrl: parseDataUrl,
     decodePng: decodePng,
     encodePng: encodePng,
+    cropPixels: cropPixels,
     resampleFit: resampleFit,
     isValidPhotoThumb: isValidPhotoThumb,
     makeSync: makeSync,
