@@ -219,10 +219,19 @@ async function run() {
       }
     }
 
-    // --- revise_look LAST: it set-asides the bag and persists, so later
-    // cases would see a changed wardrobe ---
+    // --- revise_look LAST: exclusion is per-turn (never persisted, Opus
+    // finding #7), so later cases would see the same wardrobe. The extra
+    // cardigan keeps a valid look available once the bag is set aside
+    // (dress+scarf alone is an incomplete finish, honestly no valid look).
     console.log("\n[revise_look delivers its preview end-to-end]");
     {
+      const withLayer = seedPieces().concat([{
+        piece_id: "SYNTH_piece_704", category: "layer/cardigan", attributes: {},
+        source_share_id: "SYNTH_share_seed_704", added_at: new Date().toISOString(),
+        copy_preview_keys: { copy: null, preview: null }, status: "active",
+      }]);
+      const reSeed = await botJson("PUT", "/ig/catalog/" + DEMO_REF, withLayer);
+      assert.ok(reSeed.status === 200 || reSeed.status === 204, "catalog re-seed PUT, got " + reSeed.status);
       const posted = await botJson("POST", "/mock/incoming-text", { text: "drop the bag please" });
       assert.strictEqual(posted.status, 200, "text share accepted");
       const items = await shares();

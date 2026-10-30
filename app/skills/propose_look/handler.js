@@ -485,7 +485,15 @@
     };
   }
 
-  var api = { handle: handle, skill: "propose_look" };
+  // Shared selection stack (Opus finding #7): revise_look reuses these
+  // directly so the fit rules live in exactly one place. handle() above
+  // is untouched — these are pure functions over caller-supplied sets.
+  var api = {
+    handle: handle, skill: "propose_look",
+    validateSelection: validateSelection, fallbackChoose: fallbackChoose,
+    strictShape: strictShape, getAssembleLook: getAssembleLook,
+    plainWhy: plainWhy, plainNoun: plainNoun
+  };
   root.MetaStyles = root.MetaStyles || {};
   root.MetaStyles.skills = root.MetaStyles.skills || {};
   root.MetaStyles.skills["propose_look"] = api;

@@ -775,7 +775,7 @@ function createService(opts) {
       } else if (skill === "propose_look") {
         say("Replied to your message with a full look.");
       } else if (skill === "revise_look") {
-        say("You asked for a change — updated your wardrobe and re-checked the fit.");
+        say("You asked for a change — re-wove your look and re-checked the fit.");
       } else if (skill === "describe_wardrobe") {
         say("Replied with your wardrobe summary.");
       } else if (skill === "explain_fit") {
@@ -840,7 +840,7 @@ function createService(opts) {
     if (turned.noData) {
       say("Answered: no fabric or price data available.");
     } else if (turned.revised) {
-      say("You asked for a change — updated your wardrobe and re-checked the fit.");
+      say("You asked for a change — re-wove your look and re-checked the fit.");
     } else if (turned.best && turned.best.card && turned.best.card.valid) {
       say("Replied to your message with a full look.");
     } else {

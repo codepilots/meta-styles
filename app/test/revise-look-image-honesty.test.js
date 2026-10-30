@@ -21,6 +21,10 @@ function seed() {
   cat.addPiece({ category: "base/top", attributes: {}, source_share_id: "SYNTH_share_rev_1" });
   cat.addPiece({ category: "base/bottom", attributes: {}, source_share_id: "SYNTH_share_rev_2" });
   cat.addPiece({ category: "layer/blazer", attributes: {}, source_share_id: "SYNTH_share_rev_3" });
+  // Opus finding #7: excluding the blazer must still leave a valid look
+  // (top+bottom+cardigan) so these preview-mechanics cases exercise a
+  // real re-selected look instead of the old whole-wardrobe assembly.
+  cat.addPiece({ category: "layer/cardigan", attributes: {}, source_share_id: "SYNTH_share_rev_4" });
   // Mock the browser-global assembler the handler reads via root.MetaStyles.
   globalThis.MetaStyles = globalThis.MetaStyles || {};
   globalThis.MetaStyles.assembleLook = function (items) { return { valid: true, items: items }; };

@@ -91,6 +91,9 @@ async function run() {
   }
 
   // --- (d) revise_look success records a valid turn ---
+  // (Opus finding #7: the recorded proposal is the re-selected 2-piece
+  // look, not the whole remaining wardrobe — and the excluded scarf
+  // stays active in the catalog.)
   console.log("\n[(d) revise_look success -> verdict:true + proposal]");
   {
     const cat = Wardrobe.createCatalog({ userKey: "SYNTH_tr_d" });
@@ -101,8 +104,9 @@ async function run() {
     assert.strictEqual(turns.length, 1, "one turn recorded, got " + turns.length);
     assert.strictEqual(turns[0].verdict, true, "verdict true, remaining look valid: " + r.text.slice(0, 120));
     assert.ok(turns[0].proposal && Array.isArray(turns[0].proposal.pieces), "proposal present");
-    assert.strictEqual(turns[0].proposal.pieces.length, 3, "three remaining pieces: " + JSON.stringify(turns[0].proposal));
+    assert.strictEqual(turns[0].proposal.pieces.length, 2, "re-selected look (dress+cardigan): " + JSON.stringify(turns[0].proposal));
     assert.strictEqual(turns[0].proposal.note, "valid:layer", "note names finish, got " + turns[0].proposal.note);
+    assert.strictEqual(cat.getActivePieces().length, 4, "revision destroys nothing");
     console.log("  pass: revise turn recorded with proposal + note=" + turns[0].proposal.note);
   }
 
