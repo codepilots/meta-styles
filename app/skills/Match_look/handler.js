@@ -18,7 +18,7 @@
     var stageImage=typeof o.stageImage==="function"?o.stageImage:null;
     var active=catalog? catalog.getActivePieces():[];
     var imageDelivery={ requested:false, generated:false, delivered:false, reason:"no_preview_client" };
-    var desc="I see soft Y2K x fairycore vibes, loveling \u2014 lovely layering, shimmer and gentle colour. \u2728";
+    var desc="A soft Y2K x fairycore direction to dream on, loveling \u2014 lovely layering, shimmer and gentle colour, as general inspiration. \u2728";
     if(metaClient&&imageDataUrl) try{ var r=await metaClient.classify(imageDataUrl,"inspiration"); if(r&&r.category) desc="I see a beautiful "+plainNoun(r.category)+" moment, loveling \u2014 soft layers and shimmer with a Y2K twist \u2728"; }catch(e){}
     if(active.length===0) return { text: desc+" Your wardrobe\u2019s empty just now, so I can\u2019t match it yet \u2014 share a few pieces and I\u2019ll find the closest cousins!", image:null, persist:{ summaryDelta:"Match_look: no wardrobe to match.", preferencesDelta:"" }, skill:"Match_look", meta:{ imageDelivery:{ requested:false, generated:false, delivered:false, reason:"no_valid_look" } } };
     var nouns=active.slice(0,3).map(function(p){ return plainNoun(p.category); }).join(" + ");

@@ -1,12 +1,15 @@
 "use strict";
 /* meta-styles Milestone 22 item 2 — What_suits vision honesty tests.
  * NEW hackathon work (building period Oct 27 – Nov 4, 2026).
+ * Updated for Opus finding #9: the fallback no longer claims a vision read
+ * ("from what I can see" is success-path only) and neither reply promises
+ * photo storage/deletion (photos are not kept after the reply).
  *
  * Covers: (a) no image -> unchanged consent-gate reply, no vision call
  * attempted; (b) image + metaClient.palette succeeds -> reply uses the REAL
  * returned palette words + note, persist.preferencesDelta reflects them;
- * (c) image + palette throws -> EXACT original hardcoded fallback, no crash;
- * (d) image + no metaClient -> EXACT original hardcoded fallback, no crash;
+ * (c) image + palette throws -> EXACT honest-fallback text, no crash;
+ * (d) image + no metaClient -> EXACT honest-fallback text, no crash;
  * (e) reply text never leaks SYNTH_-prefixed fixture ids.
  * All clients mocked — no network. All ids synthetic (SYNTH_ prefix).
  */
@@ -15,7 +18,7 @@ const Handler = require("../skills/What_suits/handler.js");
 
 // EXACT original hardcoded strings (must stay word-for-word in fallback).
 const CONSENT_TEXT = "Oh, I\u2019d love to help with that, darling \u2728 If you\u2019d like personalised colour advice, you can share a head shot and a full-body photo \u2014 I\u2019ll keep them encrypted and you can say \u201Cdelete my photos\u201D anytime. Would you like to share them? (Only with your consent, loveling)";
-const FALLBACK_TEXT = "Lovely, thank you for trusting me, darling \u2728 From what I can see, soft lilac, sage and warm cream will sing on you \u2014 they lift your natural glow and play beautifully Y2K x fairycore. A touch of silver shimmer near the face will catch the light just so \u2728 Your photos are stored encrypted and you can say \u201Cdelete my photos\u201D anytime.";
+const FALLBACK_TEXT = "Lovely, thank you for trusting me, darling \u2728 I couldn\u2019t quite read the photo just now, so here\u2019s some general colour guidance, loveling \u2014 soft lilac, sage and warm cream flatter most Y2K x fairycore looks and lift your natural glow. A touch of silver shimmer near the face will catch the light just so \u2728 Your photo isn\u2019t kept once I\u2019ve replied, loveling \u2014 it\u2019s just for this read.";
 const FALLBACK_PREFS = "Warm lilac/sage palette.";
 
 const IMG = "data:image/png;base64,SYNTH_whatsuits_photo_bytes";

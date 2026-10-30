@@ -2,12 +2,14 @@
 /* meta-styles Milestone 21 — skill: What_suits. NEW hackathon work (building period Oct 27 – Nov 4, 2026).
  * Persona: cheery green witch, fairy-core, warm complimentary, never shaming.
  *
- * Colour honesty (Milestone 22 item 2): when a photo is present and a
- * metaClient with a palette() vision call exists, the reply uses the REAL
- * returned palette words + note. Any failure (no client, no palette
- * function, throw, unparseable result) falls back to the original generic
- * reply word-for-word — never claims "from what I can see" content that
- * did not come from a real call.
+ * Colour honesty (Milestone 22 item 2, Opus finding #9): when a photo
+ * is present and a metaClient with a palette() vision call exists, the
+ * reply uses the REAL returned palette words + note ("from what I can
+ * see" is only ever used then). Any failure (no client, no palette
+ * function, throw, unparseable result) falls back to an explicitly
+ * general-guidance reply that never claims a vision read happened.
+ * Neither reply promises photo storage/deletion: What_suits adds no piece
+ * and the service deletes media after the reply, so photos are not kept.
  */
 (function (root) {
 
@@ -47,11 +49,11 @@
         var note=r&&typeof r.note==="string" ? r.note.trim() : "";
         if(words.length>0 && note){
           if(!/[.!?\u2026]$/.test(note)) note+=".";
-          return { text:"Lovely, thank you for trusting me, darling \u2728 From what I can see, "+joinWords(words)+" will sing on you \u2014 "+note+" A touch of silver shimmer near the face will catch the light just so \u2728 Your photos are stored encrypted and you can say \u201Cdelete my photos\u201D anytime.", image:null, persist:{ summaryDelta:"Gave What_suits colour advice.", preferencesDelta:words.join("/")+" palette." }, skill:"What_suits" };
+          return { text:"Lovely, thank you for trusting me, darling \u2728 From what I can see, "+joinWords(words)+" will sing on you \u2014 "+note+" A touch of silver shimmer near the face will catch the light just so \u2728 Your photo isn\u2019t kept once I\u2019ve replied, loveling \u2014 it\u2019s just for this read.", image:null, persist:{ summaryDelta:"Gave What_suits colour advice.", preferencesDelta:words.join("/")+" palette." }, skill:"What_suits" };
         }
       }catch(e){}
     }
-    return { text:"Lovely, thank you for trusting me, darling \u2728 From what I can see, soft lilac, sage and warm cream will sing on you \u2014 they lift your natural glow and play beautifully Y2K x fairycore. A touch of silver shimmer near the face will catch the light just so \u2728 Your photos are stored encrypted and you can say \u201Cdelete my photos\u201D anytime.", image:null, persist:{ summaryDelta:"Gave What_suits colour advice.", preferencesDelta:"Warm lilac/sage palette." }, skill:"What_suits" };
+    return { text:"Lovely, thank you for trusting me, darling \u2728 I couldn\u2019t quite read the photo just now, so here\u2019s some general colour guidance, loveling \u2014 soft lilac, sage and warm cream flatter most Y2K x fairycore looks and lift your natural glow. A touch of silver shimmer near the face will catch the light just so \u2728 Your photo isn\u2019t kept once I\u2019ve replied, loveling \u2014 it\u2019s just for this read.", image:null, persist:{ summaryDelta:"Gave What_suits colour advice.", preferencesDelta:"Warm lilac/sage palette." }, skill:"What_suits" };
   }
 
   var api = { handle: handle, skill: "What_suits" };
