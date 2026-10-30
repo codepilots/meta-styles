@@ -358,6 +358,69 @@ function createHandler(config) {
         return;
       }
 
+      if (url.pathname === "/api/route") {
+        var text = typeof payload.text === "string" ? payload.text : "";
+        var SKILL_NAMES = [
+          "catalogue_piece","propose_look","revise_look","describe_wardrobe",
+          "explain_fit","answer_no_data","off_topic",
+          "Match_look","Complete_the_look","What_suits","Evaluate_prospective_purchase"
+        ];
+        var imagePresent = !!payload.imagePresent;
+        var wardrobeSummary = typeof payload.wardrobeSummary === "string" ? payload.wardrobeSummary : "";
+        var preferences = typeof payload.preferences === "string" ? payload.preferences : "";
+        var lastTurns = Array.isArray(payload.lastTurns) ? payload.lastTurns.slice(0,5).map(String) : [];
+        var lastTurnsStr = lastTurns.length ? "Recent turns:\n" + lastTurns.map(function(t){return "- "+t;}).join("\n") : "No prior turns.";
+        var hasImageNote = imagePresent ? "An image IS attached to this message." : "No image attached.";
+        // lsCache optional pattern for route: cache by content hash
+        var routeCacheKey = null;
+        try { routeCacheKey = "route|" + hashKey(text+"|"+imagePresent+"|"+wardrobeSummary+"|"+preferences+"|"+lastTurns.join("|")); } catch(e){}
+        if (routeCacheKey && cache.has(routeCacheKey)) { sendJson(res, 200, Object.assign({}, cache.get(routeCacheKey), { cached: true }), corsOrigin); return; }
+        var skillList = SKILL_NAMES.join(", ");
+        var triggers = [
+          "catalogue_piece: Photo(s) shared (image present, no other trigger)",
+          "propose_look: user wants a look suggested — e.g. \"show me a look\", \"what goes together\", \"style me\", \"outfit idea\", \"find the bag\", \"can you find …\"",
+          "revise_look: user wants to change last look — e.g. \"no bag\", \"without blazer\", \"swap scarf\", \"drop the bag\"",
+          "describe_wardrobe: user wants to see/list wardrobe — e.g. \"what do I have\", \"show my wardrobe\", \"find the bag\"",
+          "explain_fit: user asks why look works — e.g. \"why does this work\", \"explain the fit\"",
+          "answer_no_data: fabric/price/vendor question — e.g. \"what fabric\", \"how much does it cost\"",
+          "off_topic: unrelated topic or greeting with no wardrobe intent",
+          "Match_look: inspiration photo + wants to recreate that look — e.g. \"do this look\", \"like this\" with image",
+          "Complete_the_look: wants buying advice to finish a look — e.g. \"complete the look\", \"what could I buy\"",
+          "What_suits: asks what colours/styles suit them — e.g. \"what suits me\", \"what colours suit me\"",
+          "Evaluate_prospective_purchase: image of item they consider buying — e.g. \"should I buy\", \"worth buying\" with image"
+        ].join("\n");
+        var systemText =
+          "You are a router for a wardrobe styling app. Given the user's message and context, pick exactly one skill.\n" +
+          "Skills and their triggers:\n" + triggers + "\n" +
+          "Valid skills: " + skillList + "\n" +
+          "Rules: Return STRICT JSON only with exactly this shape: {\"skill\":\"<one of 11>\",\"confidence\":0-100,\"reason\":\"short\"}. " +
+          "Use confidence 85-95 for clear matches, 40-65 for vague/ambiguous inputs like \"hmm\" or greetings. " +
+          "Vague single-word or greeting inputs should get confidence <70 so the system can ask for clarification.";
+        var userStr =
+          "Message: \"" + text.slice(0,500) + "\"\n" +
+          hasImageNote + "\n" +
+          (wardrobeSummary ? "Wardrobe summary: " + wardrobeSummary.slice(0,400) + "\n" : "") +
+          (preferences ? "Preferences: " + preferences.slice(0,400) + "\n" : "") +
+          lastTurnsStr;
+        var out = await upstream("/responses", {
+          model: SPARK_MODEL,
+          input: [{ type: "message", role: "user", content: [{ type: "input_text", text: systemText + "\n\n" + userStr }] }],
+          text: { format: { type: "json_object" } }
+        });
+        var parsed = parseJsonText(extractOutputText(out));
+        if (!parsed || typeof parsed.skill !== "string" || SKILL_NAMES.indexOf(parsed.skill) === -1) {
+          var e2 = new Error("route: unparseable or invalid skill");
+          e2.status = 502; e2.code = "unparseable_route"; e2.upstream = parsed;
+          throw e2;
+        }
+        var conf = typeof parsed.confidence === "number" ? Math.round(parsed.confidence) : 75;
+        var reason = typeof parsed.reason === "string" ? parsed.reason.slice(0,200) : "routed via Spark";
+        var routeOut = { skill: parsed.skill, confidence: conf, reason: reason, source: SPARK_MODEL, placeholder: false };
+        if (routeCacheKey) cache.set(routeCacheKey, routeOut);
+        sendJson(res, 200, routeOut, corsOrigin);
+        return;
+      }
+
       sendJson(res, 404, { error: "not_found" }, corsOrigin);
     } catch (err) {
       sendJson(res, err.status || 500, {

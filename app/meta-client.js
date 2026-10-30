@@ -139,11 +139,25 @@
     });
   }
 
+  function route(text, ctx) {
+    var c = ctx || {};
+    return post("/api/route", {
+      text: String(text || ""),
+      imagePresent: !!c.imagePresent,
+      wardrobeSummary: String(c.wardrobeSummary || ""),
+      preferences: String(c.preferences || ""),
+      lastTurns: Array.isArray(c.lastTurns) ? c.lastTurns.slice(0, 5) : []
+    }, 30000).then(function (out) {
+      return out;
+    });
+  }
+
   var client = {
     PROXY_BASE: PROXY_BASE,
     joinBase: joinBase,
     health: health, segment: segment, classify: classify,
     copy: copy, assemble: assemble, preview: preview,
+    route: route,
     cardSignature: cardSignature,
   };
 
