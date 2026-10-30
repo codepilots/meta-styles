@@ -19,7 +19,6 @@
   // localhost:8000, which the proxy's CORS allowlist trusts).
   var _RT = (typeof globalThis !== "undefined" && globalThis.__IG_RUNTIME__) || {};
   var PROXY_BASE = _RT.proxyBase || "http://127.0.0.1:8905";
-  var memCache = {};
 
   // Join a configured base with a path without doubling the prefix:
   // joinBase("/api", "/api/segment") === "/api/segment", while absolute
@@ -134,13 +133,12 @@
     }, 60000);
   }
 
+  // Opus finding #14: no client-side preview cache. Keying on prompt plus
+  // image *length* served one user's image-edit to another user's different
+  // photo of equal length. The proxy already caches previews by full-image
+  // hash (bounded LRU), so always round-trip instead of caching here.
   function preview(prompt, imageDataUrl) {
-    var key = "preview:" + fnv(prompt + "|" + (imageDataUrl ? imageDataUrl.length : 0));
-    if (memCache[key]) return Promise.resolve(Object.assign({}, memCache[key], { cached: true }));
-    return post("/api/preview", { prompt: prompt, image: imageDataUrl || null }, 120000).then(function (out) {
-      memCache[key] = out;
-      return out;
-    });
+    return post("/api/preview", { prompt: prompt, image: imageDataUrl || null }, 120000);
   }
 
   function route(text, ctx) {

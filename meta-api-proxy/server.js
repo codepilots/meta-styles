@@ -37,6 +37,10 @@ const SPARK_MODEL = "muse-spark-1.3";
 const SAM_MODEL = "sam-3.1";
 const IMAGE_MODEL = "muse-image-1.0";
 const MAX_BODY = 12 * 1024 * 1024;
+// Opus finding #14: the response cache below is process-wide (shared by all
+// users), so keys must hash full inputs (never just input length) and the
+// Map must stay bounded via the LRU helpers in createHandler.
+const CACHE_MAX_ENTRIES = 200;
 
 const TAXONOMY = [
   "base/top", "base/bottom", "dress",
@@ -166,6 +170,20 @@ function createHandler(config) {
   const allowOrigin = cfg.allowOrigin || process.env.META_PROXY_ALLOW_ORIGIN || DEFAULT_ORIGIN;
   const fetchImpl = cfg.fetchImpl || fetch;
   const cache = new Map();
+  // Plain Map-based LRU over the shared cache: re-insert on hit to mark an
+  // entry most-recently-used, evict oldest-first when over the bound.
+  function cacheGet(k) {
+    if (!cache.has(k)) return undefined;
+    const v = cache.get(k);
+    cache.delete(k);
+    cache.set(k, v);
+    return v;
+  }
+  function cacheSet(k, v) {
+    if (cache.has(k)) cache.delete(k);
+    cache.set(k, v);
+    while (cache.size > CACHE_MAX_ENTRIES) cache.delete(cache.keys().next().value);
+  }
 
   async function upstream(path, body) {
     if (!apiKey) {
@@ -193,7 +211,7 @@ function createHandler(config) {
 
   async function sparkJson(systemText, userContent, cacheTag) {
     const cacheK = cacheTag ? hashKey(cacheTag) : null;
-    if (cacheK && cache.has(cacheK)) return { parsed: cache.get(cacheK), cached: true };
+    if (cacheK) { const hit = cacheGet(cacheK); if (hit !== undefined) return { parsed: hit, cached: true }; }
     const body = await upstream("/responses", {
       model: SPARK_MODEL,
       input: [{
@@ -205,7 +223,7 @@ function createHandler(config) {
       }],
     });
     const parsed = parseJsonText(extractOutputText(body));
-    if (cacheK && parsed) cache.set(cacheK, parsed);
+    if (cacheK && parsed) cacheSet(cacheK, parsed);
     return { parsed, cached: false };
   }
 
@@ -250,7 +268,7 @@ function createHandler(config) {
         const phrases = (Array.isArray(payload.phrases) && payload.phrases.length
           ? payload.phrases : DEFAULT_PHRASES).slice(0, 8).map(String);
         const ck = hashKey(image.slice(0, 4096) + "|" + phrases.join(",") + "|" + image.length);
-        if (cache.has(ck)) { sendJson(res, 200, { ...cache.get(ck), cached: true }, corsOrigin); return; }
+        { const segHit = cacheGet(ck); if (segHit !== undefined) { sendJson(res, 200, { ...segHit, cached: true }, corsOrigin); return; } }
         let polygons = [];
         let boxes = [];
         for (const phrase of phrases) {
@@ -271,7 +289,7 @@ function createHandler(config) {
           boxes = boxes.concat(got.boxes);
         }
         const out = { polygons, boxes, source: "sam-3.1", model: SAM_MODEL, placeholder: false };
-        cache.set(ck, out);
+        cacheSet(ck, out);
         sendJson(res, 200, out, corsOrigin);
         return;
       }
@@ -364,8 +382,13 @@ function createHandler(config) {
       if (url.pathname === "/api/preview") {
         const prompt = String(payload.prompt || "").slice(0, 1000);
         if (!prompt) { sendJson(res, 400, { error: "prompt_required" }, corsOrigin); return; }
-        const ck = hashKey(prompt + "|" + (payload.image ? payload.image.length : 0));
-        if (cache.has(ck)) { sendJson(res, 200, { ...cache.get(ck), cached: true }, corsOrigin); return; }
+        // Opus finding #14: hash the FULL image data URL, not just its length —
+        // two different garment photos with equal-length data URLs must never
+        // share a cache entry. Text-only previews keep their exact old key.
+        const ck = payload.image
+          ? hashKey(prompt + "|" + payload.image)
+          : hashKey(prompt + "|0");
+        { const prevHit = cacheGet(ck); if (prevHit !== undefined) { sendJson(res, 200, { ...prevHit, cached: true }, corsOrigin); return; } }
         let body;
         if (typeof payload.image === "string" && payload.image.startsWith("data:image/")) {
           body = await upstream("/images/edits", {
@@ -382,7 +405,7 @@ function createHandler(config) {
           dataURL: `data:image/${fmt};base64,${first.b64_json}`,
           source: IMAGE_MODEL, placeholder: false,
         };
-        cache.set(ck, out);
+        cacheSet(ck, out);
         sendJson(res, 200, out, corsOrigin);
         return;
       }
@@ -403,7 +426,7 @@ function createHandler(config) {
         // lsCache optional pattern for route: cache by content hash
         var routeCacheKey = null;
         try { routeCacheKey = "route|" + hashKey(text+"|"+imagePresent+"|"+wardrobeSummary+"|"+preferences+"|"+lastTurns.join("|")); } catch(e){}
-        if (routeCacheKey && cache.has(routeCacheKey)) { sendJson(res, 200, Object.assign({}, cache.get(routeCacheKey), { cached: true }), corsOrigin); return; }
+        if (routeCacheKey) { const routeHit = cacheGet(routeCacheKey); if (routeHit !== undefined) { sendJson(res, 200, Object.assign({}, routeHit, { cached: true }), corsOrigin); return; } }
         var skillList = SKILL_NAMES.join(", ");
         var triggers = [
           "catalogue_piece: Photo(s) shared (image present, no other trigger — but FIRST check Recent turns: if the assistant just asked the user to share a photo, route to that skill instead)",
@@ -448,7 +471,7 @@ function createHandler(config) {
         var conf = typeof parsed.confidence === "number" ? Math.round(parsed.confidence) : 75;
         var reason = typeof parsed.reason === "string" ? parsed.reason.slice(0,200) : "routed via Spark";
         var routeOut = { skill: parsed.skill, confidence: conf, reason: reason, source: SPARK_MODEL, placeholder: false };
-        if (routeCacheKey) cache.set(routeCacheKey, routeOut);
+        if (routeCacheKey) cacheSet(routeCacheKey, routeOut);
         sendJson(res, 200, routeOut, corsOrigin);
         return;
       }
@@ -488,4 +511,5 @@ module.exports = {
   createHandler, startServer,
   extractOutputText, parseJsonText, parseSamOutput, normalizeCategory,
   TAXONOMY, SAM_LABEL_MAP, DEFAULT_PORT, SPARK_MODEL, SAM_MODEL, IMAGE_MODEL,
+  CACHE_MAX_ENTRIES,
 };
