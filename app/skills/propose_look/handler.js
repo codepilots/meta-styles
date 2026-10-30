@@ -14,10 +14,14 @@
  *     assembler fallback, and honest text when nothing validates.
  *  5. Preview (metaClient.preview) only after a validated look; honours the
  *     proxy's actual return shape ({dataURL}, not url). When the service
- *     passes shareId + stageImage (mock mode only), the dataURL is staged
- *     for a real send-with-image and delivered flips true with no caveat;
- *     otherwise sends stay text-only and result.meta.imageDelivery reports
- *     that truthfully — never an example.invalid URL in reply text.
+ *     passes shareId + stageImage (either mode — mock stages via
+ *     /mock/stage-outbound-image, live via /ig/outbound-stage), the
+ *     dataURL is staged for a real send-with-image and delivered flips
+ *     true with no caveat; otherwise sends stay text-only and
+ *     result.meta.imageDelivery reports that truthfully — never an
+ *     example.invalid URL in reply text. Staged-for-send is not
+ *     delivered: only the bot's image_message_id on the later send
+ *     counts as delivery (the service layer enforces that).
  */
 (function (root) {
 
@@ -238,10 +242,12 @@
     var metaClient = o.metaClient || null;
     var assembleLook = getAssembleLook(o);
     // Image delivery: the service passes its share id plus a staging
-    // function (mock mode only — the real bot has no staging route). When
-    // both are present and staging succeeds, the preview is genuinely
-    // queued for an image send and no caveat is appended. Otherwise the
-    // honest "can't send pictures yet" caveat stays.
+    // function (per mode — mock /mock/stage-outbound-image, live
+    // /ig/outbound-stage). When both are present and staging succeeds,
+    // the preview is genuinely queued for an image send and no caveat is
+    // appended. Otherwise the honest "can't send pictures yet" caveat
+    // stays. A null stageImage (a mode with no staging route) keeps the
+    // text-only path exactly as before.
     var shareId = typeof o.shareId === "string" && o.shareId ? o.shareId : null;
     var stageImage = typeof o.stageImage === "function" ? o.stageImage : null;
     var toolSteps = 0;

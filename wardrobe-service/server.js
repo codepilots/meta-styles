@@ -19,16 +19,18 @@
  * turn-loop, wardrobe-catalog, send-client, poll-scheduler, inbox-bridge
  * pure half, meta-client); app/preview.js and app/app.js are NOT reused
  * (browser-only). Preview delivery follows each mode's real capability,
- * declared openly rather than forked silently: mock mode stages the
- * generated dataURL via POST /mock/stage-outbound-image and attaches it
- * to the send (image:true); live mode stays text-only because the real
- * bot has no staging route (its image:true path needs the file pre-placed
- * on the bot host, which no client route provides) and its Graph send
- * credential is still a placeholder. Generation vs delivery are reported
- * separately and honestly: live_paths.preview tracks whether the proxy
- * generated a dataURL, counts.images_delivered tracks bot-confirmed
- * image_message_ids, and each propose_look reply's meta.imageDelivery
- * states requested/generated/delivered and why not.
+ * declared openly rather than forked silently: both modes stage the
+ * generated dataURL (mock: POST /mock/stage-outbound-image; live: POST
+ * /ig/outbound-stage/<share_id>) and attach it to the send (image:true)
+ * through the same downstream path — only the staging route differs per
+ * mode. Generation vs delivery are reported separately and honestly:
+ * live_paths.preview tracks whether the proxy generated a dataURL,
+ * counts.images_delivered tracks bot-confirmed image_message_ids ONLY
+ * (staging alone never counts), and each propose_look reply's
+ * meta.imageDelivery states requested/generated/delivered and why not.
+ * Live honesty caveat: staging may succeed while the photo send still
+ * fails at the bot's Graph step (placeholder credential → 502/503) —
+ * retried, never claimed delivered.
  *
  * STORAGE RULE (non-negotiable): ALL catalog/wardrobe data lives in the
  * bot via the existing wardrobe-catalog PUT/GET contract (createCatalog
@@ -194,7 +196,8 @@ function createService(opts) {
   // proxy answered, "fallback" when it threw (callers then use labelled
   // paths). Assemble may still be downgraded to "fallback" below when the
   // skill rejects Spark's output as invalid. Preview "live" means a dataURL
-  // was generated; delivery still stays text-only (see livePaths comment).
+  // was generated; delivery is then decided per reply by the skill's
+  // imageDelivery staging result (see livePaths comment).
   var MetaObserved = null;
   function observedMeta() {
     if (MetaObserved) return MetaObserved;
@@ -241,11 +244,10 @@ function createService(opts) {
   // Observed-call truth, one value each: "unprobed" (never attempted),
   // "live" (proxy answered and the result was used), "fallback" (proxy
   // failed or its output was rejected, labelled path used instead), or —
-  // for preview only — "not-staged" (never attempted; mock mode then
-  // stages and attaches via POST /mock/stage-outbound-image, while live
-  // mode stays text-only — the real bot has no staging route and its Graph
-  // send credential is still a placeholder — and the handler reports that
-  // delivery truth per reply).
+  // for preview only — "not-staged" (never attempted; either mode then
+  // stages and attaches via its own route — mock
+  // /mock/stage-outbound-image, live /ig/outbound-stage — and the handler
+  // reports that delivery truth per reply).
   var livePaths = {
     route: "unprobed", assemble: "unprobed", preview: "not-staged",
     classify: "unprobed", copy: "stub",
@@ -298,7 +300,9 @@ function createService(opts) {
       validate: Assembler.assembleLook,
       copy: Spark.generateCopy,
     });
-    var send = SendClient.createSendClient({ base: botBase, token: sendToken });
+    // The send client stages via the mode's own route (mock:
+    // /mock/stage-outbound-image; live: /ig/outbound-stage) — same Bearer [REDACTED]
+    var send = SendClient.createSendClient({ base: botBase, token: sendToken, mode: mode });
     // Per-user rolling summary/preferences (M21) — 100t each, via PUT /ig/catalog only.
     // Kept in ctx, persisted via catalog store alongside pieces.
     var ctx = { catalog: catalog, loop: loop, send: send, loaded: false, wardrobeSummary: "", preferences: "", lastAgenticDecision: null, lastSkillSteps: 0 };
@@ -360,14 +364,17 @@ function createService(opts) {
     }
 
     return imagePromise.then(function () {
-      // Image staging is mock-mode only: the mock bot stages preview bytes
-      // via POST /mock/stage-outbound-image, while the real bot has no
-      // staging route (its image:true path needs the file pre-placed on the
-      // bot host). Live mode therefore gets no stageImage and stays
-      // honestly text-only; the skill keeps its caveat there.
-      var stageImage = mode === "mock" ? function (sid, dataURL) {
+      // Image staging, one downstream path for both modes: the mock bot
+      // stages preview bytes via POST /mock/stage-outbound-image and the
+      // real bot via POST /ig/outbound-stage/<share_id> — the send client
+      // picks the route from its own mode, so the skill and the
+      // send-with-image flow below are identical in both. A staging
+      // failure still resolves {ok:false}, and the skill then keeps its
+      // honest text-only caveat; only a bot-confirmed image_message_id
+      // ever counts as delivered (see sendComposed).
+      var stageImage = function (sid, dataURL) {
         return ctx.send.stageOutboundImage(sid, dataURL);
-      } : null;
+      };
       var loop = AgenticLoop.createAgenticLoop({
         catalog: ctx.catalog,
         userRef: ctx.catalog.userKey,
@@ -401,7 +408,8 @@ function createService(opts) {
         // validated stays "live"; a Spark fetch failure or a rejected
         // candidate (bad IDs, repeats, fit-invalid) lands on the local
         // fallback. Preview "live" (observed wrapper) means a dataURL was
-        // generated — delivery still stays text-only, reported per reply.
+        // generated — delivery is then decided per reply by the skill's
+        // imageDelivery staging result, reported per reply.
         try {
           var hr = result && result.handlerResult;
           if (skillName === "propose_look" && hr && hr.meta) {
@@ -470,22 +478,25 @@ function createService(opts) {
       last_turn_text: lastTurnText,
       counts: Object.assign({}, counts),
       live_paths: Object.assign({}, livePaths),
-      // Delivery truth, per mode capability. Mock mode stages the
-      // generated preview via POST /mock/stage-outbound-image and attaches
-      // it (image:true); live mode stays text-only because the real bot has
-      // no staging route and its Graph send credential is still a
-      // placeholder. preview_delivery flips to "staged" once the bot
-      // confirms an image_message_id. Per-reply
-      // handlerResult.meta.imageDelivery says requested/generated/delivered
-      // and why not.
+      // Delivery truth, per mode capability. Both modes stage the
+      // generated preview (mock: POST /mock/stage-outbound-image; live:
+      // POST /ig/outbound-stage) and attach it (image:true).
+      // preview_delivery flips to "staged" ONLY once the bot confirms an
+      // image_message_id — staging alone never counts. Live honesty
+      // caveat: staging may succeed while the actual photo send still
+      // fails at the bot's Graph step (its Graph send credential may
+      // still be a placeholder, surfacing as 502/503) — a reason outside
+      // this code's control, retried without ever claiming delivery.
+      // Per-reply handlerResult.meta.imageDelivery says
+      // requested/generated/delivered and why not.
       image_delivery: mode === "mock" ? {
         sends: "text+image",
         preview_delivery: counts.images_delivered > 0 ? "staged" : "not-staged",
         note: "Mock mode stages the generated preview and sends it with the reply (image:true).",
       } : {
-        sends: "text-only",
-        preview_delivery: "not-staged",
-        note: "Live mode stays text-only: the real bot has no staging route for the image file, and its Graph send is not yet credentialed.",
+        sends: "text+image",
+        preview_delivery: counts.images_delivered > 0 ? "staged" : "not-staged",
+        note: "Live mode stages the generated preview via POST /ig/outbound-stage and sends it with the reply (image:true). Delivery counts only on a bot-confirmed image_message_id; if the bot's photo send is not yet credentialed, staged sends fail at that Graph step and retry — never reported as delivered.",
       },
       activity: activity.slice(),
       last_error: lastError,
@@ -695,6 +706,21 @@ function createService(opts) {
         // The text never went out either, so this is retryable: the next
         // attempt re-stages and re-sends under the SAME idempotency key.
         say("The preview picture didn't stage — will try again on the next check.");
+        return noteRetry(shareId);
+      }
+      if (withImage && result && (result.status === 502 || result.status === 503 ||
+          result.error === "image_send_failed" || result.error === "graph_error" ||
+          result.error === "graph_unreachable")) {
+        // Staged but the Graph send failed: the preview bytes reached the
+        // bot (staging succeeded — hence image:true), but the bot's own
+        // photo-send step refused, e.g. its Graph send credential is still
+        // a placeholder. This is distinct from a staging failure (which
+        // falls back to an honest text-only send with a caveat) and from
+        // the retired no-staging-route case: nothing here is claimed
+        // delivered, and the share retries so the picture leg can go out
+        // later — the stable per-share key replays-or-409s bot-side, so a
+        // retry never duplicates text already sent.
+        say("The preview picture staged but the photo service didn't accept it — will try again on the next check.");
         return noteRetry(shareId);
       }
       if (result && result.status === 422) {

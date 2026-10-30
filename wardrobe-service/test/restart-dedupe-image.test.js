@@ -17,9 +17,13 @@
  *
  *  Bug 2 — mock mode delivers the preview image end-to-end: the staged
  *  send carries image:true, the bot confirms an image_message_id, and the
- *  reply omits the "can't tuck pictures" caveat. Live mode stays
- *  text-only (image:false + caveat), because the real bot has no staging
- *  route and its Graph send is not credentialed.
+ *  reply omits the "can't tuck pictures" caveat. Live mode now mirrors
+ *  the same stage-then-send flow against the real bot's
+ *  POST /ig/outbound-stage route (mocked-contract stubs below, never the
+ *  real bot): staged + image_message_id on success; honest text-only
+ *  fallback with caveat when staging itself fails; retry with a distinct
+ *  activity line when staging succeeds but the bot's Graph step refuses
+ *  (502/503) — never a false delivery claim.
  *
  *  Guard — two different share_ids are still replied to independently
  *  (no over-suppression from the dedupe).
@@ -230,21 +234,81 @@ async function run() {
     fs.rmSync(tmpDir, { recursive: true, force: true });
   }
 
-  // --- Live mode stays text-only (real bot has no staging route) ---
-  console.log("\n[live mode: text-only with honest caveat]");
+  // --- Live mode mirrors the mock stage-then-send flow via the real
+  // bot's POST /ig/outbound-stage route — all three outcomes below run
+  // against fetch stubs implementing the documented contract shapes, never
+  // the real bot (no 8903/8905 traffic from this suite).
+  console.log("\n[live mode: stage-then-send, honest on every outcome]");
   {
-    const liveSend = [];
     const seed = seedPieces();
     const realFetch2 = global.fetch;
+    const liveCfg = { stageUnreachable: false, graphFail: false };
+    const liveSend = [];
+    const liveStaged = new Set();
     global.fetch = function (url, opts) {
       const u = String(url);
+      if (u.indexOf("/ig/outbound-stage/") !== -1) {
+        if (liveCfg.stageUnreachable) {
+          return Promise.reject(new Error("unreachable (live stub)"));
+        }
+        const sid = decodeURIComponent(u.split("/ig/outbound-stage/")[1].split("?")[0]);
+        liveStaged.add(sid);
+        const stageBody = { share_id: sid, bytes: 68 };
+        return Promise.resolve({
+          ok: true, status: 200,
+          json: function () { return Promise.resolve(stageBody); },
+          text: function () { return Promise.resolve(JSON.stringify(stageBody)); },
+        });
+      }
+      if (u.indexOf("/api/assemble") !== -1) {
+        const pieces = (opts && opts.body && JSON.parse(String(opts.body)).pieces) || [];
+        const ids = pieces.map(function (p) { return p.id; });
+        return Promise.resolve({
+          ok: true, status: 200,
+          json: function () {
+            return Promise.resolve({
+              looks: [{ pieceIds: ids, rationale: "Moonlight live draft drapes long." }],
+            });
+          },
+          text: function () { return Promise.resolve("{}"); },
+        });
+      }
+      if (u.indexOf("/api/preview") !== -1) {
+        return Promise.resolve({
+          ok: true, status: 200,
+          json: function () {
+            return Promise.resolve({ dataURL: "data:image/png;base64," + TINY_PNG_B64 });
+          },
+          text: function () { return Promise.resolve("{}"); },
+        });
+      }
       if (u.indexOf("/ig/send") !== -1) {
         const body = opts && opts.body ? JSON.parse(String(opts.body)) : {};
         liveSend.push(body);
+        if (body.image === true && !liveStaged.has(body.share_id)) {
+          return Promise.resolve({
+            ok: true, status: 400,
+            json: function () { return Promise.resolve({ error: "image_not_staged" }); },
+            text: function () { return Promise.resolve("{}"); },
+          });
+        }
+        if (body.image === true && liveCfg.graphFail) {
+          const split = {
+            error: "image_send_failed", message_id: "SYNTH_mid_live_split",
+            recipient_ref: body.share_id,
+          };
+          return Promise.resolve({
+            ok: true, status: 502,
+            json: function () { return Promise.resolve(split); },
+            text: function () { return Promise.resolve(JSON.stringify(split)); },
+          });
+        }
+        const sendBody = { message_id: "SYNTH_mid_live_" + liveSend.length, recipient_ref: body.share_id };
+        if (body.image === true) sendBody.image_message_id = "SYNTH_imgmsg_live_" + liveSend.length;
         return Promise.resolve({
           ok: true, status: 200,
-          json: function () { return Promise.resolve({ message_id: "SYNTH_mid_live_1" }); },
-          text: function () { return Promise.resolve("{}"); },
+          json: function () { return Promise.resolve(sendBody); },
+          text: function () { return Promise.resolve(JSON.stringify(sendBody)); },
         });
       }
       if (u.indexOf("/ig/catalog") !== -1) {
@@ -256,32 +320,82 @@ async function run() {
       }
       return Promise.reject(new Error("unreachable (live stub)"));
     };
-    try {
+    function liveService() {
       delete require.cache[require.resolve("../server.js")];
       const ServiceLive = require("../server.js");
-      const svc = ServiceLive.createService({
+      return ServiceLive.createService({
         mode: "live", botBase: "http://127.0.0.1:59997", proxyBase: "http://127.0.0.1:59998",
         readToken: TOKEN, catalogToken: TOKEN, sendToken: TOKEN,
         port: 0, nowMs: function () { return Date.now(); },
       });
-      assert.strictEqual(svc.status().image_delivery.sends, "text-only",
-        "live status declares text-only");
-      const item = {
-        id: "SYNTH_share_live_001", received_at: new Date().toISOString(),
+    }
+    function liveItem(id) {
+      return {
+        id: id, received_at: new Date().toISOString(),
         user_ref: "u_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
         attachment: { type: "text", payload: { text: "show me a look" } },
       };
-      const outcome = await svc.processOne(item);
-      assert.ok(typeof outcome === "string" && outcome.indexOf("terminal:") === 0,
-        "live processOne terminal, got " + outcome);
+    }
+    try {
+      // Case A: staged + Graph ok -> image:true, no caveat, counted.
+      liveCfg.stageUnreachable = false;
+      liveCfg.graphFail = false;
+      const svcA = liveService();
+      assert.strictEqual(svcA.status().image_delivery.sends, "text+image",
+        "live status declares staged image sends");
+      const outA = await svcA.processOne(liveItem("SYNTH_share_live_001"));
+      assert.ok(typeof outA === "string" && outA.indexOf("terminal:") === 0,
+        "live staged processOne terminal, got " + outA);
       assert.strictEqual(liveSend.length, 1, "one live send attempted");
-      assert.strictEqual(liveSend[0].image, false, "live send stays image:false");
+      assert.strictEqual(liveSend[0].image, true, "live send carries image:true");
+      assert.ok(!/tuck preview pictures/.test(liveSend[0].text),
+        "no can't-send-pictures caveat when the image went out");
+      assert.strictEqual(svcA.status().counts.images_delivered, 1,
+        "live image counted only on the bot's image_message_id");
+      assert.strictEqual(svcA.status().image_delivery.preview_delivery, "staged",
+        "live status reports staged after a confirmed image send");
+      console.log("  pass: live staged image send end-to-end");
+
+      // Case B: staging itself fails -> honest text-only fallback + caveat.
+      liveCfg.stageUnreachable = true;
+      liveCfg.graphFail = false;
+      liveSend.length = 0;
+      const svcB = liveService();
+      const outB = await svcB.processOne(liveItem("SYNTH_share_live_002"));
+      assert.ok(typeof outB === "string" && outB.indexOf("terminal:") === 0,
+        "live fallback processOne terminal, got " + outB);
+      assert.strictEqual(liveSend.length, 1, "one live send attempted");
+      assert.strictEqual(liveSend[0].image, false, "staging failure falls back to image:false");
       assert.ok(/can\u2019t tuck preview pictures/.test(liveSend[0].text),
-        "live reply keeps the honest caveat");
+        "fallback reply keeps the honest caveat");
+      assert.strictEqual(svcB.status().counts.images_delivered, 0, "nothing counted as delivered");
+      assert.strictEqual(svcB.status().image_delivery.preview_delivery, "not-staged",
+        "status stays not-staged when staging failed");
+      console.log("  pass: live staging failure falls back to honest text-only");
+
+      // Case C: staged but the Graph step refuses -> retry, distinct line,
+      // never claimed delivered.
+      liveCfg.stageUnreachable = false;
+      liveCfg.graphFail = true;
+      liveSend.length = 0;
+      const svcC = liveService();
+      const outC = await svcC.processOne(liveItem("SYNTH_share_live_003"));
+      assert.strictEqual(outC, "retry", "Graph refusal retries, got " + outC);
+      assert.strictEqual(liveSend.length, 1, "one live send attempted");
+      assert.strictEqual(liveSend[0].image, true, "retry keeps image:true (staging worked)");
+      assert.strictEqual(svcC.status().counts.images_delivered, 0,
+        "a 502 without image_message_id is never counted as delivered");
+      assert.strictEqual(svcC.status().image_delivery.preview_delivery, "not-staged",
+        "status stays not-staged without bot confirmation");
+      assert.ok(svcC.status().activity.some(function (line) {
+        return /photo service didn't accept it/.test(line);
+      }), "distinct staged-but-Graph-failed activity line, got " +
+        JSON.stringify(svcC.status().activity));
+      console.log("  pass: live staged-but-Graph-failed retries with its own honest line");
     } finally {
       global.fetch = realFetch2;
     }
-    console.log("  pass: live mode text-only with caveat");
+    console.log("  pass: live mode stage-then-send with honest reporting on every outcome");
   }
 
   console.log("\nAll restart-dedupe + image-delivery tests passed.");

@@ -133,10 +133,16 @@
   }
 
   // One client per turn loop; holds the last turn for replay-on-retry.
+  // opts.mode selects the staging route used by stageOutboundImage:
+  // "live" -> POST /ig/outbound-stage/<share_id> (real bot, NEW
+  // hackathon work Oct-Nov 2026); anything else (including omitted, the
+  // pre-existing default) -> POST /mock/stage-outbound-image/<share_id>.
+  // The default path is byte-for-byte the old behavior.
   function createSendClient(opts) {
     var o = opts || {};
     var base = o.base || SEND_BASE;
     var token = o.token || RUNTIME_SEND_TOKEN || "";
+    var stageMode = o.mode === "live" ? "live" : "mock";
     var lastTurn = null; // {key, payload} of the most recent sendTurn
 
     function authed(path, body) {
@@ -197,12 +203,14 @@
     }
 
     // Stage preview bytes for an image send: POSTs the raw bytes to the
-    // mock bot's operator route /mock/stage-outbound-image/<share_id>, so a
-    // later sendTurn with withImage:true can attach them. MOCK-ONLY: the
-    // real bot has no staging route (its image:true path needs the file
-    // pre-placed on the bot host, which no client route provides), so
-    // against a live base this 404s and resolves {ok:false} — the caller
-    // then falls back to an honest text-only send, never a fake claim.
+    // mode's staging route, so a later sendTurn with withImage:true can
+    // attach them. Mock mode uses the mock bot's operator route
+    // /mock/stage-outbound-image/<share_id>; live mode uses the real
+    // bot's POST /ig/outbound-stage/<share_id> (same Bearer [REDACTED] as
+    // /ig/send, raw image bytes, image Content-Type from the dataURL).
+    // Any non-200 (unknown share, over-cap, non-image body, bad auth)
+    // resolves {ok:false} — the caller then falls back to an honest
+    // text-only send, never a fake claim.
     // Accepts a data: URL string; decodes base64 without assuming Node
     // (Buffer when present, atob otherwise). Never throws for transport
     // outcomes; only a network failure resolves bot_unreachable.
@@ -231,7 +239,10 @@
       if (!bytes || bytes.length === 0) {
         return root.Promise ? root.Promise.resolve(fail("empty_image")) : null;
       }
-      var url = joinBase(base, "/mock/stage-outbound-image/" + encodeURIComponent(String(shareId)));
+      var stagePath = stageMode === "live"
+        ? "/ig/outbound-stage/" + encodeURIComponent(String(shareId))
+        : "/mock/stage-outbound-image/" + encodeURIComponent(String(shareId));
+      var url = joinBase(base, stagePath);
       return root.fetch(url, {
         method: "POST",
         headers: {
