@@ -45,6 +45,20 @@
     if (/\b(what suits|what would suit|my colours|what colours suit|colour.*suit me|style.*suit me)\b/.test(text)) {
       return { skill: "What_suits", confidence: hasImage ? 90 : 86, reason: "explicit What_suits trigger" };
     }
+    // Evaluate prospective purchase text-only triggers (Opus finding #13):
+    // checked BEFORE the generic photo catch-all so a photo plus
+    // "should I get this?" / "is this worth it?" phrasing routes to
+    // Evaluate_prospective_purchase (an item only being considered),
+    // never catalogued as owned. Purchase confirmation ("I bought it")
+    // always wins over the generic should-i-get-this trigger below
+    // (checked first) — same relative order as before, just earlier.
+    if (/\b(i bought it|i got it|i bought that|bought it|i picked it up)\b/.test(text)) {
+      return { skill: "Evaluate_prospective_purchase", confidence: 88, reason: "purchase confirmation trigger" };
+    }
+    // Evaluate prospective purchase text-only trigger
+    if (/\b(should i get|is this worth|thinking.*buying|found this.*should)\b/.test(text)) {
+      return { skill: "Evaluate_prospective_purchase", confidence: 75, reason: "prospective purchase text trigger" };
+    }
     // Generic photo → catalogue_piece
     if (hasImage) {
       return { skill: "catalogue_piece", confidence: 94, reason: "photo shared without other trigger" };
@@ -72,15 +86,6 @@
     // Answer no data (fabric/price/vendor descoped)
     if (/\b(fabric|price|cost|how much|cheaper|discount|vendor|listing|material|what.*made of)\b/.test(text)) {
       return { skill: "answer_no_data", confidence: 87, reason: "descoped fabric/price/vendor question" };
-    }
-    // Purchase confirmation: an explicit "I bought it" always wins over
-    // the generic should-i-get-this trigger below (checked first).
-    if (/\b(i bought it|i got it|i bought that|bought it|i picked it up)\b/.test(text)) {
-      return { skill: "Evaluate_prospective_purchase", confidence: 88, reason: "purchase confirmation trigger" };
-    }
-    // Evaluate prospective purchase text-only trigger
-    if (/\b(should i get|is this worth|thinking.*buying|found this.*should)\b/.test(text)) {
-      return { skill: "Evaluate_prospective_purchase", confidence: 75, reason: "prospective purchase text trigger" };
     }
     // Off-topic: low-confidence fallback — return off_topic with modest confidence
     // so caller maps it, but route() will still treat <70 as clarification.

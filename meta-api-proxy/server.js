@@ -407,8 +407,10 @@ function createHandler(config) {
         var skillList = SKILL_NAMES.join(", ");
         var triggers = [
           "catalogue_piece: Photo(s) shared (image present, no other trigger — but FIRST check Recent turns: if the assistant just asked the user to share a photo, route to that skill instead)",
-          "propose_look: user wants a look suggested — e.g. \"show me a look\", \"what goes together\", \"style me\", \"outfit idea\", \"cook up a look\", \"make me a look\", \"find the bag\", \"can you find …\"",
+          "propose_look: user wants a look suggested — e.g. \"show me a look\", \"what goes together\", \"style me\", \"outfit idea\", \"cook up a look\", \"make me a look\", \"can you find …\"",
           "revise_look: user wants to change last look — e.g. \"no bag\", \"without blazer\", \"swap scarf\", \"drop the bag\"",
+          // Opus finding #13: "find the bag" lives under describe_wardrobe only
+          // (locating a wardrobe item), not under propose_look.
           "describe_wardrobe: user wants to see/list wardrobe — e.g. \"what do I have\", \"show my wardrobe\", \"find the bag\"",
           "explain_fit: user asks why look works — e.g. \"why does this work\", \"explain the fit\"",
           "answer_no_data: fabric/price/vendor question — e.g. \"what fabric\", \"how much does it cost\"",
