@@ -378,7 +378,7 @@ function createHandler(config) {
         var skillList = SKILL_NAMES.join(", ");
         var triggers = [
           "catalogue_piece: Photo(s) shared (image present, no other trigger)",
-          "propose_look: user wants a look suggested — e.g. \"show me a look\", \"what goes together\", \"style me\", \"outfit idea\", \"find the bag\", \"can you find …\"",
+          "propose_look: user wants a look suggested — e.g. \"show me a look\", \"what goes together\", \"style me\", \"outfit idea\", \"cook up a look\", \"make me a look\", \"find the bag\", \"can you find …\"",
           "revise_look: user wants to change last look — e.g. \"no bag\", \"without blazer\", \"swap scarf\", \"drop the bag\"",
           "describe_wardrobe: user wants to see/list wardrobe — e.g. \"what do I have\", \"show my wardrobe\", \"find the bag\"",
           "explain_fit: user asks why look works — e.g. \"why does this work\", \"explain the fit\"",

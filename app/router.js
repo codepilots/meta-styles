@@ -57,8 +57,8 @@
     if (/\b(no |without |drop |remove |lose |ditch |swap |skip ).*\b(bag|scarf|blazer|cardigan|dress|top|bottom|purse|coat|jacket|shrug)\b/.test(text)) {
       return { skill: "revise_look", confidence: 89, reason: "revise phrasing matched" };
     }
-    // Propose look
-    if (/\b(show me a look|propose.*look|what goes together|suggest.*look|put.*look together|style me|outfit idea|find.*bag|can you find)\b/.test(text)) {
+    // Propose look — include natural variants like "cook up a look", "make me a look", "create a look"
+    if (/\b(show me a look|propose.*look|what goes together|suggest.*look|put.*look together|style me|outfit idea|cook.*look|make.*look|create.*look|find.*bag|can you find)\b/.test(text)) {
       return { skill: "propose_look", confidence: 91, reason: "propose-look trigger" };
     }
     // Describe wardrobe
