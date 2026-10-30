@@ -122,10 +122,23 @@
         if (!handler) return { text: "I'm just here for your wardrobe — I can catalogue new pieces, put looks together, or tweak a look you didn't love. Here's a quick guide: https://codepilots.co.uk/secondbloom/guide.html — what would you like to try? \u2728", skill: "off_topic", decision: decision, toolCalls: wrapped.getCalls(), totalSteps: wrapped.getSteps() };
       }
 
+      // Server-side assembler for skills that validate looks (propose_look):
+      // resolved here so skills never depend on a browser global. Guarded
+      // for browser contexts where require is unavailable.
+      var assembler = null;
+      try {
+        if (root.MetaStyles && typeof root.MetaStyles.assembleLook === "function") {
+          assembler = root.MetaStyles.assembleLook;
+        } else if (typeof require !== "undefined") {
+          var asmMod = require("./assembler.js");
+          if (asmMod && typeof asmMod.assembleLook === "function") assembler = asmMod.assembleLook;
+        }
+      } catch (e) { assembler = null; }
+
       var result = await handler.handle({
         catalog: skillCatalog, text: message, imageDataUrl: imageDataUrl, imagePresent: hasImage,
         wardrobeSummary: wardrobeSummary, preferences: preferences, lastTurns: lastTurns,
-        metaClient: o.metaClient || null, sendClient: o.sendClient || null
+        metaClient: o.metaClient || null, sendClient: o.sendClient || null, assembler: assembler
       });
 
       var outText = (result && result.text) || "";

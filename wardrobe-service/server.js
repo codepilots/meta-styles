@@ -18,11 +18,15 @@
  * Reuses every §1.2 module via require (assembler, classifier, spark,
  * turn-loop, wardrobe-catalog, send-client, poll-scheduler, inbox-bridge
  * pure half, meta-client); app/preview.js and app/app.js are NOT reused
- * (browser-only) and server-side preview is deliberately not staged —
- * sends are text-only in BOTH modes because outbound-image staging is a
- * mock-only route with no live counterpart, and attaching images only in
- * mock mode would BE a forbidden mock/live fork (same stated reason as
- * the retired auto-reply wiring).
+ * (browser-only) and server-side preview delivery is deliberately not
+ * staged — sends are text-only in BOTH modes because outbound-image
+ * staging is a mock-only route with no live counterpart, and attaching
+ * images only in mock mode would BE a forbidden mock/live fork (same
+ * stated reason as the retired auto-reply wiring). Generation vs delivery
+ * are reported separately and honestly: live_paths.preview tracks whether
+ * the proxy generated a dataURL, status image_delivery plus each
+ * propose_look reply's meta.imageDelivery state that no preview is ever
+ * attached to a send.
  *
  * STORAGE RULE (non-negotiable): ALL catalog/wardrobe data lives in the
  * bot via the existing wardrobe-catalog PUT/GET contract (createCatalog
@@ -169,6 +173,44 @@ function createService(opts) {
 
   var Meta = metaClient(proxyBase);
 
+  // Observed meta-client: same interface, but each route/assemble/preview
+  // call updates livePaths from what actually happened — "live" when the
+  // proxy answered, "fallback" when it threw (callers then use labelled
+  // paths). Assemble may still be downgraded to "fallback" below when the
+  // skill rejects Spark's output as invalid. Preview "live" means a dataURL
+  // was generated; delivery still stays text-only (see livePaths comment).
+  var MetaObserved = null;
+  function observedMeta() {
+    if (MetaObserved) return MetaObserved;
+    if (!Meta) return null;
+    MetaObserved = Object.create(Meta);
+    [["route", "route"], ["assemble", "assemble"], ["preview", "preview"]].forEach(function (pair) {
+      var method = pair[0];
+      var path = pair[1];
+      if (typeof Meta[method] !== "function") return;
+      MetaObserved[method] = function () {
+        var args = arguments;
+        return Meta[method].apply(Meta, args).then(function (out) {
+          if (path === "preview") {
+            var durl = out && (out.dataURL || out.dataUrl || out.data_url);
+            livePaths.preview = (typeof durl === "string" && /^data:image\//.test(durl)) ? "live" : "fallback";
+          } else {
+            livePaths[path] = "live";
+          }
+          return out;
+        }, function (err) {
+          if (path === "preview") {
+            livePaths.preview = livePaths.preview === "live" ? "live" : "fallback";
+          } else {
+            livePaths[path] = livePaths[path] === "live" ? "live" : "fallback";
+          }
+          throw err;
+        });
+      };
+    });
+    return MetaObserved;
+  }
+
   var scheduler = Scheduler.createPollScheduler({});
   var users = new Map(); // userRef -> { catalog, loop, send, loaded }
   var handled = new Map(); // shareId -> terminal outcome string
@@ -179,7 +221,19 @@ function createService(opts) {
     polled: 0, processed: 0, sent: 0, skipped: 0,
     duplicates: 0, errors: 0, gave_up: 0,
   };
-  var livePaths = { classify: "unprobed", copy: "stub", preview: "not-staged" };
+  // Observed-call truth, one value each: "unprobed" (never attempted),
+  // "live" (proxy answered and the result was used), "fallback" (proxy
+  // failed or its output was rejected, labelled path used instead), or —
+  // for preview only — "not-staged" (never attempted; sends are text-only
+  // in BOTH modes because outbound-image staging has no live counterpart:
+  // the mock bot stages via POST /mock/stage-outbound-image, while the live
+  // bot needs a public nginx route plus a real Graph send token, neither of
+  // which is in place — so preview dataURLs are never attached to sends,
+  // and the handler reports that delivery truth per reply).
+  var livePaths = {
+    route: "unprobed", assemble: "unprobed", preview: "not-staged",
+    classify: "unprobed", copy: "stub",
+  };
   var cursor = null;
   var cursorEverSet = false;
   var startedAt = new Date(nowMs()).toISOString();
@@ -295,7 +349,7 @@ function createService(opts) {
         userRef: ctx.catalog.userKey,
         router: Router,
         summariser: Summariser,
-        metaClient: Meta,
+        metaClient: observedMeta(),
         sendClient: ctx.send,
         maxSteps: MAX_TOOL_STEPS,
         onToolCall: function (ev) {
@@ -317,6 +371,18 @@ function createService(opts) {
         var toolCalls = (result && result.toolCalls) || [];
         var totalSteps = (result && typeof result.totalSteps === "number") ? result.totalSteps : toolCalls.length;
         var skillName = (result && result.skill) || "unknown";
+        // Skill-reported source of truth: a propose_look whose Spark output
+        // validated stays "live"; a Spark fetch failure or a rejected
+        // candidate (bad IDs, repeats, fit-invalid) lands on the local
+        // fallback. Preview "live" (observed wrapper) means a dataURL was
+        // generated — delivery still stays text-only, reported per reply.
+        try {
+          var hr = result && result.handlerResult;
+          if (skillName === "propose_look" && hr && hr.meta) {
+            if (hr.meta.source === "spark") livePaths.assemble = "live";
+            else livePaths.assemble = livePaths.assemble === "live" ? "live" : "fallback";
+          }
+        } catch (e) { /* status must never break the turn */ }
         var entry = { shareId: shareId, skill: skillName, toolCalls: toolCalls, totalSteps: totalSteps, at: new Date(nowMs()).toISOString() };
         logAgentic(entry);
         ctx.lastAgenticDecision = skillName;
@@ -378,6 +444,15 @@ function createService(opts) {
       last_turn_text: lastTurnText,
       counts: Object.assign({}, counts),
       live_paths: Object.assign({}, livePaths),
+      // Delivery truth: sends are text-only (single writer, duplicate
+      // backstop intact). A generated preview dataURL is never attached to
+      // a send — per-reply handlerResult.meta.imageDelivery says whether
+      // generation was requested/generated/delivered and why not.
+      image_delivery: {
+        sends: "text-only",
+        preview_delivery: "not-staged",
+        note: "Preview images are generated via the proxy but never attached to sends in either mode.",
+      },
       activity: activity.slice(),
       last_error: lastError,
     };

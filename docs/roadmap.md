@@ -336,7 +336,7 @@ and a pass/fail Meta-model gate in front of it.
 
 ## Milestone 21 — Agentic wardrobe skills + router (MUSE SPARK)
 
-**Status: SPEC READY 2026-10-30 — next to build.** See `docs/milestone-21-agentic-skills-router.md` + vault `05` + `06` (skill cards).
+**Status: core loop built (router/skills/loop wired into wardrobe-service); propose_look server-side Spark choice + preview-delivery truth landed 2026-10-30.** See `docs/milestone-21-agentic-skills-router.md` + vault `05` + `06` (skill cards).
 
 11 bounded skills (catalogue → propose → revise → describe → explain → no-data → off-topic + Match_look, Complete_the_look, What_suits, Evaluate_prospective_purchase) behind a router (Muse Spark, confidence 0-100, <70 → clarification). Every reply is one skill invocation, logged. Base persona: cheery green witch, fairy-core whimsical. Per-user rolling 100t summary + 100t preferences via bot catalog API. IG-ready look cards (logo+handle on image, caption separate). Builds on M20's persistent service; synthesises cleanly with existing assembler/validator/SAM/Spark stack.
 

@@ -80,3 +80,23 @@ Detailed per-skill prompts: vault `06` — each card defines trigger, input (war
 
 - Hosted guide: single-page vs per-skill deep links? (Autumn leans per-skill, mobile-first — confirm URL structure on build.)
 - Should `Match_look` inspiration description be stored anywhere (e.g. in summary) or fully discarded?
+
+## Build note 2026-10-30 — propose_look server-side Spark choice
+
+- `app/skills/propose_look/handler.js` now calls `metaClient.assemble` with the
+  live catalog pieces (IDs + category only, no tokens/platform IDs), asks for
+  `{looks:[{pieceIds,rationale}]`, and validates before replying: known IDs,
+  no repeats, assembler fit rules + no duplicate category/piece, never all
+  pieces of a >4-piece wardrobe. Invalid Spark output / outage falls back to
+  a deterministic local assembler subset; empty or unpairable wardrobes get
+  honest text. Replies name only piece nouns plus the validated rationale.
+- Preview calls `metaClient.preview` only after a validated look and honours
+  the proxy's real `{dataURL}` shape. Sends stay text-only in both modes;
+  per-reply `meta.imageDelivery` + status `live_paths`/`image_delivery`
+  report generation vs delivery honestly (live bot image send genuinely
+  unavailable: no public nginx route, placeholder Graph token).
+- `wardrobe-service/server.js` tracks `live_paths: {route, assemble, preview,
+  classify, copy}` from observed calls; `app/agentic-loop.js` injects the
+  server-side assembler so skills never rely on a browser global.
+- Tests: `app/test/propose-look-spark.test.js`,
+  `wardrobe-service/test/look-choice-status.test.js` (all synthetic).
