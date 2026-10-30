@@ -107,6 +107,10 @@
     return post("/api/classify", { image: imageDataUrl, labelHint: labelHint || "" }, 60000);
   }
 
+  function palette(imageDataUrl) {
+    return post("/api/palette", { image: imageDataUrl }, 60000);
+  }
+
   function copy(lookCard) {
     var key = "copy:" + cardSignature(lookCard);
     var body = {
@@ -156,6 +160,7 @@
     PROXY_BASE: PROXY_BASE,
     joinBase: joinBase,
     health: health, segment: segment, classify: classify,
+    palette: palette,
     copy: copy, assemble: assemble, preview: preview,
     route: route,
     cardSignature: cardSignature,

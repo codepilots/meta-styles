@@ -10,6 +10,7 @@
  *   GET  /health          -> { ok, keyPresent, models }
  *   POST /api/segment     { image, phrases? }        -> SAM 3.1 polygons
  *   POST /api/classify    { image, labelHint? }      -> Spark vision category
+ *   POST /api/palette     { image }                    -> Spark vision colour advice
  *   POST /api/copy        { pieces, finish, fitNote } -> Spark look copy (JSON)
  *   POST /api/assemble    { pieces }                 -> Spark look proposals
  *   POST /api/preview     { prompt, image? }         -> Muse Image data URL
@@ -295,6 +296,34 @@ function createHandler(config) {
           category,
           method: "spark-vision",
           confidence: typeof parsed.confidence === "number" ? parsed.confidence : null,
+          placeholder: false, source: SPARK_MODEL,
+        }, corsOrigin);
+        return;
+      }
+
+      if (url.pathname === "/api/palette") {
+        const image = payload.image;
+        if (typeof image !== "string" || !image.startsWith("data:image/")) {
+          sendJson(res, 400, { error: "image_data_url_required" }, corsOrigin); return;
+        }
+        const { parsed } = await sparkJson(
+          "You suggest colours that suit the person in this photo for a tall/curvy Y2K x fairycore styling app. " +
+          "Look at what is actually visible (skin tone, hair colour, existing clothing colours in frame) and " +
+          'reply with JSON only: {"palette":["colour1","colour2","colour3"],"note":"..."}. ' +
+          "Palette: 2-4 short colour/tone words (not hex codes). Note: one short sentence of genuine " +
+          "reasoning tied to what is visible. Never invent facts not visible in the photo.",
+          [{ type: "input_image", image_url: image }],
+          hashKey(image.slice(0, 4096) + "|palette|" + image.length)
+        );
+        const palette = parsed && Array.isArray(parsed.palette)
+          ? parsed.palette.filter((w) => typeof w === "string" && w.trim()).slice(0, 4)
+          : [];
+        const note = parsed && typeof parsed.note === "string" ? parsed.note.trim() : "";
+        if (palette.length < 2 || !note) { sendJson(res, 502, { error: "unparseable_palette", raw: parsed }, corsOrigin); return; }
+        sendJson(res, 200, {
+          palette,
+          note,
+          method: "spark-vision",
           placeholder: false, source: SPARK_MODEL,
         }, corsOrigin);
         return;
