@@ -89,6 +89,26 @@ const HOP_BY_HOP = new Set([
   "upgrade",
 ]);
 
+// The real bot deliberately hides its local-only API (returns a bare 404)
+// from any request carrying a proxy-indicator header -- see igwebhook's
+// PROXY_HEADERS check (CF-Ray, CF-Connecting-IP, CDN-Loop, X-Forwarded-For,
+// Forwarded). That check exists to keep this API off any public route, and
+// `tailscale serve` adds exactly these headers when it relays the browser's
+// request to this process. This process IS the trusted final hop talking
+// to the bot over loopback as a genuine direct local client, so it must
+// strip them here rather than relay them onward -- otherwise every /ig/*
+// call made through the Tailscale origin gets hidden-404'd by the bot's own
+// defense, even though this request is legitimate and same-host.
+const PROXY_INDICATOR_HEADERS = new Set([
+  "cf-ray",
+  "cf-connecting-ip",
+  "cdn-loop",
+  "x-forwarded-for",
+  "x-forwarded-host",
+  "x-forwarded-proto",
+  "forwarded",
+]);
+
 function sendJson(res, status, obj) {
   const body = JSON.stringify(obj);
   res.writeHead(status, {
@@ -168,7 +188,7 @@ function proxyTo(target, upstreamPath, label, req, res) {
   const headers = {};
   for (const key of Object.keys(req.headers)) {
     const lower = key.toLowerCase();
-    if (lower === "host" || HOP_BY_HOP.has(lower)) continue;
+    if (lower === "host" || HOP_BY_HOP.has(lower) || PROXY_INDICATOR_HEADERS.has(lower)) continue;
     headers[lower] = req.headers[key];
   }
   const up = mod.request(
