@@ -135,10 +135,14 @@
         }
       } catch (e) { assembler = null; }
 
+      // shareId + stageImage pass straight through to skills that can use
+      // them (propose_look stages its preview for an image send); skills
+      // that ignore unknown opts are unaffected.
       var result = await handler.handle({
         catalog: skillCatalog, text: message, imageDataUrl: imageDataUrl, imagePresent: hasImage,
         wardrobeSummary: wardrobeSummary, preferences: preferences, lastTurns: lastTurns,
-        metaClient: o.metaClient || null, sendClient: o.sendClient || null, assembler: assembler
+        metaClient: o.metaClient || null, sendClient: o.sendClient || null, assembler: assembler,
+        shareId: inp.shareId || null, stageImage: o.stageImage || null
       });
 
       var outText = (result && result.text) || "";

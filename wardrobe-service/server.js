@@ -18,15 +18,17 @@
  * Reuses every §1.2 module via require (assembler, classifier, spark,
  * turn-loop, wardrobe-catalog, send-client, poll-scheduler, inbox-bridge
  * pure half, meta-client); app/preview.js and app/app.js are NOT reused
- * (browser-only) and server-side preview delivery is deliberately not
- * staged — sends are text-only in BOTH modes because outbound-image
- * staging is a mock-only route with no live counterpart, and attaching
- * images only in mock mode would BE a forbidden mock/live fork (same
- * stated reason as the retired auto-reply wiring). Generation vs delivery
- * are reported separately and honestly: live_paths.preview tracks whether
- * the proxy generated a dataURL, status image_delivery plus each
- * propose_look reply's meta.imageDelivery state that no preview is ever
- * attached to a send.
+ * (browser-only). Preview delivery follows each mode's real capability,
+ * declared openly rather than forked silently: mock mode stages the
+ * generated dataURL via POST /mock/stage-outbound-image and attaches it
+ * to the send (image:true); live mode stays text-only because the real
+ * bot has no staging route (its image:true path needs the file pre-placed
+ * on the bot host, which no client route provides) and its Graph send
+ * credential is still a placeholder. Generation vs delivery are reported
+ * separately and honestly: live_paths.preview tracks whether the proxy
+ * generated a dataURL, counts.images_delivered tracks bot-confirmed
+ * image_message_ids, and each propose_look reply's meta.imageDelivery
+ * states requested/generated/delivered and why not.
  *
  * STORAGE RULE (non-negotiable): ALL catalog/wardrobe data lives in the
  * bot via the existing wardrobe-catalog PUT/GET contract (createCatalog
@@ -37,22 +39,25 @@
  * handled-set, per-share attempt counts, cached per-user contexts, and
  * the status ring. Restart recovery is enforced by the BOT, not by local
  * state: (a) photo shares already catalogued match source_share_id and
- * are skipped without re-sending; (b) any re-attempted send carries
- * byte-identical deterministic text (stub copy — see below), so the
- * bot's own duplicate_send rule (same share + same text + fresh key ->
- * 409) refuses the second send. The dedicated duplicate-send regression
- * test proves exactly one outbound send per share across restarts and
- * concurrent pollers.
+ * are skipped without re-sending; (b) every send reuses a stable
+ * per-share idempotency key (wardrobe-send-v1:<share_id> — derived, never
+ * stored), so any re-attempt replays the bot's stored result or 409s
+ * instead of sending a second time. The dedicated duplicate-send
+ * regression test proves exactly one outbound send per share across
+ * restarts and concurrent pollers.
  *
- * Deterministic-copy note: turn-loop's o.copy slot is synchronous, so a
- * live LLM copy cannot be injected without reimplementing the loop — and
- * reimplementing is exactly what §1.2 forbids. The service therefore uses
- * the same labelled stub copy the judged path uses. That is also what
- * makes the duplicate_send backstop airtight: regeneration is
- * byte-identical, so a reprocessed share deterministically 409s instead
- * of sending a second, differently-worded reply. A live (nondeterministic)
- * copy would defeat the backstop. Classify IS live-via-proxy with the
- * labelled heuristic fallback (async-friendly, proven path).
+ * Restart-safety note: Spark copy is nondeterministic per call, so
+ * byte-identical regeneration across restarts is impossible — safety
+ * instead rests on the stable per-share idempotency key above (the send
+ * spec's own retry rule: never retry a send with a new key). Same key +
+ * same text replays the bot's stored result; same key + different text
+ * 409s idempotency_key_reused; the bot's duplicate_send rule still catches
+ * same-text replays from any other writer. Every outcome is terminal and
+ * none is a second real send — with zero new local store (the key is
+ * derived from the share id, not persisted) and no change to the catalog
+ * PUT/GET contract. The local-fallback copy path stays deterministic;
+ * classify IS live-via-proxy with the labelled heuristic fallback
+ * (async-friendly, proven path).
  *
  * Cursor rule (uniform for the mock's numeric paging and the real bot's
  * opaque next_cursor, which is only ever echoed, never interpreted): the
@@ -219,17 +224,16 @@ function createService(opts) {
   var activity = [];
   var counts = {
     polled: 0, processed: 0, sent: 0, skipped: 0,
-    duplicates: 0, errors: 0, gave_up: 0,
+    duplicates: 0, errors: 0, gave_up: 0, images_delivered: 0,
   };
   // Observed-call truth, one value each: "unprobed" (never attempted),
   // "live" (proxy answered and the result was used), "fallback" (proxy
   // failed or its output was rejected, labelled path used instead), or —
-  // for preview only — "not-staged" (never attempted; sends are text-only
-  // in BOTH modes because outbound-image staging has no live counterpart:
-  // the mock bot stages via POST /mock/stage-outbound-image, while the live
-  // bot needs a public nginx route plus a real Graph send token, neither of
-  // which is in place — so preview dataURLs are never attached to sends,
-  // and the handler reports that delivery truth per reply).
+  // for preview only — "not-staged" (never attempted; mock mode then
+  // stages and attaches via POST /mock/stage-outbound-image, while live
+  // mode stays text-only — the real bot has no staging route and its Graph
+  // send credential is still a placeholder — and the handler reports that
+  // delivery truth per reply).
   var livePaths = {
     route: "unprobed", assemble: "unprobed", preview: "not-staged",
     classify: "unprobed", copy: "stub",
@@ -344,6 +348,14 @@ function createService(opts) {
     }
 
     return imagePromise.then(function () {
+      // Image staging is mock-mode only: the mock bot stages preview bytes
+      // via POST /mock/stage-outbound-image, while the real bot has no
+      // staging route (its image:true path needs the file pre-placed on the
+      // bot host). Live mode therefore gets no stageImage and stays
+      // honestly text-only; the skill keeps its caveat there.
+      var stageImage = mode === "mock" ? function (sid, dataURL) {
+        return ctx.send.stageOutboundImage(sid, dataURL);
+      } : null;
       var loop = AgenticLoop.createAgenticLoop({
         catalog: ctx.catalog,
         userRef: ctx.catalog.userKey,
@@ -351,6 +363,7 @@ function createService(opts) {
         summariser: Summariser,
         metaClient: observedMeta(),
         sendClient: ctx.send,
+        stageImage: stageImage,
         maxSteps: MAX_TOOL_STEPS,
         onToolCall: function (ev) {
           // Per-tool-call logging for analysis (step count tracked by agentic-loop)
@@ -361,6 +374,7 @@ function createService(opts) {
         message: message,
         hasImage: hasImage,
         imageDataUrl: imageDataUrl,
+        shareId: shareId,
         wardrobeSummary: wardrobeSummary,
         preferences: preferences,
         lastTurns: lastTurns,
@@ -444,14 +458,22 @@ function createService(opts) {
       last_turn_text: lastTurnText,
       counts: Object.assign({}, counts),
       live_paths: Object.assign({}, livePaths),
-      // Delivery truth: sends are text-only (single writer, duplicate
-      // backstop intact). A generated preview dataURL is never attached to
-      // a send — per-reply handlerResult.meta.imageDelivery says whether
-      // generation was requested/generated/delivered and why not.
-      image_delivery: {
+      // Delivery truth, per mode capability. Mock mode stages the
+      // generated preview via POST /mock/stage-outbound-image and attaches
+      // it (image:true); live mode stays text-only because the real bot has
+      // no staging route and its Graph send credential is still a
+      // placeholder. preview_delivery flips to "staged" once the bot
+      // confirms an image_message_id. Per-reply
+      // handlerResult.meta.imageDelivery says requested/generated/delivered
+      // and why not.
+      image_delivery: mode === "mock" ? {
+        sends: "text+image",
+        preview_delivery: counts.images_delivered > 0 ? "staged" : "not-staged",
+        note: "Mock mode stages the generated preview and sends it with the reply (image:true).",
+      } : {
         sends: "text-only",
         preview_delivery: "not-staged",
-        note: "Preview images are generated via the proxy but never attached to sends in either mode.",
+        note: "Live mode stays text-only: the real bot has no staging route for the image file, and its Graph send is not yet credentialed.",
       },
       activity: activity.slice(),
       last_error: lastError,
@@ -592,10 +614,33 @@ function createService(opts) {
     return Promise.resolve("retry");
   }
 
-  function sendComposed(ctx, shareId, text) {
-    return ctx.send.sendTurn({ shareId: shareId, text: text }).then(function (result) {
+  // Restart-safe send key: derived deterministically from the share id, so
+  // every attempt for the SAME share — same process or after a restart —
+  // reuses the SAME idempotency key (the send spec's own retry rule: never
+  // retry a send with a new key). The bot then replays the stored result
+  // (same text) or 409s idempotency_key_reused (different text) — either
+  // way terminal, never a second real send. No key is stored anywhere; the
+  // mapping is pure derivation, so there is nothing to lose on restart and
+  // nothing outside the existing catalog PUT/GET contract.
+  function sendKeyForShare(shareId) {
+    return "wardrobe-send-v1:" + String(shareId);
+  }
+
+  function sendComposed(ctx, shareId, text, opts) {
+    var withImage = !!(opts && opts.withImage);
+    return ctx.send.sendTurn({
+      shareId: shareId, text: text,
+      key: sendKeyForShare(shareId), withImage: withImage,
+    }).then(function (result) {
       if (result && result.ok) {
-        say("Sent a reply.");
+        // image_message_id is the bot's own proof an image went out with
+        // the text — counted only when the bot says so, never on stage alone.
+        if (result.body && result.body.image_message_id) {
+          counts.images_delivered += 1;
+          say("Sent a reply with a preview picture.");
+        } else {
+          say("Sent a reply.");
+        }
         return saveBestEffort(ctx).then(function () {
           lastTurnText = shortText(text, 280);
           return noteTerminal(shareId, "sent", true, true);
@@ -613,6 +658,15 @@ function createService(opts) {
         return saveBestEffort(ctx).then(function () {
           return noteTerminal(shareId, "duplicate", true, false);
         });
+      }
+      if (result && result.status === 400 && withImage &&
+        result.error === "image_not_staged") {
+        // The staged preview bytes went missing (e.g. the bot restarted
+        // between staging and sending — the mock stage store is in-memory).
+        // The text never went out either, so this is retryable: the next
+        // attempt re-stages and re-sends under the SAME idempotency key.
+        say("The preview picture didn't stage — will try again on the next check.");
+        return noteRetry(shareId);
       }
       if (result && result.status === 422) {
         say("Reply window expired, didn't send a reply.");
@@ -635,7 +689,7 @@ function createService(opts) {
 
   // M21 agentic path: single entry for both text and photo shares.
   // Router picks skill; skill executes (20-step cap, logged); summariser
-  // persists; deterministic reply → duplicate_send backstop intact.
+  // persists; stable per-share idempotency key → bot-side backstop intact.
   function processAgenticShare(ctx, item, id) {
     return runAgenticTurn(ctx, item, id).then(function (agentic) {
       var result = agentic.result;
@@ -668,7 +722,17 @@ function createService(opts) {
         say("Replied to your message.");
       }
 
-      return sendComposed(ctx, id, text).then(function (outcome) {
+      // Image send only when the skill genuinely staged the preview
+      // (delivered:true means the stage call succeeded); otherwise the
+      // reply already carries the honest text-only caveat and goes plain.
+      // The skill's output lives under handlerResult — the agentic wrapper
+      // itself carries no meta.
+      var hr = result && result.handlerResult ? result.handlerResult : result;
+      var withImage = !!(hr && hr.image &&
+        typeof hr.image.dataURL === "string" &&
+        hr.meta && hr.meta.imageDelivery &&
+        hr.meta.imageDelivery.delivered === true);
+      return sendComposed(ctx, id, text, { withImage: withImage }).then(function (outcome) {
         // Media ack ONLY after bytes were in hand and catalogued — preserve
         // inbox-bridge rule; best-effort, never blocking the outcome.
         if (item.media_id) acknowledgeMedia(item.media_id);

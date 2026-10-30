@@ -76,7 +76,8 @@ async function run() {
     assert.strictEqual(before.live_paths.route, "unprobed", "route starts unprobed");
     assert.strictEqual(before.live_paths.assemble, "unprobed", "assemble starts unprobed");
     assert.strictEqual(before.live_paths.preview, "not-staged", "preview starts not-staged");
-    assert.strictEqual(before.image_delivery.sends, "text-only", "sends declared text-only");
+    assert.strictEqual(before.image_delivery.sends, "text+image",
+      "mock mode declares staged image sends (live mode stays text-only)");
 
     const now = new Date().toISOString();
     const item = {

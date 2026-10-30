@@ -13,9 +13,11 @@
  *  4. Spark failure / invalid output / no valid look -> deterministic local
  *     assembler fallback, and honest text when nothing validates.
  *  5. Preview (metaClient.preview) only after a validated look; honours the
- *     proxy's actual return shape ({dataURL}, not url). Sends stay text-only
- *     server-side, so an undelivered preview is reported truthfully in
- *     result.meta.imageDelivery — never an example.invalid URL in reply text.
+ *     proxy's actual return shape ({dataURL}, not url). When the service
+ *     passes shareId + stageImage (mock mode only), the dataURL is staged
+ *     for a real send-with-image and delivered flips true with no caveat;
+ *     otherwise sends stay text-only and result.meta.imageDelivery reports
+ *     that truthfully — never an example.invalid URL in reply text.
  */
 (function (root) {
 
@@ -235,6 +237,13 @@
     var catalog = o.catalog;
     var metaClient = o.metaClient || null;
     var assembleLook = getAssembleLook(o);
+    // Image delivery: the service passes its share id plus a staging
+    // function (mock mode only — the real bot has no staging route). When
+    // both are present and staging succeeds, the preview is genuinely
+    // queued for an image send and no caveat is appended. Otherwise the
+    // honest "can't send pictures yet" caveat stays.
+    var shareId = typeof o.shareId === "string" && o.shareId ? o.shareId : null;
+    var stageImage = typeof o.stageImage === "function" ? o.stageImage : null;
     var toolSteps = 0;
 
     var active = [];
@@ -350,8 +359,24 @@
         var durl = pr && (pr.dataURL || pr.dataUrl || pr.data_url);
         if (typeof durl === "string" && /^data:image\//.test(durl)) {
           imageDelivery.generated = true;
-          imageDelivery.reason = "text-only send; preview not staged for delivery";
           image = { dataURL: durl, caption: nouns + " \u2014 styled with love" };
+          if (shareId && stageImage) {
+            toolSteps += 1;
+            var staged = null;
+            try {
+              staged = await stageImage(shareId, durl);
+            } catch (e) {
+              staged = null;
+            }
+            if (staged && staged.ok) {
+              imageDelivery.delivered = true;
+              imageDelivery.reason = "staged for send with image";
+            } else {
+              imageDelivery.reason = "stage_failed";
+            }
+          } else {
+            imageDelivery.reason = "text-only send; preview not staged for delivery";
+          }
         } else {
           imageDelivery.reason = "preview_unparseable";
         }

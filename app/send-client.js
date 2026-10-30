@@ -150,11 +150,11 @@
       });
     }
 
-    // One assistant turn -> one POST /ig/send with a fresh key (unless
-    // opts.key is given, which is the explicit replay path). Always
-    // confirm:true. HTTP error statuses resolve (surfaced), they never
-    // reject; only a network failure resolves as status 0
-    // `bot_unreachable` with the turn kept as lastTurn (unsent draft).
+    // One assistant turn -> one POST /ig/send with opts.key when given
+    // (the service passes a stable per-share key so retries reuse it), else
+    // a fresh random key. Always confirm:true. HTTP error statuses resolve
+    // (surfaced), they never reject; only a network failure resolves as
+    // status 0 `bot_unreachable` with the turn kept as lastTurn (unsent draft).
     function sendTurn(turn) {
       var t = turn || {};
       var key = typeof t.key === "string" && t.key ? t.key : newKey();
@@ -196,11 +196,69 @@
       return lastTurn ? lastTurn.key : null;
     }
 
+    // Stage preview bytes for an image send: POSTs the raw bytes to the
+    // mock bot's operator route /mock/stage-outbound-image/<share_id>, so a
+    // later sendTurn with withImage:true can attach them. MOCK-ONLY: the
+    // real bot has no staging route (its image:true path needs the file
+    // pre-placed on the bot host, which no client route provides), so
+    // against a live base this 404s and resolves {ok:false} — the caller
+    // then falls back to an honest text-only send, never a fake claim.
+    // Accepts a data: URL string; decodes base64 without assuming Node
+    // (Buffer when present, atob otherwise). Never throws for transport
+    // outcomes; only a network failure resolves bot_unreachable.
+    function stageOutboundImage(shareId, dataURL) {
+      function fail(error) {
+        return { ok: false, status: 0, body: {}, error: error, staged: false };
+      }
+      var m = /^data:([^;,]+)?(;base64)?,(.*)$/.exec(String(dataURL || ""));
+      if (!m) return root.Promise ? root.Promise.resolve(fail("bad_data_url")) : null;
+      var contentType = m[1] || "application/octet-stream";
+      var bytes = null;
+      try {
+        if (typeof Buffer !== "undefined") {
+          bytes = Buffer.from(m[3], "base64");
+        } else if (typeof atob === "function") {
+          var bin = atob(m[3]);
+          var arr = new Uint8Array(bin.length);
+          for (var i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
+          bytes = arr;
+        } else {
+          return root.Promise ? root.Promise.resolve(fail("no_decoder")) : null;
+        }
+      } catch (err) {
+        return root.Promise ? root.Promise.resolve(fail("bad_data_url")) : null;
+      }
+      if (!bytes || bytes.length === 0) {
+        return root.Promise ? root.Promise.resolve(fail("empty_image")) : null;
+      }
+      var url = joinBase(base, "/mock/stage-outbound-image/" + encodeURIComponent(String(shareId)));
+      return root.fetch(url, {
+        method: "POST",
+        headers: {
+          "Content-Type": contentType,
+          Authorization: "Bearer " + token,
+        },
+        body: bytes,
+      }).then(function (res) {
+        return res.json().catch(function () { return {}; }).then(function (body) {
+          var ok = res.status === 200 && body && body.share_id === String(shareId);
+          return {
+            ok: ok, status: res.status, body: body || {},
+            error: ok ? null : ((body && body.error) || ("http_" + res.status)),
+            staged: ok,
+          };
+        });
+      }, function () {
+        return { ok: false, status: 0, body: {}, error: "bot_unreachable", staged: false };
+      });
+    }
+
     return {
       base: base,
       sendTurn: sendTurn,
       replayLast: replayLast,
       lastKey: lastKey,
+      stageOutboundImage: stageOutboundImage,
       describeForThread: describeForThread,
     };
   }
