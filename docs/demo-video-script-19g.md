@@ -47,9 +47,13 @@ via the chat page; it lands as an inbound bubble.
 > suggestion, not a dead end: share a layer next, and I'll style the
 > complete look."
 
-What the judge sees: inbound photo bubble → outgoing bubble leading with
-what was catalogued, the proposal, and the validator's `reasons[]`
-("needs one finish") — the propose → validate turn of the agentic loop.
+What the judge sees: inbound photo bubble → outgoing bubble leading
+with what was catalogued, then the honest gap in plain words (a base
+alone is not framed as a look — the reply states the exact missing
+finish rule: one layer, or a scarf plus a bag), ending on the yes/no
+"put a look together?" closer. Observable contract, not verbatim
+wording: catalogue ack + "isn't a full look yet" + the finish rule +
+the closer. No piece ids, no validator codes on screen.
 
 ## Beat 3 — photo 2 → cross-piece mix citing BOTH (1:25–2:25, ~130 words)
 
@@ -59,14 +63,23 @@ pieces from both shares.
 > "Photo two: a cardigan. Now the recall beat — the app doesn't just
 > style the new photo. It reaches back across the wardrobe and proposes
 > one look combining the dress from photo one with the cardigan from
-> photo two — both sources cited in the thread. The fit-rule engine
-> re-validates: base plus exactly one layer. Valid full look, check mark.
-> That cross-photo mix is the whole demo: the wardrobe persists, the
-> reasoning compounds, every proposal passes the same unchanged rules."
+> photo two — both garments named in the thread. The fit-rule engine
+> re-validates through the same propose-look stack: base plus exactly
+> one layer. Valid full look, check mark. That cross-photo mix is the
+> whole demo: the wardrobe persists, the reasoning compounds, every
+> proposal passes the same unchanged rules."
 
-What the judge sees: the reply names both piece ids and both source
-shares (`turn-loop.js` `proposeLooks` ranks valid cards first, then
-widest cross-share span — deterministic, no invented data).
+What the judge sees: the reply opens with the photo-two catalogue ack,
+then the look itself — both garment nouns ("dress + cardigan
+together"), the styling rationale, and a visible "Fit check: valid"
+line naming the finish. If Spark's first pick failed validation, one
+short rejection line says so in plain words and the shown look is the
+wardrobe-rules fallback. Observable contract, not verbatim wording and
+never raw ids: catalogue ack + combined garment names + fit-check
+sentence + "tweak anything?" closer. (Current path: the M21 agentic
+loop — `catalogue_piece` runs the existing `propose_look` →
+strictShape/assembleLook validation stack in the same turn. The old
+`turn-loop.js` photo path is retired and is not on screen.)
 
 ## Beat 4 — ends on one purchase suggestion (2:25–3:00, ~80 words)
 

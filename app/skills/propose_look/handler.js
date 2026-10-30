@@ -378,7 +378,23 @@
     var nouns = chosen.items.map(function (it) { return plainNoun(it.category); }).join(" + ");
     var rationale = chosenRationale || localRationale(chosen.items, chosen.card);
     var reply = "Oh, here\u2019s a little spell for you, darling \u2728 How about your " + nouns +
-      " together? " + rationale + " Want me to tweak anything?";
+      " together? " + rationale;
+    // The fit-rule verdict is user-visible, not hidden in validator logs:
+    // the combination above passed strictShape + assembleLook as one finish.
+    var lookFinish = finishOf(chosen.items, chosen.card);
+    reply += " Fit check: valid \u2714 \u2014 " +
+      (lookFinish === "scarf+bag" ? "a base finished with a scarf plus a bag." : "a base plus exactly one layer.");
+    // When Spark's candidates were rejected and the local fallback wove
+    // this look instead, say so in one short truthful line (plain words,
+    // never IDs or stack traces) — not only in console.log. The full
+    // machine reasons[] still travel on the recorded turn below.
+    if (source === "fallback" && rejectedReason &&
+        rejectedReason.indexOf("spark_rejected:") === 0) {
+      var rejCode = rejectedReason.slice("spark_rejected:".length);
+      reply += " Spark\u2019s first idea didn\u2019t pass the fit check (" +
+        plainWhy(rejCode) + "), so this one is woven straight from the wardrobe rules. \u2728";
+    }
+    reply += " Want me to tweak anything?";
 
     // 5. Preview only after a validated look; honour the real return shape.
     // Photo-reference (M21 photo-reference work, option b): pass the single

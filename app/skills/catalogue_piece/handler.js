@@ -79,6 +79,28 @@
     }catch(e){ return null; }
   }
 
+  // Same-turn proposal (two-photo wardrobe arc): after a piece is
+  // catalogued, run the existing propose_look selection/validation stack
+  // (Spark -> strictShape/assembleLook -> deterministic fallback) in the
+  // same turn instead of ending on a classifier-only acknowledgement.
+  // Reuses propose_look's handle() directly so the fit rules live in
+  // exactly one place — never a second fit engine. Resolves the
+  // propose_look result, or null on any failure (fail-soft: the caller
+  // then falls back to the honest gap reply, never a broken turn).
+  async function trySameTurnProposal(o){
+    try{
+      var mod=null;
+      try{ if(typeof require!=="undefined") mod=require("../propose_look/handler.js"); }catch(e){ mod=null; }
+      if((!mod||typeof mod.handle!=="function")&&root.MetaStyles&&root.MetaStyles.skills) mod=root.MetaStyles.skills["propose_look"];
+      if(!mod||typeof mod.handle!=="function") return null;
+      return await mod.handle({
+        catalog:o.catalog, text:o.text||"", imageDataUrl:null,
+        metaClient:o.metaClient||null, assembler:o.assembler||null,
+        shareId:o.shareId||null, stageImage:o.stageImage||null
+      });
+    }catch(e){ return null; }
+  }
+
   async function handle(opts){
     var o=opts||{}, catalog=o.catalog, text=o.text||"", imageDataUrl=o.imageDataUrl||null;
     var pieces=[];
@@ -107,10 +129,33 @@
       }
     }
     var noun=pieces.length? plainNoun(pieces[0].category):"piece";
-    var replyText=pieces.length? "Got your "+noun+" \u2014 noted, loveling! \u2728 It's tucked safely in your wardrobe. Want me to put a look together from what you've got?"
-      : "Oh loveling, I couldn't get that piece tucked into your wardrobe just now \u2728 Mind resending the photo and I'll give it another go? Want me to put a look together from what you've got?";
-    recordLookExpectation(catalog, replyText);
-    return { text:replyText, image:null, persist:{ summaryDelta:"Catalogued "+noun+".", preferencesDelta:"" }, skill:"catalogue_piece" };
+    if(!pieces.length){
+      var failText="Oh loveling, I couldn't get that piece tucked into your wardrobe just now \u2728 Mind resending the photo and I'll give it another go? Want me to put a look together from what you've got?";
+      recordLookExpectation(catalog, failText);
+      return { text:failText, image:null, persist:{ summaryDelta:"Catalogued "+noun+".", preferencesDelta:"" }, skill:"catalogue_piece" };
+    }
+    // A newly catalogued piece may complete a full look: run the
+    // propose_look stack in this same turn.
+    var lookRes=await trySameTurnProposal(o);
+    if(lookRes&&lookRes.meta&&typeof lookRes.meta.selectedCount==="number"&&lookRes.meta.selectedCount>0&&typeof lookRes.text==="string"&&lookRes.text){
+      // Valid look produced — the reply names the cross-piece combination
+      // and the fit-rule result (propose_look's own text). propose_look
+      // already recorded its revise_look yes/no expectation, so this path
+      // records NO further expectation (a second one would be a duplicate
+      // pointing at propose_look after the look already exists).
+      var lookText="Got your "+noun+" \u2014 noted, loveling! \u2728 It's tucked safely in your wardrobe. "+lookRes.text;
+      var lookPersist="Catalogued "+noun+". "+((lookRes.persist&&lookRes.persist.summaryDelta)||"Proposed a look.");
+      return { text:lookText, image:lookRes.image||null,
+        persist:{ summaryDelta:lookPersist, preferencesDelta:"" }, skill:"catalogue_piece",
+        meta:{ source:(lookRes.meta&&lookRes.meta.source)||"fallback", selectedCount:lookRes.meta.selectedCount,
+          rejectedReason:(lookRes.meta&&lookRes.meta.rejectedReason)||null,
+          imageDelivery:(lookRes.meta&&lookRes.meta.imageDelivery)||{ requested:false, generated:false, delivered:false, reason:"no_same_turn_look_image" } } };
+    }
+    // No valid look yet: honest gap, never framed as a complete look.
+    // The missing-finish rule is exact: one layer, or a scarf plus a bag.
+    var gapText="Got your "+noun+" \u2014 noted, loveling! \u2728 It's tucked safely in your wardrobe. A "+noun+" alone isn't a full look yet \u2014 it needs exactly one finish: one layer, or a scarf plus a bag. Share one of those next and I'll style the complete look. Want me to put a look together from what you've got?";
+    recordLookExpectation(catalog, gapText);
+    return { text:gapText, image:null, persist:{ summaryDelta:"Catalogued "+noun+".", preferencesDelta:"" }, skill:"catalogue_piece" };
   }
 
   var api = { handle: handle, skill: "catalogue_piece" };
