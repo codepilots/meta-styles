@@ -88,6 +88,7 @@
     var hasLayerFinish = layers.length === 1;
     var hasScarfBagFinish = scarves.length >= 1 && bags.length >= 1;
     if (hasLayerFinish && hasScarfBagFinish) return "two_finishes";
+    if (hasLayerFinish && (scarves.length >= 1 || bags.length >= 1)) return "stray_accessory_with_layer";
     if (!hasLayerFinish && !hasScarfBagFinish) {
       if (scarves.length >= 1 || bags.length >= 1) return "incomplete_finish";
       return "missing_finish";
@@ -209,6 +210,7 @@
       dress_plus_separates: "a dress already counts as the whole base, so it won't share with separates",
       two_layers: "layers never stack — just one at a time",
       two_finishes: "a look takes exactly one finish, not a layer plus scarf-and-bag",
+      stray_accessory_with_layer: "a layer look takes no scarf or bag — drop the stray piece or pair up",
       incomplete_finish: "a scarf needs its bag partner and vice versa",
       missing_finish: "there's no finish yet — one layer, or a scarf plus bag",
       all_pieces: "using every single piece at once would stack finishes",

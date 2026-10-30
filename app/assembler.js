@@ -86,7 +86,11 @@
     if (hasLayerFinish && hasScarfBagFinish) {
       reasons.push("Two finishes at once (layer plus scarf + bag): pick exactly one finish.");
     } else if (hasLayerFinish) {
-      finish = "layer";
+      if (scarves.length >= 1 || bags.length >= 1) {
+        reasons.push("Stray accessory with a layer finish (layer plus a lone scarf and/or bag): a layer look takes no scarf or bag — drop the stray piece, or drop the layer and pair the scarf with its bag.");
+      } else {
+        finish = "layer";
+      }
     } else if (hasScarfBagFinish) {
       finish = "scarf+bag";
     } else if (scarves.length >= 1 || bags.length >= 1) {
