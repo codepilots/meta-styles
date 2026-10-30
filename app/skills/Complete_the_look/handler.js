@@ -49,7 +49,7 @@
       }catch(e){ imageDelivery.reason="preview_failed"; }
     }
     if(imageDelivery.requested&&!imageDelivery.delivered) reply+=CAVEAT;
-    return { text: reply, image:img, persist:{ summaryDelta:"Suggested gap piece: "+gap+".", preferencesDelta:"" }, skill:"Complete_the_look", imageDelivery: imageDelivery };
+    return { text: reply, image:img, persist:{ summaryDelta:"Suggested gap piece: "+gap+".", preferencesDelta:"" }, skill:"Complete_the_look", meta:{ imageDelivery: imageDelivery } };
   }
 
   var api = { handle: handle, skill: "Complete_the_look" };

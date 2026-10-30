@@ -20,7 +20,7 @@
     var imageDelivery={ requested:false, generated:false, delivered:false, reason:"no_preview_client" };
     var desc="I see soft Y2K x fairycore vibes, loveling \u2014 lovely layering, shimmer and gentle colour. \u2728";
     if(metaClient&&imageDataUrl) try{ var r=await metaClient.classify(imageDataUrl,"inspiration"); if(r&&r.category) desc="I see a beautiful "+plainNoun(r.category)+" moment, loveling \u2014 soft layers and shimmer with a Y2K twist \u2728"; }catch(e){}
-    if(active.length===0) return { text: desc+" Your wardrobe\u2019s empty just now, so I can\u2019t match it yet \u2014 share a few pieces and I\u2019ll find the closest cousins!", image:null, persist:{ summaryDelta:"Match_look: no wardrobe to match.", preferencesDelta:"" }, skill:"Match_look", imageDelivery:{ requested:false, generated:false, delivered:false, reason:"no_valid_look" } };
+    if(active.length===0) return { text: desc+" Your wardrobe\u2019s empty just now, so I can\u2019t match it yet \u2014 share a few pieces and I\u2019ll find the closest cousins!", image:null, persist:{ summaryDelta:"Match_look: no wardrobe to match.", preferencesDelta:"" }, skill:"Match_look", meta:{ imageDelivery:{ requested:false, generated:false, delivered:false, reason:"no_valid_look" } } };
     var nouns=active.slice(0,3).map(function(p){ return plainNoun(p.category); }).join(" + ");
     var reply=desc+" From your own wardrobe, your "+nouns+" come closest, darling \u2014 let\u2019s style them together for a similar feel! \u2728";
     var img=null;
@@ -46,7 +46,7 @@
       }catch(e){ imageDelivery.reason="preview_failed"; }
     }
     if(imageDelivery.requested&&!imageDelivery.delivered) reply+=CAVEAT;
-    return { text: reply, image:img, persist:{ summaryDelta:"Matched look from wardrobe.", preferencesDelta:"" }, skill:"Match_look", imageDelivery: imageDelivery };
+    return { text: reply, image:img, persist:{ summaryDelta:"Matched look from wardrobe.", preferencesDelta:"" }, skill:"Match_look", meta:{ imageDelivery: imageDelivery } };
   }
 
   var api = { handle: handle, skill: "Match_look" };

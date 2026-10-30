@@ -51,9 +51,9 @@ async function run() {
       stageImage: async function (sid, durl) { stagedWith = [sid, durl]; return { ok: true }; }
     });
     assert.ok(/dress moment/.test(r.text), "classify description still used: " + r.text.slice(0, 80));
-    assert.strictEqual(r.imageDelivery.requested, true, "requested");
-    assert.strictEqual(r.imageDelivery.generated, true, "generated");
-    assert.strictEqual(r.imageDelivery.delivered, true, "delivered");
+    assert.strictEqual(r.meta.imageDelivery.requested, true, "requested");
+    assert.strictEqual(r.meta.imageDelivery.generated, true, "generated");
+    assert.strictEqual(r.meta.imageDelivery.delivered, true, "delivered");
     assert.ok(r.image && r.image.dataURL === DURL, "real dataURL present");
     assert.deepStrictEqual(stagedWith, ["SYNTH_share_match", DURL], "staged with shareId + dataURL");
     assert.ok(!r.text.includes(CAVEAT_FRAG), "no caveat when delivered");
@@ -74,8 +74,8 @@ async function run() {
       shareId: "SYNTH_share_match",
       stageImage: async function () { throw new Error("stage down"); }
     });
-    assert.strictEqual(r.imageDelivery.delivered, false, "not delivered");
-    assert.strictEqual(r.imageDelivery.reason, "stage_failed", "truthful reason");
+    assert.strictEqual(r.meta.imageDelivery.delivered, false, "not delivered");
+    assert.strictEqual(r.meta.imageDelivery.reason, "stage_failed", "truthful reason");
     assert.ok(r.text.includes(CAVEAT_FRAG), "honest caveat appended");
     noFabrication(r, "stage_failed result");
     console.log("  pass: stage_failed, caveat appended, no fabrication");
@@ -89,9 +89,9 @@ async function run() {
       catalog: cat,
       metaClient: { preview: async function () { return { dataURL: DURL }; } }
     });
-    assert.strictEqual(r.imageDelivery.generated, true, "preview still generated");
-    assert.strictEqual(r.imageDelivery.delivered, false, "not delivered without staging");
-    assert.strictEqual(r.imageDelivery.reason, "text-only send; preview not staged for delivery", "truthful reason");
+    assert.strictEqual(r.meta.imageDelivery.generated, true, "preview still generated");
+    assert.strictEqual(r.meta.imageDelivery.delivered, false, "not delivered without staging");
+    assert.strictEqual(r.meta.imageDelivery.reason, "text-only send; preview not staged for delivery", "truthful reason");
     assert.ok(r.text.includes(CAVEAT_FRAG), "honest caveat appended");
     noFabrication(r, "text-only result");
     console.log("  pass: text-only reason, caveat appended, no fabrication");
@@ -102,7 +102,7 @@ async function run() {
   {
     const cat = seed();
     const r = await Handler.handle({ catalog: cat, metaClient: null });
-    assert.strictEqual(r.imageDelivery.requested, false, "not requested");
+    assert.strictEqual(r.meta.imageDelivery.requested, false, "not requested");
     assert.strictEqual(r.image, null, "image null");
     assert.ok(!r.text.includes(CAVEAT_FRAG), "no caveat when nothing requested");
     noFabrication(r, "no-client result");
@@ -119,9 +119,9 @@ async function run() {
       shareId: "SYNTH_share_match",
       stageImage: async function () { return { ok: true }; }
     });
-    assert.strictEqual(r.imageDelivery.requested, true, "requested");
-    assert.strictEqual(r.imageDelivery.generated, false, "not generated");
-    assert.strictEqual(r.imageDelivery.delivered, false, "not delivered");
+    assert.strictEqual(r.meta.imageDelivery.requested, true, "requested");
+    assert.strictEqual(r.meta.imageDelivery.generated, false, "not generated");
+    assert.strictEqual(r.meta.imageDelivery.delivered, false, "not delivered");
     assert.strictEqual(r.image, null, "image null");
     assert.ok(r.text.includes(CAVEAT_FRAG), "honest caveat appended");
     noFabrication(r, "preview-throw result");

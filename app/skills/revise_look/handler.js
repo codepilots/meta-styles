@@ -72,7 +72,7 @@
       }
       if(imageDelivery.requested&&!imageDelivery.delivered) reply+=CAVEAT;
     } else imageDelivery.reason="no_valid_look";
-    return { text: reply, image: img, persist:{ summaryDelta: cat?"Revised look, removed "+plainNoun(cat)+".":"Asked for revise clarification.", preferencesDelta: cat? "Prefers without "+plainNoun(cat)+".":"" }, skill:"revise_look", imageDelivery: imageDelivery };
+    return { text: reply, image: img, persist:{ summaryDelta: cat?"Revised look, removed "+plainNoun(cat)+".":"Asked for revise clarification.", preferencesDelta: cat? "Prefers without "+plainNoun(cat)+".":"" }, skill:"revise_look", meta:{ imageDelivery: imageDelivery } };
   }
 
   var api = { handle: handle, skill: "revise_look" };
