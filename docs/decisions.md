@@ -28,7 +28,11 @@ The SecondBloom Instagram bot/webhook deployment (`igwebhook`, app `292646636064
 
 ## Open questions
 - [x] Which open-weights base to build on before Meta Model API access lands? — resolved 2026-10-28: real Meta API key now provisioned (see Secrets section above); Milestone 3 can call the live API instead of an open-weights fallback.
-- [ ] Reuse boutique-ui as the frontend shell or fresh minimal Next.js app?
+- [x] Reuse boutique-ui as the frontend shell or fresh minimal Next.js app?
+  — resolved de facto 2026-10-29: neither. Decision #7's chat-first pivot
+  settled on the vanilla static `app/` + `wardrobe-service/` stack
+  (mock-dm.html chat surface, no framework), which is what's actually
+  built and judged; boutique-ui and Next.js were never adopted.
 - [ ] Application Q&A: paste each form question as it appears (login-gated) for per-field drafting.
 - [ ] Discord thread from earlier today: import the styling-app details agreed there.
 - [x] M12 send-API design decisions (see docs/instagram-bot-send-api.md) — resolved 2026-10-28 (Autumn, all 10): `422 reply_window_expired`; idempotency keys rejected on duplicate share+text, 24h retention; v1 scope is text AND image; single-step `confirm:true` gate; separate send-scoped `ig-bot-send-token`; signed outbound-media path token is single-use/24h TTL off the existing shared secret; invalid-token requests get fail2ban'd permanently (not app-triggered iptables, to keep the sidecar's hardening intact). Still awaiting Autumn's go-ahead to actually build.
