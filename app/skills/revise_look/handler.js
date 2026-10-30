@@ -30,6 +30,21 @@
     }catch(e){}
   }
   var CAVEAT=" (I can\u2019t tuck preview pictures into chat just yet, so this word-picture will have to sparkle on its own. \u2728)";
+  // Opus finding #6: record every turn (success AND clarification)
+  // so explain_fit can reference the revised look via
+  // catalog.getTurns(). Fail-closed-but-never-blocking: recording
+  // must never break the user-facing reply. Verdict-false turns carry
+  // a null proposal so explain_fit never reads one as a look.
+  function recordReviseTurn(catalog, entry){
+    if(!catalog || typeof catalog.recordTurn!=="function") return;
+    try{ catalog.recordTurn(entry); }catch(e){}
+  }
+  function finishOfCats(cats){
+    var hasLayer=cats.some(function(c){ return c==="layer/cardigan"||c==="layer/blazer"; });
+    if(hasLayer) return "layer";
+    if(cats.indexOf("scarf")!==-1 && cats.indexOf("bag")!==-1) return "scarf+bag";
+    return null;
+  }
   async function handle(opts){
     var o=opts||{}, catalog=o.catalog, text=o.text||"";
     var metaClient=o.metaClient||null;
@@ -72,6 +87,31 @@
       }
       if(imageDelivery.requested&&!imageDelivery.delivered) reply+=CAVEAT;
     } else imageDelivery.reason="no_valid_look";
+    // Opus finding #6: remember the revised look (or the no-op) for
+    // explain_fit / the router. The revised look is the wardrobe as it
+    // stands after this turn's removal.
+    var revisedActive=[];
+    try{ revisedActive=catalog?catalog.getActivePieces():[]; }catch(e){ revisedActive=[]; }
+    if(!Array.isArray(revisedActive)) revisedActive=[];
+    var revisedCats=revisedActive.map(function(p){ return p && p.category; }).filter(function(c){ return !!c; });
+    var revisedFinish=(card && card.valid===true && typeof card.finish==="string") ? card.finish : finishOfCats(revisedCats);
+    // A clarification turn produces no revision, so it is never a
+    // valid-look turn even though the reply quotes the current fit.
+    var revisedVerdict=(cat && card) ? card.valid===true : false;
+    var revisedReasons=[];
+    if(!cat) revisedReasons.push("no_revision_target");
+    else {
+      if(removed.length===0) revisedReasons.push("category_not_present");
+      if(!revisedVerdict) revisedReasons.push("no_valid_look");
+    }
+    recordReviseTurn(catalog, {
+      userText: typeof text==="string" ? text : "",
+      proposal: (revisedVerdict && (revisedFinish==="layer"||revisedFinish==="scarf+bag")) ? {
+        pieces: revisedActive.map(function(p){ return p.piece_id; }),
+        title: null, note: "valid:"+revisedFinish
+      } : null,
+      verdict: revisedVerdict, reasons: revisedReasons
+    });
     return { text: reply, image: img, persist:{ summaryDelta: cat?"Revised look, removed "+plainNoun(cat)+".":"Asked for revise clarification.", preferencesDelta: cat? "Prefers without "+plainNoun(cat)+".":"" }, skill:"revise_look", meta:{ imageDelivery: imageDelivery } };
   }
 

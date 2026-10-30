@@ -236,9 +236,32 @@
     } catch (e) { /* logging never breaks the reply */ }
   }
 
+  // Opus finding #6: record every turn (success AND no-op) so later
+  // skills (explain_fit via catalog.getTurns()) can see what was just
+  // proposed. Fail-closed-but-never-blocking: a schema mismatch must
+  // never break the user-facing reply. Verdict-false turns carry a
+  // null proposal so explain_fit never reads a failed turn as a look.
+  function recordLookTurn(catalog, entry) {
+    if (!catalog || typeof catalog.recordTurn !== "function") return;
+    try {
+      catalog.recordTurn(entry);
+    } catch (e) { /* turn-recording never breaks the reply */ }
+  }
+
+  function finishOf(items, card) {
+    if (card && typeof card.finish === "string" &&
+        (card.finish === "layer" || card.finish === "scarf+bag")) {
+      return card.finish;
+    }
+    var cats = items.map(function (it) { return it.category; });
+    var hasLayer = cats.some(function (c) { return LAYER_CATS.indexOf(c) !== -1; });
+    return hasLayer ? "layer" : "scarf+bag";
+  }
+
   async function handle(opts) {
     var o = opts || {};
     var catalog = o.catalog;
+    var userText = typeof o.text === "string" ? o.text : (typeof o.message === "string" ? o.message : "");
     var metaClient = o.metaClient || null;
     var assembleLook = getAssembleLook(o);
     // Image delivery: the service passes its share id plus a staging
@@ -261,6 +284,7 @@
 
     if (active.length === 0) {
       logDecision("empty", 0, "empty_wardrobe", toolSteps);
+      recordLookTurn(catalog, { userText: userText, proposal: null, verdict: false, reasons: ["empty_wardrobe"] });
       return {
         text: "Your wardrobe\u2019s feeling a little empty just now, loveling \u2014 share a photo of something you love and I\u2019ll catalogue it, then we can make magic! \u2728",
         image: null,
@@ -298,6 +322,7 @@
     var chosen = null;
     var chosenRationale = "";
     var rejectedReason = sparkError;
+    var sparkRejected = [];
     if (sparkLooks) {
       for (var li = 0; li < sparkLooks.length; li++) {
         var cand = sparkLooks[li] || {};
@@ -309,6 +334,7 @@
           break;
         }
         rejectedReason = "spark_rejected:" + checked.reason;
+        sparkRejected.push(rejectedReason);
       }
       if (!chosen && !rejectedReason) rejectedReason = "spark_rejected:no_valid_combination";
     }
@@ -330,6 +356,10 @@
     if (!chosen) {
       var why = plainWhy(fallbackRejected || "no_valid_combination");
       logDecision("fallback", 0, rejectedReason, toolSteps);
+      recordLookTurn(catalog, {
+        userText: userText, proposal: null, verdict: false,
+        reasons: rejectedReason ? [rejectedReason] : ["no_valid_combination"]
+      });
       return {
         text: "Oh, loveling \u2728 I turned every piece over in the lamplight, but " + why +
           " — share one more piece (a layer, or a scarf with its bag) and I\u2019ll spin it into a full look!",
@@ -428,6 +458,20 @@
       }
     }catch(e){}
     logDecision(source, chosen.items.length, rejectedReason, toolSteps);
+    // Opus finding #6: remember the look for explain_fit / the router.
+    // Rejections that happened along the way travel in reasons[] so a
+    // later turn can see "Spark's first picks didn't validate".
+    var turnReasons = sparkRejected.slice();
+    if (source === "fallback" && fallbackRejected) turnReasons.push("fallback_rejected:" + fallbackRejected);
+    var turnFinish = finishOf(chosen.items, chosen.card);
+    recordLookTurn(catalog, {
+      userText: userText,
+      proposal: {
+        pieces: chosen.items.map(function (it) { return it.id; }),
+        title: null, note: "valid:" + turnFinish
+      },
+      verdict: true, reasons: turnReasons
+    });
     return {
       text: reply,
       image: image,

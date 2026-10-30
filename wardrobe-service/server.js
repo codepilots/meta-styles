@@ -343,11 +343,11 @@ function createService(opts) {
     var wardrobeSummary = ctx.wardrobeSummary || "";
     var preferences = ctx.preferences || "";
 
-    var lastTurns = [];
-    try {
-      var turns = ctx.catalog.getTurns() || [];
-      lastTurns = turns.slice(-3).map(function (t) { return t.userText || ""; });
-    } catch (e) { lastTurns = []; }
+    // Opus finding #6: user texts AND the bot's own sent replies,
+    // interleaved in order (see buildLastTurns) — the live Spark
+    // /api/route prompt's "check Recent turns" instruction finally has
+    // real data instead of an always-empty array.
+    var lastTurns = buildLastTurns(ctx.catalog);
 
     var imageDataUrl = null;
     var imagePromise;
@@ -673,6 +673,15 @@ function createService(opts) {
       key: sendKeyForShare(shareId), withImage: withImage,
     }).then(function (result) {
       if (result && result.ok) {
+        // Opus finding #6: remember our own sent reply next to the
+        // recorded user turns — this is what buildLastTurns() reads for
+        // the "Bot: ..." lines (the dead turn-loop.js used to be the
+        // only recordSentTurn caller). Best-effort, never blocking.
+        try {
+          if (ctx.catalog && typeof ctx.catalog.recordSentTurn === "function") {
+            ctx.catalog.recordSentTurn({ text: text, in_reply_to_share: shareId });
+          }
+        } catch (e) { /* sent-logging never breaks the outcome */ }
         // image_message_id is the bot's own proof an image went out with
         // the text — counted only when the bot says so, never on stage alone.
         if (result.body && result.body.image_message_id) {
@@ -1154,8 +1163,37 @@ function createService(opts) {
   };
 }
 
+// Opus finding #6: build the live-router prompt context from BOTH sides
+// of the conversation — the user's texts (catalog.getTurns()) AND the
+// bot's own sent replies (catalog.getSentTurns()) — interleaved in
+// chronological order as plain "User: ..."/"Bot: ..." strings. Plain
+// strings keep every existing consumer working: explain_fit's
+// hint-matching only reads string entries, the heuristic router joins
+// + lowercases, and the Spark /api/route prompt maps String().
+// Exported for tests. Never throws: a catalog read error yields [].
+function buildLastTurns(catalog) {
+  try {
+    var turns = (catalog && typeof catalog.getTurns === "function") ? (catalog.getTurns() || []) : [];
+    var sent = (catalog && typeof catalog.getSentTurns === "function") ? (catalog.getSentTurns() || []) : [];
+    if (!Array.isArray(turns)) turns = [];
+    if (!Array.isArray(sent)) sent = [];
+    // sent[i] is the reply to turns[i] (both recorded in order), so
+    // pair by index, then keep the last ~4 exchanges (8 lines max —
+    // this flows into a model prompt).
+    var n = Math.max(turns.length, sent.length);
+    var lines = [];
+    for (var i = 0; i < n; i++) {
+      var t = turns[i];
+      if (t && typeof t.userText === "string" && t.userText) lines.push("User: " + t.userText);
+      var s = sent[i];
+      if (s && typeof s.text === "string" && s.text) lines.push("Bot: " + s.text);
+    }
+    return lines.slice(-8);
+  } catch (e) { return []; }
+}
+
 if (typeof module !== "undefined" && module.exports) {
-  module.exports = { createService: createService, resolveConfig: Config.resolveConfig };
+  module.exports = { createService: createService, resolveConfig: Config.resolveConfig, buildLastTurns: buildLastTurns };
 }
 
 if (require.main === module) {
