@@ -436,17 +436,29 @@ function createService(opts) {
     });
   }
 
+  // Opus finding #5: a failed first load must never pin the catalog to
+  // memory-only and unblock a destructive whole-array PUT. ctx.loaded is
+  // set ONLY when the load actually succeeded (or when there is
+  // deliberately no store to confirm against — memory-only mode works
+  // exactly as before). On a failed load the flag stays false, so the
+  // NEXT turn retries the load; meanwhile catalog.save() itself refuses
+  // to PUT (load_not_confirmed), which saveBestEffort reports through
+  // the existing loud catalog_save_failed path — never silently.
   function ensureLoaded(ctx) {
     if (ctx.loaded) return Promise.resolve(ctx);
-    ctx.loaded = true; // load once per process; a failed load degrades to memory-only
     if (!ctx.catalog.store || typeof ctx.catalog.load !== "function") {
+      ctx.loaded = true; // nothing to confirm against — memory-only, as before
       return Promise.resolve(ctx);
     }
     return ctx.catalog.load().then(function (res) {
-      if (!res.ok) say("Couldn't load the saved wardrobe — starting fresh this session.");
+      if (res.ok) {
+        ctx.loaded = true;
+      } else {
+        say("Couldn't load the saved wardrobe — will try again on the next check.");
+      }
       return ctx;
     }, function () {
-      say("Couldn't load the saved wardrobe — starting fresh this session.");
+      say("Couldn't load the saved wardrobe — will try again on the next check.");
       return ctx;
     });
   }

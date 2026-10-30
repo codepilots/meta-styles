@@ -44,6 +44,7 @@ const SECRET = "SYNTH_test_secret_19h (non-secret test value)";
 const REF_A = "u_" + "a".repeat(32);
 const REF_B = "u_" + "b".repeat(32);
 const REF_C = "u_" + "c".repeat(32);
+const REF_D = "u_" + "d".repeat(32);
 
 let server;
 let base;
@@ -250,8 +251,15 @@ async function main() {
   }
   {
     // Store-backed: save() PUTs on update, fresh catalog load() GETs back.
-    const store = Catalog.createCatalogStore({ base, token: TOKEN, userRef: REF_B });
-    const w1 = Catalog.createCatalog({ userKey: "SYNTH_user_019h_B", store });
+    // Opus finding #5: save() requires a succeeded load first — the
+    // service's ensureLoaded always loads before any save, so this block
+    // mirrors that order (load-then-mutate-then-save) on a fresh ref.
+    const store = Catalog.createCatalogStore({ base, token: TOKEN, userRef: REF_D });
+    const w1 = Catalog.createCatalog({ userKey: "SYNTH_user_019h_D", store });
+    const firstLoad = await w1.load();
+    check("19h: first load on an empty ref succeeds with count 0 (not a failure)",
+      firstLoad.ok === true && firstLoad.count === 0,
+      `ok=${firstLoad.ok} err=${firstLoad.error}`);
     w1.addPiece({
       category: "dress",
       attributes: { color: "sage", silhouette: "wrap midi", layer_role: "base" },
@@ -267,8 +275,8 @@ async function main() {
     check("19h: catalog.save() PUTs current pieces (whole array)",
       saved.ok === true, `ok=${saved.ok} err=${saved.error}`);
     const w2 = Catalog.createCatalog({
-      userKey: "SYNTH_user_019h_B",
-      store: Catalog.createCatalogStore({ base, token: TOKEN, userRef: REF_B }),
+      userKey: "SYNTH_user_019h_D",
+      store: Catalog.createCatalogStore({ base, token: TOKEN, userRef: REF_D }),
     });
     const loaded = await w2.load();
     check("19h: fresh catalog load() restores pieces incl. statuses",

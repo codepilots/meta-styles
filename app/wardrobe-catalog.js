@@ -40,8 +40,11 @@
  * `createCatalogStore({ base, token, userRef })` (same base/token/error
  * conventions as app/send-client.js). `catalog.save()` PUTs the current
  * pieces on update; `catalog.load()` GETs and whole-array-replaces local
- * memory on load. With no store attached the catalog stays memory-only
- * exactly as before (save/load resolve an honest `no_store` error).
+ * memory on load. With a store attached, `save()` refuses to PUT until a
+ * `load()` has succeeded at least once (`load_not_confirmed`), so a
+ * failed first load can never wipe the stored wardrobe. With no store
+ * attached the catalog stays memory-only exactly as before (save/load
+ * resolve an honest `no_store` error).
  *
  * All ids/text below are synthetic (SYNTH_ prefix, example.invalid
  * URLs) — never real Instagram data.
@@ -279,6 +282,13 @@
     var store = o.store && typeof o.store.save === "function" &&
       typeof o.store.load === "function" ? o.store : null;
 
+    // Opus finding #5: a load must SUCCEED at least once before any
+    // save() may PUT. A failed (or never-attempted) load leaves memory
+    // empty or partial, and a whole-array PUT would then silently replace
+    // the user's whole stored wardrobe (last-write-wins). Monotonic:
+    // once true it stays true — memory is only ever replaced by a fully
+    // validated load, so a later failed re-load invalidates nothing.
+    var loadConfirmed = false;
     var pieces = [];           // piece records, §3 schema (never deleted)
     var turns = [];            // turn records {turn, userText, proposal, verdict, reasons[]}
     var sentTurns = [];        // own-sent-turn log (Gap 4)
@@ -712,15 +722,31 @@
     // PUT on catalog update: persists the FULL piece array through the
     // injected store (whole-array replace, last write wins). Resolves
     // send-client-style {ok,...}; with no store attached resolves an
-    // honest no_store error and changes nothing.
+    // honest no_store error and changes nothing. Opus finding #5: with a
+    // store attached, save() REFUSES to PUT until a load() has succeeded
+    // at least once in this process (load_not_confirmed) — a first
+    // contact whose load failed (network/5xx/fail-closed schema
+    // rejection) must never overwrite the stored wardrobe with whatever
+    // happens to be in memory. A load that succeeds with an empty array
+    // (brand-new user, nothing stored yet) DOES confirm — that is not a
+    // failure and unblocks save() immediately.
     function save() {
       if (!store) return noStore("save");
+      if (!loadConfirmed) {
+        if (!root.Promise) return null;
+        return root.Promise.resolve({
+          ok: false, status: 0, body: {}, error: "load_not_confirmed", op: "save",
+        });
+      }
       return store.save(getPieces());
     }
 
     // GET on load: fetches the stored array and whole-array-replaces
     // local memory with it (validated fail-closed first — a corrupt
-    // stored array resolves an error and leaves memory untouched).
+    // stored array resolves an error and leaves memory untouched). A
+    // successful load (even of an empty array) confirms the catalog for
+    // save(); a failed load leaves loadConfirmed false so save() keeps
+    // refusing until a later load succeeds.
     function load() {
       if (!store) return noStore("load");
       return store.load().then(function (result) {
@@ -736,6 +762,7 @@
         }
         pieces = checked.pieces;
         if (checked.maxCounter > pieceCounter) pieceCounter = checked.maxCounter;
+        loadConfirmed = true;
         return { ok: true, status: result.status, body: {}, error: null, op: "load", count: pieces.length };
       });
     }
