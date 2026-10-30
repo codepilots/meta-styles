@@ -44,6 +44,19 @@ const vm = require("node:vm");
 process.env.NO_PROXY = [process.env.NO_PROXY, "127.0.0.1,localhost"].filter(Boolean).join(",");
 process.env.no_proxy = process.env.NO_PROXY;
 
+// Force the on-device classify fallback deterministically. meta-client.js
+// reads globalThis.__IG_RUNTIME__.proxyBase ONCE at module load and caches
+// it as PROXY_BASE for the module's lifetime, defaulting to the real
+// 127.0.0.1:8905 meta-api-proxy address otherwise. If a real proxy happens
+// to be running on this host (e.g. a live-mode session left one up), this
+// test would silently call the REAL Meta API with a meaningless 1x1 test
+// pixel instead of taking the labelled on-device fallback it documents —
+// pointing at a guaranteed-unreachable port makes classify() reject no
+// matter what else is running on the host, so the fallback path is
+// actually exercised every time. Must be set before the first require of
+// auto-reply.js / meta-client.js below (module-load-time capture).
+globalThis.__IG_RUNTIME__ = { proxyBase: "http://127.0.0.1:1" };
+
 const AutoReply = require("../auto-reply.js");
 const { startServer } = require("../../mock-ig-bot/server.js");
 
