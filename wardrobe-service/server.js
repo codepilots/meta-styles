@@ -788,9 +788,13 @@ function createService(opts) {
         hr.meta && hr.meta.imageDelivery &&
         hr.meta.imageDelivery.delivered === true);
       return sendComposed(ctx, id, text, { withImage: withImage }).then(function (outcome) {
-        // Media ack ONLY after bytes were in hand and catalogued — preserve
-        // inbox-bridge rule; best-effort, never blocking the outcome.
-        if (item.media_id) acknowledgeMedia(item.media_id);
+        // Media ack only on a terminal outcome (the share is handled, so
+        // the bytes will never be needed again) — never on "retry", where
+        // the share is re-offered next tick and still needs its media.
+        // Best-effort, never blocking the outcome.
+        if (item.media_id && typeof outcome === "string" && outcome.indexOf("terminal:") === 0) {
+          acknowledgeMedia(item.media_id);
+        }
         return outcome;
       });
     }, function (err) {
