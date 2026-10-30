@@ -155,11 +155,17 @@ async function run() {
     assert.ok(p.includes("lilac"), "preferences delta");
     console.log("  pass: buildPreferences");
 
-    // persist via injected store
+    // persist via injected store: honest non-persisted result (Opus finding
+    // #10 — the catalog contract is pieces-array-only, so a metadata PUT
+    // is impossible without changing its documented shape)
     const fakeStore = { base:"http://127.0.0.1:8904", userRef:"u_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", save: (pieces)=> Promise.resolve({ok:true}) };
     const pr = await Summariser.persistViaStore(fakeStore, "hello summary", "lilac");
-    assert.ok(pr.ok, "persistViaStore ok");
-    console.log("  pass: summariser persists via injected store");
+    assert.strictEqual(pr.ok, false, "persistViaStore must not report success for a no-op");
+    assert.strictEqual(pr.error, "not_persisted", "explicit not_persisted error");
+    const prNoStore = await Summariser.persistViaStore(null, "hello summary", "lilac");
+    assert.strictEqual(prNoStore.ok, false, "no store -> not ok");
+    assert.strictEqual(prNoStore.error, "no_store", "no-store error stays distinct");
+    console.log("  pass: summariser honestly reports not_persisted (memory-only)");
 
     const tr = await Summariser.summariseTurn({ previousSummary:"", previousPreferences:"", lastUserText:"hello", skill:"propose_look", replyText:"lovely look", piecesCount:2, preferencesDelta:"loves green" });
     assert.ok(typeof tr.summary === "string" && tr.summary.length>0, "summariseTurn summary");

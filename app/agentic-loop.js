@@ -171,7 +171,12 @@
             sumCl.summary = summariser.buildSummary({ previousSummary: wardrobeSummary, lastUserText: message, skill: "clarification", replyText: q, piecesCount: catalog ? catalog.getActivePieces().length : 0 });
           } catch (e) {}
         }
-        // Persist clarification summary via catalog API (100t each, per-user, never user-facing)
+        // Rolling clarification summary (100t each, per-user, never
+        // user-facing). Honest persistence flag: summary/preferences are
+        // memory-only (catalog contract is pieces-array-only — see
+        // summariser.js), so summaryPersisted is false unless a store ever
+        // reports ok:true.
+        var sumClPersisted = false;
         if (summariser && typeof summariser.summariseTurn === "function" && catalog && catalog.store) {
           try {
             var sc = await summariser.summariseTurn({
@@ -181,9 +186,10 @@
               store: catalog.store
             });
             sumCl.summary = sc.summary; sumCl.preferences = sc.preferences;
+            sumClPersisted = !!(sc.persistResult && sc.persistResult.ok);
           } catch (e) {}
         }
-        return { text: q, clarification: q, skill: "clarification", decision: decision, summary: sumCl.summary, preferences: sumCl.preferences, toolCalls: [], totalSteps: 0 };
+        return { text: q, clarification: q, skill: "clarification", decision: decision, summary: sumCl.summary, preferences: sumCl.preferences, summaryPersisted: sumClPersisted, toolCalls: [], totalSteps: 0 };
       }
 
       // Wrap catalog for this skill invocation (20-step budget, logged)
@@ -221,6 +227,11 @@
 
       var outText = (result && result.text) || "";
       var sum = { summary: wardrobeSummary, preferences: preferences };
+      // Honest persistence flag (Opus finding #10): the rolling summary is
+      // memory-only — the catalog contract is pieces-array-only, so no
+      // store can persist it. summaryPersisted is true only if a store
+      // ever reports ok:true; today it is always false.
+      var sumPersisted = false;
       if (summariser && typeof summariser.summariseTurn === "function") {
         try {
           var s = await summariser.summariseTurn({
@@ -231,10 +242,11 @@
             store: skillCatalog && skillCatalog.store ? skillCatalog.store : (catalog && catalog.store ? catalog.store : null)
           });
           sum.summary = s.summary; sum.preferences = s.preferences;
+          sumPersisted = !!(s.persistResult && s.persistResult.ok);
         } catch (e) {}
       }
 
-      return { text: outText, image: result.image || null, skill: decision.skill, decision: decision, summary: sum.summary, preferences: sum.preferences, handlerResult: result, toolCalls: wrapped.getCalls(), totalSteps: wrapped.getSteps() };
+      return { text: outText, image: result.image || null, skill: decision.skill, decision: decision, summary: sum.summary, preferences: sum.preferences, summaryPersisted: sumPersisted, handlerResult: result, toolCalls: wrapped.getCalls(), totalSteps: wrapped.getSteps() };
     }
 
     return { handleTurn: handleTurn, router: router, summariser: summariser, DEFAULT_MAX_STEPS: DEFAULT_MAX_STEPS };

@@ -5,7 +5,7 @@
  * Tests M21 wire-through via wardrobe-service/server.js using synthetic fixtures only.
  * - Exercises agentic-loop directly (no live bot needed) + optionally via service processOne with fakes.
  * - Injects: photo ("dress"), text "show me a look", text "what's the weather today?" (off-topic), ambiguous "hmm" (<70).
- * - Asserts: correct skill chosen, clarification at <70, summaries persisted via catalog API, no long IDs, no invented listings, 20-step cap logged.
+ * - Asserts: correct skill chosen, clarification at <70, rolling summaries bounded + memory-only (honest not_persisted), no long IDs, no invented listings, 20-step cap logged.
  */
 const assert = require("assert");
 const AgenticLoop = require("../../app/agentic-loop.js");
@@ -125,8 +125,11 @@ async function run() {
     console.log("  pass: 'hmm' -> clarification (<70), confidence=" + res4.decision.confidence + ", steps=" + res4.totalSteps);
   }
 
-  // --- Summaries persisted via catalog API (PUT /ig/catalog) — never local file/DB ---
-  console.log("\n[summary persistence via catalog API]");
+  // --- Rolling summary: bounded + honestly memory-only (Opus finding #10).
+  // The catalog contract is pieces-array-only, so summary/preferences live
+  // in ctx only and summariseTurn reports not_persisted — never local
+  // file/DB, never a fake ok:true. ---
+  console.log("\n[rolling summary: bounded, memory-only, honest]");
   {
     var store5 = fakeStore("u_cccccccccccccccccccccccccccccccc");
     var cat5 = Wardrobe.createCatalog({ userKey: "SYNTH_ag_int_persist", store: store5 });
@@ -143,7 +146,9 @@ async function run() {
     assert.ok((res5.preferences || "").length <= 400, "preferences 100t");
     // Wardrobe summary/preferences are per-user and never user-facing — they appear only in summary/preferences fields, not in reply text
     assert.ok(res5.summary !== res5.text, "summary ≠ reply text (never user-facing)");
-    console.log("  pass: summaries persisted via catalog API, summary=" + JSON.stringify(res5.summary).slice(0, 100));
+    // Honest persistence flag: memory-only, so the loop must say so
+    assert.strictEqual(res5.summaryPersisted, false, "summaryPersisted false (memory-only, not restart-persisted)");
+    console.log("  pass: rolling summary bounded + honestly memory-only, summary=" + JSON.stringify(res5.summary).slice(0, 100));
   }
 
   // --- Per-skill 20-step cap: hammer with many catalog ops should still cap ---

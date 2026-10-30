@@ -299,6 +299,13 @@
     }
 
     // 1. Ask Spark for a constrained choice: IDs + categories only, JSON only.
+    // Known limitation (Opus finding #10d): the rolling `preferences`
+    // string (e.g. revise_look's "Prefers without bag.") currently reaches
+    // the router as context only — it is NOT applied to Spark selection or
+    // the deterministic fallback here. Wiring it in would change the
+    // assemble prompt contract, so it stays a documented gap: a stated
+    // preference does not yet change the proposed look. Nothing in the
+    // reply claims otherwise.
     var sparkLooks = null;
     var sparkError = null;
     if (metaClient && typeof metaClient.assemble === "function") {

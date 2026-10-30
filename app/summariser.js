@@ -3,21 +3,34 @@
  * NEW hackathon work (building period Oct 27 – Nov 4, 2026).
  *
  * After each turn, generate rolling 100-token summary + 100-token preferences
- * delta, PUT to bot catalog API (PUT /ig/catalog/<user_ref>) — never user-facing.
- * Summaries used as next-turn context (wardrobe summary + preferences).
+ * delta — never user-facing. Summaries used as next-turn context
+ * (wardrobe summary + preferences).
  *
- * Persistence: via wardrobe-catalog store (same PUT /ig/catalog/<user_ref>),
- * storing { summary, preferences } alongside pieces. No local file/DB.
+ * Persistence (Opus finding #10, honest as of this fix): memory-only. The
+ * catalog contract is pieces-array-only (PUT /ig/catalog/<user_ref> rejects
+ * non-array bodies; user_refs must match u_<32 hex>, so a "__meta" suffix
+ * key is rejected too), so summary/preferences CANNOT be persisted through
+ * it without changing its documented shape. persistViaStore() therefore
+ * resolves an explicit { ok:false, error:"not_persisted" } — never a fake
+ * { ok:true }. The rolling strings live in the service ctx and are lost on
+ * restart; nothing claims otherwise. No local file/DB.
  */
 
 (function (root) {
   var MAX_TOKENS = 100; // ~400 chars ≈ 100 tokens
 
+  // Rolling window keeps the TAIL (most recent turns), not the head:
+  // once the window is full, each new turn pushes the oldest content out
+  // instead of being silently dropped (Opus finding #10). A partial
+  // leading word from the cut is dropped for cleanliness.
   function truncateTokens(text, maxTokens) {
     var maxChars = maxTokens * 4;
     var t = String(text || "").trim();
     if (t.length <= maxChars) return t;
-    return t.slice(0, maxChars).trim();
+    var tail = t.slice(t.length - maxChars).trim();
+    var sp = tail.indexOf(" ");
+    if (sp > 0) tail = tail.slice(sp + 1);
+    return tail;
   }
 
   function wordCount(text) { return String(text).split(/\s+/).filter(Boolean).length; }
@@ -44,30 +57,27 @@
     return truncateTokens(combined, MAX_TOKENS);
   }
 
-  // Persist via catalog store (same PUT /ig/catalog/<user_ref> that pieces use).
-  // The store holds { pieces, meta: { summary, preferences } } — but for
-  // persistence constraint compliance we store via a dedicated catalog key
-  // using the same base/token/userRef as the wardrobe catalog.
-  // Simplified: we PUT to /ig/catalog/<user_ref>__summary via createCatalogStore,
-  // but for this milestone we store summary alongside catalog via a second
-  // user_ref suffix "__meta" — same contract, no new routes.
+  // Persistence honesty (Opus finding #10): the catalog store contract is
+  // pieces-array-only — store.save() PUTs a piece array and the bot rejects
+  // non-array bodies with 400, and user_refs must match u_<32 hex> so a
+  // "__meta"-suffixed key is rejected as bad_user_ref. There is therefore
+  // NO compatible way to persist { summary, preferences } through it, and
+  // this function must NOT report success for a no-op. It resolves an
+  // explicit { ok:false, error:"not_persisted" } so callers (agentic-loop,
+  // wardrobe-service) report the truth: rolling context is memory-only in
+  // the service ctx and lost on restart. The summary/preferences arguments
+  // are echoed back for convenience only — nothing was written anywhere.
   function persistViaStore(store, summary, preferences) {
     if (!store || typeof store.save !== "function") {
-      return Promise.resolve({ ok: false, error: "no_store" });
+      return Promise.resolve({ ok: false, error: "no_store", summary: summary, preferences: preferences });
     }
-    // For the milestone, summaries are persisted through the same store
-    // mechanism but as a separate logical key. We use the store's base/token
-    // to PUT to <userRef>__meta. Fall back to resolving immediately if the
-    // store's base has no suffix support.
-    var data = { summary: summary, preferences: preferences, updated_at: new Date().toISOString() };
-    // Use the underlying fetch directly to avoid catalog schema validation
-    var url = store.base.replace(/\/+$/, "") + "/ig/catalog/" + encodeURIComponent(store.userRef + "__meta");
-    var headers = { "Content-Type": "application/json" };
-    // Derive auth from store if possible — store.save uses Bearer, we mimic.
-    // Try to read token from store.save closure indirectly; if not available,
-    // use the store's save to persist summary as extra catalog metadata.
-    // For test harness: just resolve with the data.
-    return Promise.resolve({ ok: true, summary: summary, preferences: preferences, data: data });
+    return Promise.resolve({
+      ok: false,
+      error: "not_persisted",
+      reason: "catalog contract is pieces-array-only; summary/preferences are memory-only",
+      summary: summary,
+      preferences: preferences,
+    });
   }
 
   // Full turn summarise: build + persist

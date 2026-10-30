@@ -303,14 +303,18 @@ function createService(opts) {
     // The send client stages via the mode's own route (mock:
     // /mock/stage-outbound-image; live: /ig/outbound-stage) — same Bearer [REDACTED]
     var send = SendClient.createSendClient({ base: botBase, token: sendToken, mode: mode });
-    // Per-user rolling summary/preferences (M21) — 100t each, via PUT /ig/catalog only.
-    // Kept in ctx, persisted via catalog store alongside pieces.
+    // Per-user rolling summary/preferences (M21) — 100t each, memory-only.
+    // Kept in ctx only: the catalog contract is pieces-array-only, so
+    // summary/preferences canNOT be persisted through it (Opus finding
+    // #10 — see app/summariser.js). Lost on restart; nothing claims
+    // otherwise. Pieces remain the only persisted data.
     var ctx = { catalog: catalog, loop: loop, send: send, loaded: false, wardrobeSummary: "", preferences: "", lastAgenticDecision: null, lastSkillSteps: 0 };
     users.set(userRef, ctx);
     return ctx;
   }
 
-  // Agentic helpers (M21) — 20-step cap, logging, router+summariser wiring.
+  // Agentic helpers (M21) — 20-step cap, logging, router+summariser wiring
+  // (summariser rolls memory-only context; only pieces persist).
   var agenticLog = []; // { shareId, skill, stepCount, toolCalls[], totalSteps, at }
   var AGENTIC_LOG_CAP = 50;
 
@@ -422,9 +426,11 @@ function createService(opts) {
         ctx.lastAgenticDecision = skillName;
         ctx.lastSkillSteps = totalSteps;
 
-        // Persist: agentic-loop already persisted summary/preferences via
-        // Summariser.summariseTurn + catalog store; here we ensure pieces are
-        // saved too (best-effort, never blocking).
+        // Honest persistence split (Opus finding #10): the rolling
+        // summary/preferences in ctx are memory-only (agentic-loop reports
+        // summaryPersisted:false — the pieces-only catalog contract cannot
+        // hold them); here we ensure PIECES are saved (best-effort, never
+        // blocking), which is the only restart-persisted data.
         return saveBestEffort(ctx).then(function () {
           return { result: result, toolCalls: toolCalls, totalSteps: totalSteps, skill: skillName };
         });
@@ -765,7 +771,8 @@ function createService(opts) {
 
   // M21 agentic path: single entry for both text and photo shares.
   // Router picks skill; skill executes (20-step cap, logged); summariser
-  // persists; stable per-share idempotency key → bot-side backstop intact.
+  // rolls the memory-only summary (pieces are the only persisted data);
+  // stable per-share idempotency key → bot-side backstop intact.
   function processAgenticShare(ctx, item, id) {
     return runAgenticTurn(ctx, item, id).then(function (agentic) {
       var result = agentic.result;
