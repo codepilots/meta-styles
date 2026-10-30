@@ -19,10 +19,27 @@
   const LAYERS = ["layer/cardigan", "layer/blazer"];
   const MAX_WORDS = 300;
 
-  const FIT_NOTE =
-    "Fit note (placeholder): cut for a tall/curvy 6'2\" frame — size 18 top / 12 bottom. " +
+  // Per-finish fit notes (M23): the old single FIT_NOTE described only the
+  // "layer worn open" finish, which is false for scarf+bag looks. Each
+  // variant keeps Autumn's real confirmed specs (tall/curvy 6'2",
+  // 18 top / 12 bottom — not placeholder) and the Y2K x fairycore line.
+  const FIT_NOTE_LAYER =
+    "Fit note: cut for a tall/curvy 6'2\" frame — size 18 top / 12 bottom. " +
     "Bases run long in torso and hem; layers are worn open so nothing pulls at the bust; " +
     "accessories sit high to keep proportions leggy. Y2K x fairycore: shine, mesh, butterflies, soft metallics.";
+  const FIT_NOTE_SCARF_BAG =
+    "Fit note: cut for a tall/curvy 6'2\" frame — size 18 top / 12 bottom. " +
+    "Bases run long in torso and hem; the scarf is tied high and accessories sit at/above the natural waist, " +
+    "so nothing added stacks or pulls at the bust. Y2K x fairycore: shine, mesh, butterflies, soft metallics.";
+  const FIT_NOTES = { layer: FIT_NOTE_LAYER, "scarf+bag": FIT_NOTE_SCARF_BAG };
+  // Backward-compatible default: the layer variant is closest to the old
+  // single string, and the only in-repo importer (explain_fit) now picks
+  // per-finish via FIT_NOTES with this as its fallback.
+  const FIT_NOTE = FIT_NOTE_LAYER;
+
+  function fitNoteFor(finish) {
+    return finish === "scarf+bag" ? FIT_NOTE_SCARF_BAG : FIT_NOTE_LAYER;
+  }
 
   function wordCount(text) {
     return text.split(/\s+/).filter(Boolean).length;
@@ -84,7 +101,10 @@
     }
 
     // Assemble card copy within the 300-word budget (fit note included).
-    const fitWords = wordCount(FIT_NOTE);
+    // The note is the variant matching this look's own finish (invalid
+    // looks with no finish keep the layer default, as before).
+    const fitNote = fitNoteFor(finish);
+    const fitWords = wordCount(fitNote);
     let budget = MAX_WORDS - fitWords;
     const pieces = items.map((it) => ({ ...it, copy: { ...it.copy } }));
     // Trim longest pieces first until the card fits.
@@ -115,7 +135,7 @@
       reasons,
       notes,
       pieces,
-      fitNote: FIT_NOTE,
+      fitNote: fitNote,
       wordCount: totalWords() + fitWords,
       trimmed,
       // Placeholder provenance: no real vendor data yet (see classifier.js).
@@ -126,7 +146,7 @@
   }
 
   root.MetaStyles = root.MetaStyles || {};
-  Object.assign(root.MetaStyles, { BASE, LAYERS, MAX_WORDS, FIT_NOTE, assembleLook });
+  Object.assign(root.MetaStyles, { BASE, LAYERS, MAX_WORDS, FIT_NOTE, FIT_NOTE_LAYER, FIT_NOTE_SCARF_BAG, FIT_NOTES, fitNoteFor, assembleLook });
   if (typeof module !== "undefined" && module.exports) {
     module.exports = root.MetaStyles;
   }
