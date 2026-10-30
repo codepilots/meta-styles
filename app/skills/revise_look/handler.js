@@ -12,6 +12,23 @@
   var REVISE_WORDS=[{ re:/\bbag\b|purse|handbag/, category:"bag" },{ re:/\bscarf\b|wrap\b/, category:"scarf" },{ re:/\bblazer\b|jacket|coat/, category:"layer/blazer" },{ re:/\bcardigan\b|shrug|tie-blouse|blouse/, category:"layer/cardigan" },{ re:/\bdress\b|gown/, category:"dress" },{ re:/\btop\b|cami|camisole|tee/, category:"base/top" },{ re:/\bbottom\b|jeans|skirt|trousers|pants|mini/, category:"base/bottom" }];
   function matchRevise(t){ if(typeof t!=="string") return null; if(!/\b(no|drop|remove|without|lose|ditch|swap|skip)\b/i.test(t)) return null; for(var i=0;i<REVISE_WORDS.length;i++) if(REVISE_WORDS[i].re.test(t.toLowerCase())) return REVISE_WORDS[i].category; return null; }
   function plainNoun(c){ var m={"base/top":"top","base/bottom":"bottom","dress":"dress","layer/cardigan":"cardigan","layer/blazer":"blazer","scarf":"scarf","bag":"bag"}; return m[c]||c; }
+
+  // Pending expectation (Milestone 24): the "which piece would you like
+  // to swap or skip?" fallback below is a "we are mid-flow, awaiting a
+  // bare piece-name reply" moment. A one-word answer like "the scarf"
+  // never matches matchRevise's verb rule, so without this the next turn
+  // falls through to off_topic instead of continuing the revision.
+  // Recorded on the catalog (the single source of truth
+  // agentic-loop.js checks before routing). Never throws: a catalog
+  // failure must not break the reply itself.
+  var CLARIFY_TEXT="Tell me a little more, loveling \u2014 which piece would you like to swap or skip? \u2728";
+  function recordTextExpectation(catalog){
+    try{
+      if(catalog && typeof catalog.askQuestion==="function"){
+        catalog.askQuestion({ text:CLARIFY_TEXT, skill:"revise_look", expects:"text" });
+      }
+    }catch(e){}
+  }
   var CAVEAT=" (I can\u2019t tuck preview pictures into chat just yet, so this word-picture will have to sparkle on its own. \u2728)";
   async function handle(opts){
     var o=opts||{}, catalog=o.catalog, text=o.text||"";
@@ -24,7 +41,7 @@
     var imageDelivery={ requested:false, generated:false, delivered:false, reason:"no_preview_client" };
     if(removed.length>0) reply="Got it, loveling \u2014 set aside your "+plainNoun(cat)+" for now \u2728 Let me re-weave the rest into something lovely.";
     else if(cat) reply="No "+plainNoun(cat)+" in the mix right now, darling \u2014 but I\u2019ll re-check the fit with what we\u2019ve got \u2728";
-    else reply="Tell me a little more, loveling \u2014 which piece would you like to swap or skip? \u2728";
+    else { reply=CLARIFY_TEXT; recordTextExpectation(catalog); }
     if(catalog&&MS.assembleLook&&catalog.getActivePieces().length>0){
       var active=catalog.getActivePieces();
       var items=active.map(function(p){ return { id:p.piece_id, category:p.category, copy:{ text:"SYNTH "+p.category, placeholder:true, note:"" } }; });

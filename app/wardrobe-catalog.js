@@ -99,10 +99,13 @@
   // window use — an ISO-8601 expiry compared the same way, not a new
   // ad-hoc format. Anything older reads as already resolved.
   var PENDING_EXPECTATION_TTL_MS = 24 * 3600 * 1000;
-  // Fail-closed vocabulary for what a pending question can await. Only
-  // "image" exists today; anything else throws rather than silently
-  // matching a turn it was never meant to match.
-  var EXPECTS_VALUES = ["image"];
+  // Fail-closed vocabulary for what a pending question can await:
+  // "image" (a photo reply, e.g. What_suits consent), "text" (any
+  // non-empty text reply, e.g. revise_look's "which piece?" follow-up),
+  // "yes_no" (a short affirmative reply, e.g. "want me to put a look
+  // together?"). Anything else throws rather than silently matching a
+  // turn it was never meant to match.
+  var EXPECTS_VALUES = ["image", "text", "yes_no"];
 
   // 24h reply window, measured against the USER's latest inbound
   // received_at (user-anchored per §4 Gap 3), never per share_id.

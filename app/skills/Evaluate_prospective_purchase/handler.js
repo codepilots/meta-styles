@@ -20,6 +20,41 @@
   // "purchase confirmation trigger" (app/router.js); both must agree.
   var CONFIRM_RE = /\b(i bought it|i got it|i bought that|bought it|i picked it up)\b/;
 
+  // Short-affirmative confirmation (Milestone 24): a plain "yes"/"done"/
+  // "sure" reply to the "say 'I bought it'" prompt also completes the
+  // purchase — the pending yes_no expectation routes it here, and this
+  // accepts it. Reuses agentic-loop.js's conservative whole-reply
+  // matcher (single source of truth — never a looser local copy: a
+  // false-positive "yes" would wrongly activate a piece). Falls back to
+  // false (exact-phrase-only, the pre-M24 behaviour) when the matcher is
+  // unreachable, so confirmation can only get stricter, never looser.
+  // Photo-carrying turns are never affirmative confirmations — a picture
+  // plus "sure" is a new item to evaluate, not a bought-it.
+  function affirmativeShortReply(text){
+    try{
+      var m = null;
+      try{ if(typeof require!=="undefined") m=require("../../agentic-loop.js"); }catch(e){ m=null; }
+      if((!m||typeof m.isAffirmativeReply!=="function")&&root.MetaStyles&&root.MetaStyles.agenticLoop) m=root.MetaStyles.agenticLoop;
+      if(m&&typeof m.isAffirmativeReply==="function") return m.isAffirmativeReply(text);
+    }catch(e){}
+    return false;
+  }
+
+  // Pending expectation (Milestone 24): the "say 'I bought it'" prompt
+  // below is a yes/no moment — recorded so a plain "yes"/"done"/"sure"
+  // routes back here instead of deflecting to off_topic. Keeps the
+  // default 24h TTL deliberately: the hold itself is a 24h window made at
+  // the same moment, so the two expire together — and confirmation stays
+  // double-gated on a still-live hold anyway, so a stale routing can
+  // never activate a lapsed piece. Never throws.
+  function recordPurchaseExpectation(catalog, questionText){
+    try{
+      if(catalog && typeof catalog.askQuestion==="function"){
+        catalog.askQuestion({ text:questionText, skill:"Evaluate_prospective_purchase", expects:"yes_no" });
+      }
+    }catch(e){}
+  }
+
   function plainNoun(c){ var m={"base/top":"top","base/bottom":"bottom","dress":"dress","layer/cardigan":"cardigan","layer/blazer":"blazer","scarf":"scarf","bag":"bag"}; return m[c]||c; }
 
   // Category sniffing — same approach as catalogue_piece/handler.js:
@@ -71,7 +106,12 @@
     var nowMs = Date.now();
 
     // --- (a/b) purchase confirmation ---
-    if(CONFIRM_RE.test(text.toLowerCase())){
+    // Exact phrase wins as before; a short affirmative ("yes"/"done"/
+    // "sure") with NO photo attached also confirms — but only ever
+    // against a still-live hold (checked inside), so hedged replies
+    // ("maybe", "I'll think about it") and declines can never activate.
+    var shortYes = !imageDataUrl && !o.imagePresent && affirmativeShortReply(text);
+    if(CONFIRM_RE.test(text.toLowerCase()) || shortYes){
       var held = readHeldPieces(catalog);
       var live = null;
       for(var i = 0; i < held.length; i++){
@@ -121,9 +161,15 @@
       return { text: "Ooh, let\u2019s have a look, loveling \u2728" + tail + "But I couldn\u2019t quite tuck this one away safely, so no promises on the hold, loveling! Tell me if you bring it home and I\u2019ll catalogue it properly. \u2728", image: null, persist: { summaryDelta: "Evaluated prospective purchase (hold not stored).", preferencesDelta: "" }, skill: "Evaluate_prospective_purchase" };
     }
     var intro = "Ooh, let\u2019s have a look, loveling \u2728 I\u2019ll hold this one just for 24 hours while you decide \u2014 text first, preview only if you\u2019d like it.";
-    if(active.length === 0) return { text: intro + " Your wardrobe\u2019s empty just now, so I can\u2019t cross-check \u2014 but it looks like a darling piece on its own! Share a couple of wardrobe photos and I can show you how it would mix and match. (24hr hold, then I discard it unless you say you bought it \u2728)", image: null, persist: { summaryDelta: "Evaluated prospective purchase (empty wardrobe).", preferencesDelta: "" }, skill: "Evaluate_prospective_purchase" };
+    if(active.length === 0){
+      var emptyReply = intro + " Your wardrobe\u2019s empty just now, so I can\u2019t cross-check \u2014 but it looks like a darling piece on its own! Share a couple of wardrobe photos and I can show you how it would mix and match. (24hr hold, then I discard it unless you say you bought it \u2728)";
+      recordPurchaseExpectation(catalog, emptyReply);
+      return { text: emptyReply, image: null, persist: { summaryDelta: "Evaluated prospective purchase (empty wardrobe).", preferencesDelta: "" }, skill: "Evaluate_prospective_purchase" };
+    }
     var outfits2 = outfitsFor(active);
-    return { text: intro + " From what you\u2019ve got, this could unlock " + outfits2.length + " lovely outfits:\n" + outfits2.join("\n") + "\n\nIt\u2019s held for 24 hours, darling \u2014 say \u201CI bought it\u201D to catalogue it properly, or I\u2019ll gently let it go. Want a preview image too? \u2728", image: null, persist: { summaryDelta: "Evaluated prospective purchase: " + outfits2.length + " outfits.", preferencesDelta: "" }, skill: "Evaluate_prospective_purchase" };
+    var outfitsReply = intro + " From what you\u2019ve got, this could unlock " + outfits2.length + " lovely outfits:\n" + outfits2.join("\n") + "\n\nIt\u2019s held for 24 hours, darling \u2014 say \u201CI bought it\u201D to catalogue it properly, or I\u2019ll gently let it go. Want a preview image too? \u2728";
+    recordPurchaseExpectation(catalog, outfitsReply);
+    return { text: outfitsReply, image: null, persist: { summaryDelta: "Evaluated prospective purchase: " + outfits2.length + " outfits.", preferencesDelta: "" }, skill: "Evaluate_prospective_purchase" };
   }
 
   var api = { handle: handle, skill: "Evaluate_prospective_purchase" };

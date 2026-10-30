@@ -415,6 +415,18 @@
       reply += " (I can\u2019t tuck preview pictures into chat just yet, so this word-picture will have to sparkle on its own. \u2728)";
     }
 
+    // Pending expectation (Milestone 24): the "Want me to tweak
+    // anything?" closer above is a yes/no moment — a plain "yes" matches
+    // no router trigger and would otherwise fall to off_topic instead of
+    // continuing into revise_look's own question flow. Only recorded on
+    // this validated-look path (the honest no-valid-look fallback above
+    // asks for another photo, which routes to catalogue_piece already).
+    // Never throws: a catalog failure must not break the reply itself.
+    try{
+      if(opts && opts.catalog && typeof opts.catalog.askQuestion==="function"){
+        opts.catalog.askQuestion({ text:reply, skill:"revise_look", expects:"yes_no" });
+      }
+    }catch(e){}
     logDecision(source, chosen.items.length, rejectedReason, toolSteps);
     return {
       text: reply,

@@ -6,6 +6,20 @@
 
   function plainNoun(c){ var m={"base/top":"top","base/bottom":"bottom","dress":"dress","layer/cardigan":"cardigan","layer/blazer":"blazer","scarf":"scarf","bag":"bag"}; return m[c]||c; }
 
+  // Pending expectation (Milestone 24): the "Want me to put a look
+  // together from what you've got?" closer below is a yes/no moment — a
+  // plain "yes" matches no router trigger and would otherwise fall to
+  // off_topic instead of firing propose_look. Recorded on the catalog
+  // (the single source of truth agentic-loop.js checks before routing).
+  // Never throws: a catalog failure must not break the reply itself.
+  function recordLookExpectation(catalog, questionText){
+    try{
+      if(catalog && typeof catalog.askQuestion==="function"){
+        catalog.askQuestion({ text:questionText, skill:"propose_look", expects:"yes_no" });
+      }
+    }catch(e){}
+  }
+
   // Photo-reference capture (M21 photo-reference work): shrink the inbound
   // photo to a small PNG data URL via photo-thumb.js makeSync() and store
   // it as the piece's photo_thumb. When a SAM box rect is supplied, the
@@ -93,7 +107,9 @@
       }
     }
     var noun=pieces.length? plainNoun(pieces[0].category):"piece";
-    return { text:"Got your "+noun+" \u2014 noted, loveling! \u2728 It's tucked safely in your wardrobe. Want me to put a look together from what you've got?", image:null, persist:{ summaryDelta:"Catalogued "+noun+".", preferencesDelta:"" }, skill:"catalogue_piece" };
+    var replyText="Got your "+noun+" \u2014 noted, loveling! \u2728 It's tucked safely in your wardrobe. Want me to put a look together from what you've got?";
+    recordLookExpectation(catalog, replyText);
+    return { text:replyText, image:null, persist:{ summaryDelta:"Catalogued "+noun+".", preferencesDelta:"" }, skill:"catalogue_piece" };
   }
 
   var api = { handle: handle, skill: "catalogue_piece" };

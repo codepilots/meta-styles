@@ -9,6 +9,31 @@
 (function (root) {
   var DEFAULT_MAX_STEPS = 20;
 
+  // Conservative whole-reply affirmative list for pending yes_no
+  // expectations (Milestone 24). Deliberately narrow: a false-positive
+  // "yes" can activate a held piece into the wardrobe (purchase
+  // confirmation), so only a clearly affirmative SHORT reply counts —
+  // never a vague input. Matching is whole-reply after light
+  // normalisation (case, commas, edge punctuation); anything longer or
+  // hedged ("maybe", "I'll think about it", "not now", "yes, but…")
+  // falls through to normal routing. Shared by the pending check below
+  // and Evaluate_prospective_purchase's confirmation branch.
+  var YES_NO_AFFIRMATIVE = [
+    "yes", "yeah", "yep", "yup", "sure", "please", "definitely",
+    "absolutely", "of course", "sounds good", "go ahead", "go for it",
+    "do it", "please do", "yes please", "yeah please", "sure thing", "done"
+  ];
+
+  function isAffirmativeReply(text) {
+    if (typeof text !== "string") return false;
+    var t = text.toLowerCase().replace(/,/g, " ");
+    t = t.replace(/\s+/g, " ").replace(/^[\s]+/, "").replace(/[\s!.?…]+$/, "");
+    for (var i = 0; i < YES_NO_AFFIRMATIVE.length; i++) {
+      if (t === YES_NO_AFFIRMATIVE[i]) return true;
+    }
+    return false;
+  }
+
   function createAgenticLoop(opts) {
     var o = opts || {};
     var catalog = o.catalog || null;
@@ -75,13 +100,15 @@
       var lastTurns = inp.lastTurns || inp.history || [];
       var imageDataUrl = inp.imageDataUrl || null;
 
-      // Pending expectation (Milestone 24): a skill that just asked a
-      // follow-up (e.g. What_suits consent awaiting a photo reply)
-      // recorded it via catalog.askQuestion({ skill, expects }). Check
-      // BEFORE the router: a satisfied expectation routes straight back
-      // to that skill deterministically and the router is never consulted
-      // for that turn. An unsatisfied or expired expectation is cleared
-      // and the turn falls through to normal routing — never stuck.
+      // Pending expectation (Milestone 24, extended past df127eb's
+      // image-only first fix): a skill that just asked a follow-up
+      // (e.g. What_suits consent awaiting a photo reply, revise_look
+      // awaiting a piece name, a "want me to put a look together?"
+      // yes/no) recorded it via catalog.askQuestion({ skill, expects }).
+      // Check BEFORE the router: a satisfied expectation routes straight
+      // back to that skill deterministically and the router is never
+      // consulted for that turn. An unsatisfied or expired expectation is
+      // cleared and the turn falls through to normal routing — never stuck.
       var pendingDecision = null;
       if (catalog && typeof catalog.getPendingQuestions === "function") {
         try {
@@ -89,11 +116,28 @@
           for (var pi = 0; pi < pendings.length; pi++) {
             var pq = pendings[pi];
             if (!pq || !pq.expects) continue;
-            if (pq.expects !== "image") continue; // unknown vocabulary: leave alone, route normally
+            // Unknown vocabulary (cannot happen via askQuestion's
+            // fail-closed check, but a hand-built entry could): leave
+            // alone, route normally.
+            if (pq.expects !== "image" && pq.expects !== "text" && pq.expects !== "yes_no") continue;
             var expired = pq.expires_at ? (Date.parse(pq.expires_at) <= Date.now()) : false;
             try { if (typeof catalog.resolveQuestion === "function") catalog.resolveQuestion(pq.id); } catch (re) {}
-            if (!expired && hasImage && pq.skill) {
-              pendingDecision = { skill: pq.skill, confidence: 96, reason: "pending expectation satisfied (photo reply to just-asked question)" };
+            var satisfied = false;
+            var satisfiedKind = "";
+            if (!expired && pq.skill) {
+              if (pq.expects === "image") {
+                satisfied = hasImage;
+                satisfiedKind = "photo reply";
+              } else if (pq.expects === "text") {
+                satisfied = message.trim().length > 0;
+                satisfiedKind = "text reply";
+              } else if (pq.expects === "yes_no") {
+                satisfied = isAffirmativeReply(message);
+                satisfiedKind = "affirmative reply";
+              }
+            }
+            if (satisfied) {
+              pendingDecision = { skill: pq.skill, confidence: 96, reason: "pending expectation satisfied (" + satisfiedKind + " to just-asked question)" };
             }
             break; // one expectation at a time: oldest first, never stacked
           }
@@ -196,7 +240,7 @@
     return { handleTurn: handleTurn, router: router, summariser: summariser, DEFAULT_MAX_STEPS: DEFAULT_MAX_STEPS };
   }
 
-  var api = { createAgenticLoop: createAgenticLoop, DEFAULT_MAX_STEPS: DEFAULT_MAX_STEPS };
+  var api = { createAgenticLoop: createAgenticLoop, DEFAULT_MAX_STEPS: DEFAULT_MAX_STEPS, isAffirmativeReply: isAffirmativeReply, YES_NO_AFFIRMATIVE: YES_NO_AFFIRMATIVE.slice() };
   root.MetaStyles = root.MetaStyles || {};
   root.MetaStyles.agenticLoop = api;
   if (typeof module !== "undefined" && module.exports) module.exports = api;
