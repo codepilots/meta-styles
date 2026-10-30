@@ -1,4 +1,15 @@
 "use strict";
+// RETIRED by Milestone 20 (d4f8ba4): browser-side auto-reply.js was removed —
+// wardrobe-service/server.js is now the sole writer/sender. This test
+// covered the old browser wiring that caused the duplicate-send incident.
+// Kept for history; skipped — not deleted — so git blame still shows it.
+// New coverage: wardrobe-service handles the same behaviour server-side.
+if (!require("fs").existsSync(require("path").join(__dirname, "..", "auto-reply.js"))) {
+  console.log("SKIP: " + __filename.split("/").pop() + " — auto-reply.js retired by M20");
+  process.exit(0);
+}
+
+
 /* meta-styles — turn-loop live-wiring tests (chat-first pivot follow-up).
  *
  * app/turn-loop.js was built and unit-tested in isolation
