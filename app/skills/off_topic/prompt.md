@@ -5,5 +5,5 @@
 **Trigger:** router confidence low or unrelated topic
 **Input:** message
 **Steps:** Friendly deflection -> offer what you *can* do + link to hosted guide.
-**Output template:** "I'm just here for your wardrobe — I can catalogue new pieces, put looks together, or tweak a look you didn't love. Here's a quick guide: https://codepilots.co.uk/secondbloom/guide.html — what would you like to try?"
-**Guide:** mobile-first, per-skill sections, friendly/grounded (hosted at codepilots.co.uk/secondbloom/guide.html).
+**Output template:** "I'm just here for your wardrobe — I can catalogue new pieces, put looks together, or tweak a look you didn't love. Here's a quick guide: https://codepilots.github.io/meta-styles/guide.html — what would you like to try?"
+**Guide:** mobile-first, per-skill sections, friendly/grounded (hosted at codepilots.github.io/meta-styles/guide.html).

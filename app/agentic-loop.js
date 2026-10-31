@@ -199,7 +199,7 @@
       var handler = loadSkill(decision.skill);
       if (!handler || typeof handler.handle !== "function") {
         handler = loadSkill("off_topic");
-        if (!handler) return { text: "I'm just here for your wardrobe — I can catalogue new pieces, put looks together, or tweak a look you didn't love. Here's a quick guide: https://codepilots.co.uk/secondbloom/guide.html — what would you like to try? \u2728", skill: "off_topic", decision: decision, toolCalls: wrapped.getCalls(), totalSteps: wrapped.getSteps() };
+        if (!handler) return { text: "I'm just here for your wardrobe — I can catalogue new pieces, put looks together, or tweak a look you didn't love. Here's a quick guide: https://codepilots.github.io/meta-styles/guide.html — what would you like to try? \u2728", skill: "off_topic", decision: decision, toolCalls: wrapped.getCalls(), totalSteps: wrapped.getSteps() };
       }
 
       // Server-side assembler for skills that validate looks (propose_look):

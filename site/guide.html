@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html lang="en-GB">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="description" content="Public guide to meta-styles, a Meta hackathon entry: a chat-styled personal wardrobe with fit-rule validation. How to run the judged demo, what is live and what is fallback, and the project's limits.">
+<title>meta-styles — hackathon project guide</title>
+<style>
+  :root { color-scheme: light; }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+    line-height: 1.6;
+    color: #1c1a17;
+    background: #fff;
+  }
+  .skip {
+    position: absolute;
+    left: -9999px;
+    top: 0;
+    background: #1c1a17;
+    color: #fff;
+    padding: 0.5rem 1rem;
+  }
+  .skip:focus { left: 0; }
+  header, main, footer {
+    max-width: 44rem;
+    margin: 0 auto;
+    padding: 1rem 1.25rem;
+  }
+  header { padding-top: 2rem; }
+  .standfirst { font-size: 1.1rem; }
+  nav ul {
+    list-style: none;
+    padding: 0;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.25rem 1rem;
+  }
+  h1 { font-size: 1.75rem; line-height: 1.25; }
+  h2 { font-size: 1.25rem; margin-top: 2rem; }
+  code, pre {
+    font-family: ui-monospace, Consolas, monospace;
+    background: #efe9dc;
+    border-radius: 0.25rem;
+  }
+  code { padding: 0.1rem 0.35rem; }
+  pre {
+    padding: 0.75rem 1rem;
+    overflow-x: auto;
+    white-space: pre-wrap;
+  }
+  table { border-collapse: collapse; width: 100%; margin-top: 1rem; }
+  th, td {
+    border: 1px solid #8a8272;
+    padding: 0.5rem;
+    text-align: left;
+    vertical-align: top;
+  }
+  a { color: #1a4d8f; }
+  a:visited { color: #5b2d8e; }
+  footer {
+    border-top: 1px solid #8a8272;
+    margin-top: 2rem;
+    font-size: 0.9rem;
+  }
+</style>
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+<header>
+<h1>meta-styles — a wardrobe that styles back, in chat</h1>
+<p class="standfirst">A public guide to <strong>meta-styles</strong>, an entry to the Meta Global AI Developer Hackathon (Indie Developer track). It is a persistent, per-user wardrobe and catalogue built from shared photos, with a chat interface, fit-rule validation, and an agentic loop that proposes, validates, and revises looks.</p>
+<nav aria-label="On this page">
+<ul>
+<li><a href="#what">What it is</a></li>
+<li><a href="#demo">Judged demo</a></li>
+<li><a href="#live-fallback">Live vs fallback</a></li>
+<li><a href="#limits">Honest limits</a></li>
+<li><a href="#boundary">Project boundary</a></li>
+<li><a href="#links">Repo links</a></li>
+</ul>
+</nav>
+</header>
+<main id="main">
+<section aria-labelledby="what">
+<h2 id="what">What meta-styles is</h2>
+<p>Share photos of garments and meta-styles catalogues each piece into your own persistent wardrobe. Then, in an Instagram-DM-style chat thread, it puts together complete looks from what you already own, explains why a look works, and suggests a single next purchase when something is missing. The emphasis is on full-look assembly for real bodies and second-hand-first sourcing — not on classifying one photo in isolation.</p>
+<p>Every turn runs through an agentic loop. A router picks one of eleven skills (catalogue a piece, propose or revise a look, explain the fit, evaluate a possible purchase, and others). Each proposed look is checked against explicit fit rules — a base plus exactly one finish, with invalid layering rejected — before you ever see it. If confidence is low, the agent asks a clarifying question instead of guessing. If you push back (“without the blazer”), it re-proposes minus that piece and re-validates. Low-confidence or off-topic messages get a friendly deflection with a pointer back to this guide.</p>
+</section>
+<section aria-labelledby="demo">
+<h2 id="demo">Running the judged demo</h2>
+<p>The judged path is a local one-shot install and run. Your only requirement is your own Meta API key — no other account, credential, or hosted service is needed. From the repo root, with your key in the environment:</p>
+<pre><code>MODEL_API_KEY=&lt;your-meta-api-key&gt; sh start.sh</code></pre>
+<p>Then open <code>http://localhost:8000/mock-dm.html</code> in a browser on the same machine. That page is the judged chat surface: an inbox thread plus operator panels. A three-step walkthrough (share a dress, share a layer, get one purchase suggestion) is in the repository README.</p>
+<p>The default demo uses <strong>synthetic mock-DM data</strong> (fixtures with <code>SYNTH_</code> ids) and <strong>local-only services</strong>: a Meta-model proxy, a mock DM bot, and a static server, all on your machine. Meta model calls always use your own key, which travels in the process environment only and is never written into source, commits, or logs. Without a key the demo still starts and runs on clearly labelled stub and cached fallbacks.</p>
+</section>
+<section aria-labelledby="live-fallback">
+<h2 id="live-fallback">Live vs fallback behaviour</h2>
+<table>
+<caption>What each surface does with a key, and without one.</caption>
+<thead>
+<tr><th scope="col">Surface</th><th scope="col">Live (with your key)</th><th scope="col">Without key or offline</th></tr>
+</thead>
+<tbody>
+<tr><td>Segmentation</td><td>SAM 3.1 via the local proxy</td><td>Deterministic stub shapes or a manual box</td></tr>
+<tr><td>Classification, copy, and look assembly</td><td>Muse Spark via the local proxy</td><td>Labelled heuristics and placeholder copy</td></tr>
+<tr><td>Look preview image</td><td>Muse Image via the local proxy</td><td>Collage fallback (see limits)</td></tr>
+<tr><td>DM thread</td><td colspan="2">Local mock bot with synthetic data either way — the mock is the judged path</td></tr>
+</tbody>
+</table>
+</section>
+<section aria-labelledby="limits">
+<h2 id="limits">Honest limits</h2>
+<ul>
+<li><strong>No invented details.</strong> Asked about fabric, price, or vendor, the agent says plainly it does not hold that data. It never invents a listing.</li>
+<li><strong>Preview may be unavailable on fallback.</strong> Without model access there is no AI-rendered preview; the app shows a simple collage instead, and says so.</li>
+<li><strong>Real Instagram mode is local-only and not the judged path.</strong> A live-bot mode exists but works only on the machine already running that bot, and real sends fire solely on explicit user clicks. Judges should use the mock path above.</li>
+<li><strong>There is no hosted live demo.</strong> Delivery is the local install-and-run above, not a public URL.</li>
+</ul>
+</section>
+<section aria-labelledby="boundary">
+<h2 id="boundary">Project boundary: prior work stays prior work</h2>
+<p>Some Instagram plumbing behind this project — the SecondBloom DM-share receiver and its local read, catalog, and send routes — was built and deployed in mid-October 2026, before the hackathon build window opened. It is documented as prior work in <code>docs/prior-work-instagram.md</code> and is <strong>not</strong> claimed as hackathon-built. Only the meta-styles-side client and integration code in this repo is new work from the hackathon window. Anything the older service feeds the app works only on the machine running that service; elsewhere the app falls back cleanly to synthetic fixtures.</p>
+</section>
+<section aria-labelledby="links">
+<h2 id="links">Repo links</h2>
+<ul>
+<li><a href="https://github.com/codepilots/meta-styles/blob/master/README.md">Repository README</a> — full run instructions and the judge walkthrough.</li>
+<li><a href="https://github.com/codepilots/meta-styles/blob/master/docs/pitch.md">Project pitch</a> — problem, approach, and plan.</li>
+<li><a href="https://github.com/codepilots/meta-styles/blob/master/README.md">Local run instructions</a> — the judged-demo command and live-mode notes (same README).</li>
+</ul>
+</section>
+</main>
+<footer>
+<p>meta-styles hackathon guide. Built during the hackathon window, October–November 2026. No trackers, no external assets, no hosted demo — clone the repo and run it locally.</p>
+</footer>
+</body>
+</html>

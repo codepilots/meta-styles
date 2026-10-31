@@ -100,7 +100,7 @@ async function run() {
       message: "what's the weather today?", hasImage: false, wardrobeSummary: "", preferences: "", lastTurns: []
     });
     assert.strictEqual(res3.skill, "off_topic", "weather -> off_topic, got " + res3.skill + " (" + res3.decision.reason + ")");
-    assert.ok(res3.text.indexOf("https://codepilots.co.uk/secondbloom/guide.html") !== -1, "guide link in off_topic");
+    assert.ok(res3.text.indexOf("https://codepilots.github.io/meta-styles/guide.html") !== -1, "guide link in off_topic");
     noLongIds(res3.text);
     assert.ok(res3.totalSteps <= 20, "20-step cap");
     console.log("  pass: off-topic -> off_topic with guide link, steps=" + res3.totalSteps);

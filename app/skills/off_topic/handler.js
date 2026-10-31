@@ -4,7 +4,7 @@
  */
 (function (root) {
 
-  var GUIDE="https://codepilots.co.uk/secondbloom/guide.html";
+  var GUIDE="https://codepilots.github.io/meta-styles/guide.html";
   async function handle(opts){
     return { text:"I\u2019m just here for your wardrobe \u2014 I can catalogue new pieces, put looks together, or tweak a look you didn\u2019t love. Here\u2019s a quick guide: "+GUIDE+" \u2014 what would you like to try, loveling? \u2728", image:null, persist:{ summaryDelta:"Off-topic deflection.", preferencesDelta:"" }, skill:"off_topic" };
   }

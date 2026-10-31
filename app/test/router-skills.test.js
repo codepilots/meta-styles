@@ -106,7 +106,7 @@ async function run() {
   {
     const h = require("../skills/off_topic/handler.js");
     const r = await h.handle({ catalog: Wardrobe.createCatalog({userKey:"SYNTH_off"}), text:"weather", imagePresent:false });
-    assert.ok(r.text.includes("https://codepilots.co.uk/secondbloom/guide.html"), "guide link present");
+    assert.ok(r.text.includes("https://codepilots.github.io/meta-styles/guide.html"), "guide link present");
     console.log("  pass: off_topic guide link");
   }
   {
@@ -187,7 +187,7 @@ async function run() {
     }
     assert.ok(fs.existsSync("app/skills/persona.md"), "persona.md exists");
     // off_topic prompt must contain guide URL
-    assert.ok(fs.readFileSync("app/skills/off_topic/prompt.md","utf8").includes("https://codepilots.co.uk/secondbloom/guide.html"), "off_topic prompt has guide link");
+    assert.ok(fs.readFileSync("app/skills/off_topic/prompt.md","utf8").includes("https://codepilots.github.io/meta-styles/guide.html"), "off_topic prompt has guide link");
     console.log("  pass: all 11 prompt.md + persona.md exist, off_topic has guide link");
   }
 
