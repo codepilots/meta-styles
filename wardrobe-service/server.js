@@ -117,6 +117,63 @@ var STOPPED_CLAMP_MS = Scheduler.BACKOFF_POLL_MS;
 var MAX_TOOL_STEPS = 20;
 var DETECT_BAG_TTL_MS = 24 * 3600 * 1000;
 
+function mergeDetectBag(existing, incoming){
+  if(!incoming || !Array.isArray(incoming.regions)) return existing;
+  if(!existing || !Array.isArray(existing.regions) || !existing.regions.length){
+    var copy = { at: incoming.at, regions: incoming.regions.slice(), source_share_id: incoming.source_share_id, source_share_ids: incoming.source_share_ids ? incoming.source_share_ids.slice() : (incoming.source_share_id ? [incoming.source_share_id] : []) };
+    return copy;
+  }
+  var seen={};
+  for(var i=0;i<existing.regions.length;i++){ var h=existing.regions[i]&&existing.regions[i].crop_hash; if(h) seen[h]=true; }
+  var mergedRegions = existing.regions.slice();
+  for(var j=0;j<incoming.regions.length;j++){
+    var r=incoming.regions[j];
+    if(!r) continue;
+    var ch=r.crop_hash;
+    if(ch && seen[ch]) continue;
+    mergedRegions.push(r);
+    if(ch) seen[ch]=true;
+  }
+  var oldestAt = (existing.at!=null && incoming.at!=null) ? Math.min(existing.at, incoming.at) : (existing.at!=null?existing.at:incoming.at);
+  var sids = (existing.source_share_ids||[]).slice();
+  var incSids = incoming.source_share_ids ? incoming.source_share_ids : (incoming.source_share_id ? [incoming.source_share_id] : []);
+  for(var k=0;k<incSids.length;k++){ if(sids.indexOf(incSids[k])===-1) sids.push(incSids[k]); }
+  if(incoming.source_share_id && sids.indexOf(incoming.source_share_id)===-1) sids.push(incoming.source_share_id);
+  return { at: oldestAt, regions: mergedRegions, source_share_id: existing.source_share_id||incoming.source_share_id, source_share_ids: sids };
+}
+function bagRegionsChanged(before, after){
+  if(!before && after) return true;
+  if(before && !after) return true;
+  if(!before && !after) return false;
+  if((before.regions||[]).length !== (after.regions||[]).length) return true;
+  var aHashes={}, bHashes={};
+  for(var i=0;i<(before.regions||[]).length;i++){ var h=(before.regions[i]||{}).crop_hash; if(h) aHashes[h]=true; }
+  for(var j=0;j<(after.regions||[]).length;j++){ var hh=(after.regions[j]||{}).crop_hash; if(hh) bHashes[hh]=true; }
+  for(var k in bHashes){ if(!aHashes[k]) return true; }
+  return false;
+}
+function buildCombinedAskText(regions){
+  var nouns = regions.map(function(r){ return nounFor(r.category)||"piece"; });
+  var listStr="";
+  if(nouns.length===2) listStr=nouns[0]+" and "+nouns[1];
+  else if(nouns.length>2) listStr=nouns.slice(0,-1).join(", ")+" and "+nouns[nouns.length-1];
+  else listStr=nouns.join(", ");
+  var suffix = regions.length>1 ? " pieces across those photos" : " piece";
+  if(regions.length>1) return "Found "+regions.length+" pieces across those photos, loveling \u2728 \u2014 a "+listStr+". Shall I add all of them?";
+  return "Found "+regions.length+" pieces in that photo, loveling \u2728 \u2014 a "+listStr+". Shall I add all of them?";
+}
+function resolveAllCatalogueYesNo(catalog){
+  try{
+    var pqs=catalog.getPendingQuestions()||[];
+    for(var i=0;i<pqs.length;i++){
+      if(pqs[i]&&pqs[i].skill==="catalogue_piece"&&pqs[i].expects==="yes_no"){
+        try{ catalog.resolveQuestion(pqs[i].id);}catch(e){}
+      }
+    }
+  }catch(e){}
+}
+
+
 // Plain nouns for the status activity feed — category slugs stay in code,
 // never in front of a watcher. (Same convention as the retired browser
 // wiring: no tokens, no share/message ids, no API dumps in log lines.)
@@ -407,7 +464,6 @@ function createService(opts) {
             for(var pe=0;pe<pqsExp.length;pe++){
               if(pqsExp[pe]&&pqsExp[pe].skill==="catalogue_piece"&&pqsExp[pe].expects==="yes_no"){
                 try{ ctx.catalog.resolveQuestion(pqsExp[pe].id); }catch(e){}
-                break;
               }
             }
           }catch(e){}
@@ -457,29 +513,29 @@ function createService(opts) {
         // hold them); here we ensure PIECES are saved (best-effort, never
         // blocking), which is the only restart-persisted data.
         // Persist pendingBag from catalogue_piece multi-detect ask; clear on add/discard or expiry
+        // NOTE: merging for accumulated-ask is handled in processOne (tick-level), not here;
+        // this block only handles text-answer clearing and keeps direct overwrite for non-tick paths (e.g. single photo legacy).
         try{
           var hr2 = result && result.handlerResult;
           if(hr2 && hr2.pendingBag && Array.isArray(hr2.pendingBag.regions)){
-            ctx.detectBag = hr2.pendingBag;
+            // Normalize bag to include source_share_ids for merge tracking
+            if(!hr2.pendingBag.source_share_ids){
+              hr2.pendingBag.source_share_ids = hr2.pendingBag.source_share_id ? [hr2.pendingBag.source_share_id] : [];
+            }
+            // Direct set only if not in a tick-merged flow (processOne will override with merged bag)
+            // Keep old behaviour for single-photo legacy calls outside tick merging
+            if(!ctx._tickMerging){
+              ctx.detectBag = hr2.pendingBag;
+            }
           } else if(skillName==="catalogue_piece" && hr2 && hasImage===false && pendingBagForTurn){
             // text reply that resolved the pending bag -> clear
             ctx.detectBag = null;
-          } else if(hr2 && hr2.text && /Found \d+ pieces in that photo/.test(hr2.text)===false){
-            // If single-piece or other outcome, ensure no stale bag from earlier photo that expired but wasn't cleared
           }
         }catch(e){}
         // Also detect expiry after the turn: if bag still present but expired, clear it
         if(ctx.detectBag && (nowMs() - (ctx.detectBag.at||0) > DETECT_BAG_TTL_MS)){
           ctx.detectBag=null;
-          try{
-            var pqs2 = ctx.catalog.getPendingQuestions()||[];
-            for(var pqi=0;pqi<pqs2.length;pqi++){
-              if(pqs2[pqi]&&pqs2[pqi].skill==="catalogue_piece"&&pqs2[pqi].expects==="yes_no"){
-                try{ ctx.catalog.resolveQuestion(pqs2[pqi].id); }catch(e){}
-                break;
-              }
-            }
-          }catch(e){}
+          resolveAllCatalogueYesNo(ctx.catalog);
         }
         return saveBestEffort(ctx).then(function () {
           return { result: result, toolCalls: toolCalls, totalSteps: totalSteps, skill: skillName };
@@ -874,6 +930,31 @@ function createService(opts) {
     return runAgenticTurn(ctx, item, id).then(function (agentic) {
       var result = agentic.result;
       var skill = agentic.skill || (result && result.skill) || "unknown";
+      var hrPending = result && result.handlerResult ? result.handlerResult.pendingBag : null;
+      // Detection accumulation per tick: suppress per-photo send, merge into ctx.detectBag
+      if(hrPending && Array.isArray(hrPending.regions) && hrPending.regions.length){
+        // Ensure source_share_ids tracking
+        if(!hrPending.source_share_ids) hrPending.source_share_ids = hrPending.source_share_id ? [hrPending.source_share_id] : [];
+        // Merge into ctx.detectBag instead of replacing (append by crop_hash, oldest at, record sources)
+        var before = ctx.detectBag;
+        ctx.detectBag = mergeDetectBag(ctx.detectBag, hrPending);
+        // Track per-tick state for combined-ask post-processing
+        if(ctx._tickLastShare !== undefined){
+          ctx._tickLastShare = { item: item, id: id };
+        }
+        if(ctx._tickHadAnyDetect !== undefined){
+          ctx._tickHadAnyDetect = true;
+          // hasMulti if any bag (before or incoming) had >1 regions
+          var incomingIsMulti = hrPending.regions.length > 1;
+          var existingIsMulti = before && before.regions && before.regions.length > 1;
+          if(incomingIsMulti || existingIsMulti) ctx._tickHadMulti = true;
+        }
+        if(!ctx._tickPendingBags) ctx._tickPendingBags = [];
+        ctx._tickPendingBags.push({ id: id, item: item, bag: hrPending });
+        // Suppress send, mark handled with internal outcome pending_ask (no idempotency consumption)
+        // No activity for pending_ask itself; the combined ask will log when sent
+        return noteTerminal(id, "pending_ask", true, false);
+      }
       var text = result && typeof result.text === "string" ? result.text : "";
 
       if (!text) {
@@ -1130,10 +1211,22 @@ function createService(opts) {
       var items = page.items || [];
       counts.polled += items.length;
       scheduler.noteInboundPoll(items.length);
+      // Snapshot per-user detectBag before tick for change detection
+      var tickBagBefore = new Map();
+      users.forEach(function(ctx, ref){ tickBagBefore.set(ref, ctx.detectBag ? { at: ctx.detectBag.at, regions: (ctx.detectBag.regions||[]).slice(), source_share_id: ctx.detectBag.source_share_id, source_share_ids: (ctx.detectBag.source_share_ids||[]).slice() } : null); ctx._tickMerging = true; ctx._tickLastShare = null; ctx._tickHadAnyDetect = false; ctx._tickHadMulti = false; ctx._tickPendingBags = []; });
       var chain = Promise.resolve();
       var outcomes = [];
       items.forEach(function (item) {
         chain = chain.then(function () {
+          // Ensure new ctx created during tick also gets tick flags
+          var urefForItem = (mode==="mock") ? demoUserRef : (item && typeof item.user_ref==="string" ? item.user_ref : null);
+          if(urefForItem && !tickBagBefore.has(urefForItem)){
+            var existingCtx = users.get(urefForItem);
+            if(existingCtx){ tickBagBefore.set(urefForItem, existingCtx.detectBag ? { at: existingCtx.detectBag.at, regions: (existingCtx.detectBag.regions||[]).slice(), source_share_id: existingCtx.detectBag.source_share_id, source_share_ids: (existingCtx.detectBag.source_share_ids||[]).slice() } : null); existingCtx._tickMerging=true; existingCtx._tickLastShare=null; existingCtx._tickHadAnyDetect=false; existingCtx._tickHadMulti=false; existingCtx._tickPendingBags=[]; }
+            else {
+              // Will be created inside processOne; we will handle via after-check of all users
+            }
+          }
           return processOne(item).then(function (outcome) {
             outcomes.push(outcome);
             return null;
@@ -1141,6 +1234,129 @@ function createService(opts) {
         });
       });
       return chain.then(function () {
+        // Per-user combined-ask post-processing: if merged bag changed this tick, build ONE ask via last share
+        var tickCombinedPromises = [];
+        users.forEach(function(ctx, ref){
+          try{ delete ctx._tickMerging; }catch(e){ ctx._tickMerging=false; }
+          var before = tickBagBefore.get(ref) || null;
+          var after = ctx.detectBag || null;
+          var hadDetectInTick = ctx._tickHadAnyDetect === true;
+          // For users created mid-tick without snapshot, treat before as null
+          if(!tickBagBefore.has(ref) && after){
+            before = null;
+            hadDetectInTick = true;
+          }
+          var changed = bagRegionsChanged(before, after);
+          // Also need to handle case where after exists but changed false yet we had re-ask due to later detection landing while bag pending
+          // In that model, mergeDetectBag deduplicates but new incoming with same hashes yields no change -> should not re-ask
+          // So only when changed is true we re-ask
+          if(changed && after && after.regions && after.regions.length){
+            var lastShare = ctx._tickLastShare;
+            if(!lastShare || !lastShare.id || !lastShare.item){
+              // Fallback: no last share recorded (should not happen), skip
+              return;
+            }
+            // Batch uniformity: if EVERY detected photo in tick was single-region, do instant auto-add instead of ask
+            // hadMulti false means all detected bags in tick were single-region (1 each)
+            if(!ctx._tickHadMulti){
+              // All-single tick: instant auto-add flow unchanged — auto-add each pending single and send per-share replies
+              var pendingBags = ctx._tickPendingBags || [];
+              var perShareSends = [];
+              var anyAdded = false;
+              for(var pbi=0; pbi<pendingBags.length; pbi++){
+                (function(entry){
+                  var bagForShare = entry.bag;
+                  var shareIdForSend = entry.id;
+                  var shareItemForSend = entry.item;
+                  // Auto-add each region in this bag (should be 1)
+                  for(var riA=0; riA<(bagForShare.regions||[]).length; riA++){
+                    var regA = bagForShare.regions[riA];
+                    if(!regA) continue;
+                    var sidA = regA.source_share_id || shareIdForSend;
+                    // Dedupe by crop_hash
+                    var existsA=false;
+                    try{ var exA=ctx.catalog.getPieces()||[]; for(var eiA=0; eiA<exA.length; eiA++){ if(exA[eiA]&&exA[eiA].crop_hash===regA.crop_hash) { existsA=true; break; } } }catch(e){}
+                    if(existsA) continue;
+                    var inpA={ category:regA.category, attributes:regA.attributes||{}, source_share_id:sidA };
+                    if(regA.thumb) inpA.photo_thumb=regA.thumb;
+                    if(regA.original) inpA.image_original=regA.original;
+                    if(regA.crop_hash) inpA.crop_hash=regA.crop_hash;
+                    try{ ctx.catalog.addPiece(inpA); anyAdded=true; }catch(e){ try{ var bareA={ category:regA.category, attributes:regA.attributes||{}, source_share_id:sidA }; if(regA.crop_hash) bareA.crop_hash=regA.crop_hash; ctx.catalog.addPiece(bareA); anyAdded=true; }catch(e2){} }
+                  }
+                  var nounA = bagForShare.regions && bagForShare.regions[0] ? nounFor(bagForShare.regions[0].category) : "piece";
+                  var textA = "Got your "+nounA+" \u2014 noted, loveling! \u2728 It's tucked safely in your wardrobe. Want me to put a look together from what you've got?";
+                  // Record expectation for look proposal
+                  try{ ctx.catalog.askQuestion({ text: textA, skill:"propose_look", expects:"yes_no"});}catch(e){}
+                  var sendP = sendComposed(ctx, shareIdForSend, textA, { withImage: false });
+                  // Update outcomes: replace corresponding pending_ask with its send outcome
+                  var idxForOut = -1;
+                  for(var oi2=0; oi2<outcomes.length; oi2++){ if(outcomes[oi2]==="terminal:pending_ask"){ // find first pending_ask not yet replaced
+                      // Heuristic: assume order matches pendingBags order
+                      idxForOut = oi2; break; } }
+                  // Track promise
+                  perShareSends.push(sendP.then(function(res){ if(idxForOut!==-1) outcomes[idxForOut]=res; }));
+                })(pendingBags[pbi]);
+              }
+              if(anyAdded){ try{ ctx.catalog.save(); }catch(e){} }
+              // Clear bag (all-single should not leave pending bag)
+              ctx.detectBag = null;
+              resolveAllCatalogueYesNo(ctx.catalog);
+              if(perShareSends.length) tickCombinedPromises.push(Promise.all(perShareSends).then(function(){}));
+              return;
+            }
+            // Window check: last share's own 24h window must still be open, else drop bag with activity line
+            var winOpen = Scheduler.isWindowOpen(lastShare.item.received_at, nowMs());
+            try{ ctx.catalog.noteInboundShare({ shareId: lastShare.id, receivedAt: lastShare.item.received_at }); }catch(e){ winOpen=false; }
+            var gate2 = Scheduler.checkSendWindow(ctx.catalog);
+            if(!winOpen || !gate2.allowed){
+              ctx.detectBag = null;
+              resolveAllCatalogueYesNo(ctx.catalog);
+              say("Reply window expired, didn't send a reply.");
+              return;
+            }
+            // Build combined ask text (multi-photo honesty)
+            var askText = buildCombinedAskText(after.regions);
+            // Replace any previous unanswered catalogue_piece yes_no before asking (not stacking)
+            resolveAllCatalogueYesNo(ctx.catalog);
+            try{ ctx.catalog.askQuestion({ text: askText, skill:"catalogue_piece", expects:"yes_no" }); }catch(e){}
+            // Fix the outcomes array: replace pending_ask entry for lastShare with the combined ask send outcome
+            // We will send via ordinary send path, inheriting confirm/idempotency/window semantics
+            var p = sendComposed(ctx, lastShare.id, askText, { withImage: false }).then(function(outcome){
+              // On terminal, ack media of last share (and optionally all pending shares' media? but only last share's send consumes one idempotency key)
+              // For other pending shares, their media will never be acked via send; but they are marked pending_ask terminal, so no retry needed
+              // However we should ack media for all contributing shares to prevent retry of media fetch
+              var sids = after.source_share_ids || [];
+              for(var si=0; si<sids.length; si++){
+                var sidAck = sids[si];
+                // Find corresponding item in page to get media_id
+                for(var ii2=0; ii2<items.length; ii2++){ if(items[ii2].id===sidAck && items[ii2].media_id) acknowledgeMedia(items[ii2].media_id); }
+              }
+              // outcomes array update: find pending_ask index for lastShare and replace with outcome tag (sent)
+              // outcomes already contains pending_ask terminals; we need to replace that entry's outcome string for cursor logic
+              // Instead push outcome and handle cursor extra; but spec says both photo shares terminal without sends except one ask sent
+              // So outcomes length stays same, but one of them becomes terminal:sent
+              for(var oi=0; oi<outcomes.length; oi++){
+                if(outcomes[oi]==="terminal:pending_ask"){
+                  // Replace first pending_ask that matches lastShare? Actually there are multiple pending_ask; we replace the last one
+                }
+              }
+              // Replace the last pending_ask with sent outcome
+              for(var k2=outcomes.length-1; k2>=0; k2--){ if(outcomes[k2]==="terminal:pending_ask"){ outcomes[k2]=outcome; break; } }
+              return outcome;
+            }, function(err){
+              // On failure, treat as retry (but we already marked pending_ask terminal)
+              return "retry";
+            });
+            tickCombinedPromises.push(p);
+          }
+          // Cleanup tick flags
+          try{ delete ctx._tickLastShare; delete ctx._tickHadAnyDetect; delete ctx._tickHadMulti; delete ctx._tickPendingBags; }catch(e){}
+        });
+        if(tickCombinedPromises.length){
+          return Promise.all(tickCombinedPromises).then(function(){ return null; });
+        }
+      }).then(function(){
+
         var allTerminal = outcomes.every(function (outcome) {
           return typeof outcome === "string" && outcome.indexOf("terminal:") === 0;
         });

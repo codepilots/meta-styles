@@ -97,10 +97,15 @@ async function run(){
   }
   {
     const cat=Wardrobe.createCatalog({ userKey:"SYNTH_user_fallback3_"+Date.now() });
+    // Contract since the combined-ask flow (decisions #12 addendum): the handler
+    // defers even single-region detections to a pending bag; the SERVICE
+    // auto-adds them immediately when the whole tick was single-region
+    // (covered at service level in multi-detect-service.test.js + e2e).
     const r=await Handler.handle({ catalog:cat, text:"", imageDataUrl:tinyPngDataUrl(), shareId:"SYNTH_share_fallback_3", metaClient: singleDetectClient() });
-    assert.ok(/Got your|tucked safely/i.test(r.text), "single detect -> single path");
-    assert.strictEqual(cat.getActivePieces().length,1);
-    console.log("  pass fallback single");
+    assert.ok(r.pendingBag && Array.isArray(r.pendingBag.regions) && r.pendingBag.regions.length===1, "single detect deferred to a 1-region bag");
+    assert.strictEqual(cat.getActivePieces().length,0,"handler does not auto-add; service does");
+    assert.ok(/Found \d+ piece/i.test(r.text), "ask text for the deferred region");
+    console.log("  pass fallback single (deferred to service)");
   }
 
   console.log("\n[crop_hash schema]");

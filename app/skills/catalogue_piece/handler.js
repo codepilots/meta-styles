@@ -161,8 +161,7 @@
     if(!catalog||!bag||!Array.isArray(bag.regions)||!bag.regions.length){
       return { text:"Oh loveling, that little bundle seems to have fluttered away \u2728 Mind resending the photo and I'll give it another go?", image:null, persist:{ summaryDelta:"No bag to add.", preferencesDelta:"" }, skill:"catalogue_piece" };
     }
-    var sid=bag.source_share_id||o.shareId||"SYNTH_share_"+Date.now();
-    // dedupe against existing pieces by crop_hash under same source_share_id
+    // dedupe against existing pieces by crop_hash
     var existing=[];
     try{ existing=catalog.getPieces()||[]; }catch(e){ existing=[]; }
     var existingHashes={};
@@ -175,7 +174,8 @@
       var reg=bag.regions[ri];
       if(!reg) continue;
       if(reg.crop_hash && existingHashes[reg.crop_hash]) continue;
-      var input={ category:reg.category, attributes:reg.attributes||{}, source_share_id:sid };
+      var sidPerRegion = (reg.source_share_id && typeof reg.source_share_id==="string") ? reg.source_share_id : (bag.source_share_id||o.shareId||"SYNTH_share_"+Date.now());
+      var input={ category:reg.category, attributes:reg.attributes||{}, source_share_id:sidPerRegion };
       if(reg.thumb) input.photo_thumb=reg.thumb;
       if(reg.original) input.image_original=reg.original;
       if(reg.crop_hash) input.crop_hash=reg.crop_hash;
@@ -186,7 +186,7 @@
       }catch(e){
         // duplicate piece_id or validation edge: try without thumb
         try{
-          var bare={ category:reg.category, attributes:reg.attributes||{}, source_share_id:sid };
+          var bare={ category:reg.category, attributes:reg.attributes||{}, source_share_id:sidPerRegion };
           if(reg.crop_hash) bare.crop_hash=reg.crop_hash;
           var p2=catalog.addPiece(bare);
           added.push(p2);
@@ -203,7 +203,6 @@
       for(var qi=0;qi<pqs.length;qi++){
         if(pqs[qi]&&pqs[qi].skill==="catalogue_piece"&&pqs[qi].expects==="yes_no"){
           try{ catalog.resolveQuestion(pqs[qi].id); }catch(e){}
-          break;
         }
       }
     }catch(e){}
@@ -341,20 +340,19 @@
               if(!dr.category) continue;
               usable.push(dr);
             }
-            // Only multi-piece (>1) triggers ask flow; placeholder or single -> fallback
-            if(!detectResult.placeholder && usable.length>1){
+            if(!detectResult.placeholder && usable.length>=1){
               detectUsable=usable;
             }
           }
         }catch(e){ detectUsable=null; }
       }
 
-      if(detectUsable && detectUsable.length>1){
-        // Multi-piece: build regions, store bag, ask
+      if(detectUsable && detectUsable.length>=1){
+        // Detect-bearing: build regions, store bag, ask (covers single too for batch uniformity)
         var regions=await buildRegions(imageDataUrl, detectUsable, o.metaClient, sid);
         // Cap at 6 already done at proxy; ensure here too
         if(regions.length>6) regions=regions.slice(0,6);
-        if(regions.length>1){
+        if(regions.length>=1){
           var bag={ at: Date.now(), regions: regions, source_share_id: sid };
           if(o.pendingBag!==undefined){
             o.pendingBag=bag;
