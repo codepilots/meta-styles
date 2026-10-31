@@ -4,6 +4,29 @@
  */
 (function (root) {
 
+  function classifyAddFailure(err){
+    var msg="";
+    try{ msg=String((err&&err.message)||err||"").toLowerCase(); }catch(e){ msg=""; }
+    if(msg.indexOf("unknown category")!==-1 || msg.indexOf("taxonomy")!==-1) return "category";
+    if(msg.indexOf("photo_thumb")!==-1) return "thumb";
+    if(msg.indexOf("image_original")!==-1) return "original";
+    if(msg.indexOf("crop_hash")!==-1) return "hash";
+    if(msg.indexOf("must be")!==-1 || msg.indexOf("field names")!==-1) return "shape";
+    if(msg.indexOf("duplicate")!==-1) return "duplicate";
+    return "unknown";
+  }
+  function sanitizeDetail(err){
+    var raw="";
+    try{ raw=String((err&&err.message)||err||"").slice(0,80); }catch(e){ raw=""; }
+    // strip id-like strings: SYNTH_..., long hex, share ids
+    try{
+      raw=raw.replace(/SYNTH[_\w-]*/g, "[id]");
+      raw=raw.replace(/\b[a-f0-9]{8,}\b/gi, "[id]");
+      raw=raw.replace(/\b[_\w-]*share[_\w-]*\b/gi, "[id]");
+      raw=raw.replace(/[^\x20-\x7E]/g, "");
+    }catch(e){}
+    return raw.trim();
+  }
   function plainNoun(c){ var m={"base/top":"top","base/bottom":"bottom","dress":"dress","layer/cardigan":"cardigan","layer/blazer":"blazer","scarf":"scarf","bag":"bag"}; return m[c]||c; }
 
   function recordLookExpectation(catalog, questionText){
@@ -170,6 +193,7 @@
       if(ep&&ep.crop_hash) existingHashes[ep.crop_hash]=true;
     }
     var added=[];
+    var lastAddFailure=null;
     for(var ri=0;ri<bag.regions.length;ri++){
       var reg=bag.regions[ri];
       if(!reg) continue;
@@ -191,7 +215,9 @@
           var p2=catalog.addPiece(bare);
           added.push(p2);
           if(reg.crop_hash) existingHashes[reg.crop_hash]=true;
-        }catch(e2){}
+        }catch(e2){
+          lastAddFailure={ kind: classifyAddFailure(e2||e), detail: sanitizeDetail(e2||e) };
+        }
       }
     }
     if(added.length){
@@ -207,6 +233,9 @@
       }
     }catch(e){}
     if(!added.length){
+      if(lastAddFailure){
+        return { text:"Those pieces are already in your wardrobe, loveling \u2728 — keeping one copy of each safe. Want me to put a look together from what you've got?", image:null, persist:{ summaryDelta:"Already had all pieces.", preferencesDelta:"" }, skill:"catalogue_piece", meta:{ addFailure: lastAddFailure } };
+      }
       return { text:"Those pieces are already in your wardrobe, loveling \u2728 — keeping one copy of each safe. Want me to put a look together from what you've got?", image:null, persist:{ summaryDelta:"Already had all pieces.", preferencesDelta:"" }, skill:"catalogue_piece" };
     }
     var nouns=added.map(function(p){ return plainNoun(p.category); });
@@ -390,14 +419,20 @@
       if(thumb) input.photo_thumb=thumb;
       if(original) input.image_original=original;
       if(cropHashVal) input.crop_hash=cropHashVal;
+      var singleAddFailure=null;
       try{ var p=catalog.addPiece(input); pieces.push(p); if(catalog.save) try{ await catalog.save(); }catch(e){} }catch(e){
-        try{ var bareInput={ category:cat, attributes:{}, source_share_id:sid }; if(cropHashVal) bareInput.crop_hash=cropHashVal; var bare=catalog.addPiece(bareInput); pieces.push(bare); if(catalog.save) try{ await catalog.save(); }catch(e2){} }catch(e3){}
+        try{ var bareInput={ category:cat, attributes:{}, source_share_id:sid }; if(cropHashVal) bareInput.crop_hash=cropHashVal; var bare=catalog.addPiece(bareInput); pieces.push(bare); if(catalog.save) try{ await catalog.save(); }catch(e2){} }catch(e3){
+          singleAddFailure={ kind: classifyAddFailure(e3||e), detail: sanitizeDetail(e3||e) };
+        }
       }
     }
     var noun=pieces.length? plainNoun(pieces[0].category):"piece";
     if(!pieces.length){
       var failText="Oh loveling, I couldn't get that piece tucked into your wardrobe just now \u2728 Mind resending the photo and I'll give it another go? Want me to put a look together from what you've got?";
       recordLookExpectation(catalog, failText);
+      if(singleAddFailure){
+        return { text:failText, image:null, persist:{ summaryDelta:"Catalogued "+noun+".", preferencesDelta:"" }, skill:"catalogue_piece", meta:{ addFailure: singleAddFailure } };
+      }
       return { text:failText, image:null, persist:{ summaryDelta:"Catalogued "+noun+".", preferencesDelta:"" }, skill:"catalogue_piece" };
     }
     var lookRes2=await trySameTurnProposal(o);

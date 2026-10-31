@@ -625,6 +625,20 @@ function createService(opts) {
       },
       activity: activity.slice(),
       last_error: lastError,
+      agentic_recent: (function(){
+        var out=[];
+        var src=agenticLog.slice(-10);
+        for(var i=0;i<src.length;i++){
+          var e=src[i];
+          var tools=[];
+          try{
+            var tcs=e.toolCalls||[];
+            for(var j=0;j<tcs.length;j++){ if(tcs[j]&&typeof tcs[j].tool==="string") tools.push(tcs[j].tool); }
+          }catch(e2){}
+          out.push({ skill: e.skill||"unknown", steps: typeof e.totalSteps==="number"?e.totalSteps:(tools.length), tools: tools, outcome: e.skill||"unknown" });
+        }
+        return out;
+      })(),
     };
   }
 
@@ -964,7 +978,12 @@ function createService(opts) {
 
       // Plain-language activity feed — no ids, no tokens, no long refs.
       if (skill === "catalogue_piece") {
-        say("Catalogued a piece from your photo.");
+        var hrForAct = result && result.handlerResult ? result.handlerResult : result;
+        if(hrForAct && hrForAct.meta && hrForAct.meta.addFailure && hrForAct.meta.addFailure.kind){
+          say("Couldn't catalogue that photo — " + hrForAct.meta.addFailure.kind + ".");
+        } else {
+          say("Catalogued a piece from your photo.");
+        }
       } else if (skill === "clarification") {
         say("Asked for a little clarification.");
       } else if (skill === "off_topic") {
