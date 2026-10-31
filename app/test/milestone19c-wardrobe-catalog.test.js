@@ -105,8 +105,8 @@ function main() {
     JSON.stringify(pieceA));
   check("19c: piece record carries exactly the §3 field names (incl. optional photo_thumb)",
     JSON.stringify(Object.keys(pieceA).sort()) ===
-    JSON.stringify(["added_at", "attributes", "category", "copy_preview_keys", "photo_thumb", "held_until", "piece_id", "source_share_id", "status"].sort()) &&
-    pieceA.photo_thumb === null,
+    JSON.stringify(["added_at", "attributes", "category", "copy_preview_keys", "photo_thumb", "image_original", "held_until", "piece_id", "source_share_id", "status"].sort()) &&
+    pieceA.photo_thumb === null && pieceA.image_original === null,
     Object.keys(pieceA).join(","));
   const pieceB = wardrobe.addPiece({
     category: "bag",

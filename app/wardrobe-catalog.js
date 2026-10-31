@@ -68,7 +68,16 @@
   // Exact allowed keys — fail-closed: anything else throws.
   // photo_thumb is the small PNG data-URL reference captured at catalogue
   // time by app/photo-thumb.js makeSync() (M21 photo-reference work);
-  // optional — old pieces catalogued before the feature simply lack it.
+  // optional for backward compat (old pieces before the feature lack it),
+  // but REQUIRED on all new pieces — status/collage/summary use it.
+  // image_original is the received source image as a data URL (M25
+  // originals+384px): optional — old pieces lack it, oversize/non-image
+  // inputs omit it thumb-only. JPEG or PNG magic-sniffed, cap 1 MB per
+  // piece (Instagram DMs are typically 100-300 KB, and the whole-array
+  // catalog PUT must stay inside the bot's 12 MB body ceiling at the
+  // documented piece-count cap — e.g. 10 pieces x 1 MB + thumbs/meta
+  // stays inside 12 MB with margin; see mock-ig-bot MAX_SEND_BODY and
+  // the prior-work bot's 12 MB PUT ceiling / 15 MB media cap).
   // held_until is the ISO-8601 expiry of a prospective-purchase 24h hold
   // (M22 item 3); optional — only "held" pieces carry it, and it is
   // cleared to null when the hold is confirmed via activatePiece().
@@ -80,6 +89,7 @@
     "added_at",
     "copy_preview_keys",
     "photo_thumb",
+    "image_original",
     "held_until",
     "status",
   ];
@@ -88,6 +98,12 @@
   // MAX_SEND_BODY) with room for dozens of pieces. There is no separate
   // per-piece byte cap in this file — this IS the per-piece bound.
   var PHOTO_THUMB_MAX_CHARS = 20 * 1024;
+  // Per-original size bound: 1 MB per piece (raw decoded bytes). Instagram
+  // DMs are typically 100-300 KB; a 1 MB cap keeps a full wardrobe PUT
+  // inside the bot's 12 MB body ceiling at the documented piece-count cap.
+  // Stored as a data URL; the char cap allows base64 overhead.
+  var IMAGE_ORIGINAL_MAX_BYTES = 1 * 1024 * 1024;
+  var IMAGE_ORIGINAL_MAX_CHARS = 1400000;
   // Visible evidence only: color / silhouette / layer role (§3, §8.4).
   // Never inferred fabric — "fabric" is not an allowed key, on purpose.
   var ATTRIBUTE_KEYS = ["color", "silhouette", "layer_role"];
@@ -314,6 +330,7 @@
         added_at: p.added_at,
         copy_preview_keys: Object.assign({}, p.copy_preview_keys),
         photo_thumb: p.photo_thumb === undefined || p.photo_thumb === null ? null : p.photo_thumb,
+        image_original: p.image_original === undefined || p.image_original === null ? null : p.image_original,
         held_until: p.held_until === undefined || p.held_until === null ? null : p.held_until,
         status: p.status,
       };
@@ -332,6 +349,36 @@
         throw new Error(
           "wardrobe-catalog: " + label + " must be a small PNG/JPEG data URL " +
           "(<=" + PHOTO_THUMB_MAX_CHARS + " chars)"
+        );
+      }
+      return value;
+    }
+
+    // Optional original image: null/absent is valid (old pieces, oversize
+    // or non-image inputs, or thumb-only fallback). A present value must
+    // be a JPEG or PNG data URL within the per-original bound (1 MB raw,
+    // ~1.4 MB chars with base64 overhead); anything else throws.
+    // The bound keeps whole-catalog PUTs inside the bot's 12 MB ceiling.
+    function checkImageOriginal(value, label) {
+      if (value === undefined || value === null) return null;
+      if (typeof value !== "string" || value.length > IMAGE_ORIGINAL_MAX_CHARS ||
+          !(value.indexOf("data:image/png;base64,") === 0 ||
+            value.indexOf("data:image/jpeg;base64,") === 0)) {
+        throw new Error(
+          "wardrobe-catalog: " + label + " must be a PNG/JPEG data URL " +
+          "(<=" + IMAGE_ORIGINAL_MAX_CHARS + " chars)"
+        );
+      }
+      // Decode length guard: base64 payload ~4/3 of raw; 1 MB raw cap.
+      var b64 = value.slice(value.indexOf(",") + 1);
+      var rawLen;
+      try {
+        if (typeof Buffer !== "undefined") rawLen = Buffer.from(b64, "base64").length;
+        else rawLen = Math.ceil(b64.length * 3 / 4);
+      } catch (e) { rawLen = Infinity; }
+      if (rawLen > IMAGE_ORIGINAL_MAX_BYTES) {
+        throw new Error(
+          "wardrobe-catalog: " + label + " exceeds " + IMAGE_ORIGINAL_MAX_BYTES + " bytes"
         );
       }
       return value;
@@ -381,6 +428,7 @@
       }
       rejectUnknownKeys(p.copy_preview_keys, COPY_PREVIEW_KEYS, "stored copy_preview_keys");
       checkPhotoThumb(p.photo_thumb, "stored photo_thumb");
+      checkImageOriginal(p.image_original, "stored image_original");
       checkHeldUntil(p.held_until, "stored held_until");
       if (PIECE_STATUSES.indexOf(p.status) === -1) {
         throw new Error("wardrobe-catalog: stored piece has an unknown status");
@@ -497,6 +545,7 @@
         added_at: v.added_at === undefined ? nowIso() : isoOrThrow(v.added_at, "added_at"),
         copy_preview_keys: { copy: cpk.copy === undefined ? null : cpk.copy, preview: cpk.preview === undefined ? null : cpk.preview },
         photo_thumb: checkPhotoThumb(v.photo_thumb, "photo_thumb"),
+        image_original: checkImageOriginal(v.image_original, "image_original"),
         held_until: checkHeldUntil(v.held_until, "held_until"),
         status: status,
       };
@@ -799,6 +848,8 @@
     PIECE_STATUSES: PIECE_STATUSES,
     PIECE_KEYS: PIECE_KEYS,
     PHOTO_THUMB_MAX_CHARS: PHOTO_THUMB_MAX_CHARS,
+    IMAGE_ORIGINAL_MAX_BYTES: IMAGE_ORIGINAL_MAX_BYTES,
+    IMAGE_ORIGINAL_MAX_CHARS: IMAGE_ORIGINAL_MAX_CHARS,
     ATTRIBUTE_KEYS: ATTRIBUTE_KEYS,
     TURN_KEYS: TURN_KEYS,
     REPLY_WINDOW_MS: REPLY_WINDOW_MS,

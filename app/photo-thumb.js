@@ -52,6 +52,9 @@
   var MAX_DIM = 96;               // longest thumbnail side, px
   var BYTE_BUDGET = 10 * 1024;    // re-encoded thumb must fit (raw bytes)
   var MAX_CHARS = 20 * 1024;      // schema cap (wardrobe-catalog.js mirrors this bound)
+  var REF_DIM = 384;              // reference size for Muse edit model (M25)
+  var REF_BYTE_BUDGET = 500 * 1024; // 384px PNG typically 20-200KB, allow 500KB max
+  var REF_MAX_CHARS = 800 * 1024; // ~500KB raw -> ~700KB base64
   var MAX_INPUT_BYTES = 20 * 1024 * 1024; // decode guard (CPU/DoS bound)
   var MAX_PIXELS = 12 * 1000 * 1000;      // decoded-pixel guard
 
@@ -361,8 +364,11 @@
   // output capped, no shell, arg-array only, stdin/stdout pipes, timeout,
   // no temp files, no image-byte logging. Returns Uint8Array PNG or null.
   // Never throws for bad input; programmer errors still throw fail().
-  function jpegToPngBytes(jpegBytes) {
+  function jpegToPngBytes(jpegBytes, targetDim) {
     if (!jpegBytes || jpegBytes.length === 0 || jpegBytes.length > MAX_INPUT_BYTES) return null;
+    var dim = typeof targetDim === "number" && targetDim > 0 ? targetDim : 96;
+    // Clamp dim to REF_DIM to avoid unbounded ffmpeg scale.
+    if (dim > REF_DIM) dim = REF_DIM;
     var cp = null;
     try {
       if (typeof require === "undefined") return null;
@@ -374,12 +380,12 @@
         "-hide_banner", "-loglevel", "error",
         "-f", "image2pipe", "-i", "pipe:0",
         "-frames:v", "1",
-        "-vf", "scale=w=96:h=96:force_original_aspect_ratio=decrease",
+        "-vf", "scale=w=" + dim + ":h=" + dim + ":force_original_aspect_ratio=decrease",
         "-f", "image2pipe", "-vcodec", "png",
         "pipe:1"
       ], {
         input: Buffer.from(jpegBytes),
-        maxBuffer: 2 * 1024 * 1024,
+        maxBuffer: 4 * 1024 * 1024,
         timeout: 5000,
         windowsHide: true
       });
@@ -397,11 +403,11 @@
   // (GIF/WebP, garbage with an image data-URL wrapper) throws fail() and
   // the caller maps it to null — the piece still catalogues without a thumb.
   // JPEG conversion failure also maps to fail() so callers keep fail-soft.
-  function decodePixels(bytes) {
+  function decodePixels(bytes, targetDim) {
     var kind = sniffKind(bytes);
     if (kind === "png") return decodePng(bytes);
     if (kind === "jpeg") {
-      var pngBytes = jpegToPngBytes(bytes);
+      var pngBytes = jpegToPngBytes(bytes, targetDim);
       if (pngBytes) return decodePng(pngBytes);
       throw fail("JPEG conversion unavailable or failed");
     }
@@ -416,20 +422,39 @@
   // ([x,y,w,h] fractions in [0,1], the SAM box shape) crops the decoded
   // pixels BEFORE resampling; invalid rects keep the whole photo. Never
   // throws for bad input — null means "catalogue without a thumb".
-  function makeSync(dataUrl, cropRect) {
+  // Optional dim (number) requests a larger reference (e.g. 384px for
+  // Muse edit model); JPEG sources go through the same ffmpeg path with
+  // size argument, same fail-soft semantics.
+  function makeSync(dataUrl, cropRect, dim) {
     try {
+      // Backward-compat: makeSync(url, 384) -> dim=384, no crop.
+      if (typeof cropRect === "number" && dim === undefined) {
+        dim = cropRect; cropRect = null;
+      }
+      var targetDim = typeof dim === "number" && dim > 0 ? dim : MAX_DIM;
+      if (targetDim > REF_DIM) targetDim = REF_DIM;
+      var isRef = targetDim > MAX_DIM;
+      var byteBudget = isRef ? REF_BYTE_BUDGET : BYTE_BUDGET;
+      var charCap = isRef ? REF_MAX_CHARS : MAX_CHARS;
       var parsed = parseDataUrl(dataUrl);
       if (!parsed) return null;
-      var img = decodePixels(parsed.bytes);
+      var img = decodePixels(parsed.bytes, targetDim);
       if (cropRect) img = cropPixels(img, cropRect);
-      var dims = [96, 80, 64, 48].filter(function (d) { return d <= MAX_DIM; });
-      if (dims.length === 0) dims = [MAX_DIM];
+      var dims;
+      if (isRef) {
+        dims = [targetDim, Math.round(targetDim * 0.75), Math.round(targetDim * 0.5), 96].filter(function (d) { return d > 0 && d <= targetDim; });
+        // dedupe
+        var seen = {}; dims = dims.filter(function (d){ if(seen[d]) return false; seen[d]=true; return true; });
+      } else {
+        dims = [96, 80, 64, 48].filter(function (d) { return d <= MAX_DIM; });
+        if (dims.length === 0) dims = [MAX_DIM];
+      }
       for (var di = 0; di < dims.length; di++) {
         var small = resampleFit(img, dims[di]);
         var bytes = encodePng(small.w, small.h, small.rgb);
-        if (bytes.length <= BYTE_BUDGET) {
+        if (bytes.length <= byteBudget) {
           var url = "data:image/png;base64," + bytesToB64(bytes);
-          if (url.length <= MAX_CHARS) return url;
+          if (url.length <= charCap) return url;
         }
       }
       return null;
@@ -485,6 +510,9 @@
     MAX_DIM: MAX_DIM,
     BYTE_BUDGET: BYTE_BUDGET,
     MAX_CHARS: MAX_CHARS,
+    REF_DIM: REF_DIM,
+    REF_BYTE_BUDGET: REF_BYTE_BUDGET,
+    REF_MAX_CHARS: REF_MAX_CHARS,
     sniffKind: sniffKind,
     parseDataUrl: parseDataUrl,
     decodePng: decodePng,

@@ -406,16 +406,75 @@
     reply += " Want me to tweak anything?";
 
     // 5. Preview only after a validated look; honour the real return shape.
-    // Photo-reference: collect every selected piece with a valid photo_thumb
-    // in selected-look order and forward all of them as references.
+    // Photo-reference (M25): for each SELECTED piece, build Muse reference at ~384px via
+    // shared thumb pipeline (JPEG through existing ffmpeg path, same fail-soft):
+    // prefer image_original-derived 384px, fallback to photo_thumb. Payload
+    // defensively capped at ~2 MB total (skip extras beyond cap, still >=1 ref).
+    var REF_DIM_PX = 384;
+    var REF_PAYLOAD_CAP = 2 * 1024 * 1024;
+    function refBytesLen(dataUrl){
+      try{
+        var b64=dataUrl.slice(dataUrl.indexOf(",")+1);
+        if(typeof Buffer!=="undefined") return Buffer.from(b64,"base64").length;
+        return Math.ceil(b64.length*3/4);
+      }catch(e){ return dataUrl.length; }
+    }
+    function buildRefForPiece(piece){
+      // Prefer image_original-derived 384px via shared pipeline.
+      if(piece && typeof piece.image_original==="string" && /^data:image\//.test(piece.image_original)){
+        try{
+          var pt=null;
+          try{ if(typeof require!=="undefined") pt=require("../../photo-thumb.js"); }catch(e){ pt=null; }
+          if((!pt||typeof pt.makeSync!=="function")&&root.MetaStyles&&root.MetaStyles.photoThumb) pt=root.MetaStyles.photoThumb;
+          if(pt&&typeof pt.makeSync==="function"){
+            var r=pt.makeSync(piece.image_original, null, REF_DIM_PX);
+            if(typeof r==="string"&&r) return { url:r, downgraded:false };
+          }
+        }catch(e){}
+        // Original existed but 384 failed -> fallback to thumb counts as downgraded.
+        if(piece && typeof piece.photo_thumb==="string" && /^data:image\//.test(piece.photo_thumb)){
+          return { url:piece.photo_thumb, downgraded:true };
+        }
+        return null;
+      }
+      if(piece && typeof piece.photo_thumb==="string" && /^data:image\//.test(piece.photo_thumb)){
+        return { url:piece.photo_thumb, downgraded:true };
+      }
+      return null;
+    }
     var byId = byIdMap(active);
-    var refThumbs = [];
+    var refCandidates = [];
+    var anyDowngraded=false;
     for (var ti = 0; ti < chosen.items.length; ti++) {
       var lp = byId[chosen.items[ti].id];
-      if (lp && typeof lp.photo_thumb === "string" && /^data:image\//.test(lp.photo_thumb)) {
-        refThumbs.push(lp.photo_thumb);
+      if(!lp) continue;
+      var built=buildRefForPiece(lp);
+      if(built){
+        refCandidates.push(built);
+        if(built.downgraded) anyDowngraded=true;
       }
     }
+    // Defensive total payload cap ~2 MB: keep at least 1 ref, skip extras that would exceed cap.
+    // Ordering preserved; we accumulate in selection order and skip any that push over cap.
+    var refThumbs = [];
+    var payloadBytes=0;
+    for(var ri=0; ri<refCandidates.length; ri++){
+      var cand=refCandidates[ri];
+      var len=refBytesLen(cand.url);
+      if(refThumbs.length===0){
+        // Always keep first ref even if over cap alone (still >=1 ref)
+        refThumbs.push(cand.url);
+        payloadBytes+=len;
+      } else if(payloadBytes+len <= REF_PAYLOAD_CAP){
+        refThumbs.push(cand.url);
+        payloadBytes+=len;
+      } else {
+        // Skip extra beyond cap — honest meta via downgraded flag.
+        anyDowngraded=true;
+      }
+    }
+    // Legacy cap <=4 already enforced via strictShape (max 4 pieces), but ensure.
+    if(refThumbs.length>4){ refThumbs=refThumbs.slice(0,4); anyDowngraded=true; }
     var refPieces = refThumbs.length;
     var refThumb = refThumbs[0] || null;
     var missingRefs = chosen.items.length - refThumbs.length;
@@ -507,7 +566,8 @@
       meta: {
         source: source, selectedCount: chosen.items.length, rejectedReason: rejectedReason,
         toolSteps: toolSteps, rationale: rationale, imageDelivery: imageDelivery,
-        referenceThumb: refThumb ? true : false, referencePieces: refPieces
+        referenceThumb: refThumb ? true : false, referencePieces: refPieces,
+        referenceDowngraded: anyDowngraded, referencePayloadBytes: payloadBytes
       }
     };
   }

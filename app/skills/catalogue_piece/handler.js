@@ -39,6 +39,38 @@
     }catch(e){ return null; }
   }
 
+  // Original retention (M25): keep the received source data URL as
+  // image_original when it passes JPEG/PNG magic sniff + 1 MB cap.
+  // Oversize or non-image -> omit field (thumb-only piece), same
+  // honest no-drama fallback as the thumb path. Never throws.
+  function captureOriginal(imageDataUrl){
+    try{
+      if(typeof imageDataUrl!=="string"||!imageDataUrl) return null;
+      var m=/^data:(image\/[a-zA-Z0-9.+-]+);base64,([A-Za-z0-9+/=]+)$/.exec(imageDataUrl);
+      if(!m) return null;
+      var mime=m[1].toLowerCase();
+      if(mime!=="image/png"&&mime!=="image/jpeg"&&mime!=="image/jpg") return null;
+      var b64=m[2];
+      var rawLen=0;
+      try{
+        if(typeof Buffer!=="undefined") rawLen=Buffer.from(b64,"base64").length;
+        else rawLen=Math.ceil(b64.length*3/4);
+      }catch(e){ return null; }
+      if(rawLen>1*1024*1024) return null;
+      if(imageDataUrl.length>1400000) return null;
+      // Magic sniff on decoded bytes: PNG 89 50 4E 47..., JPEG FF D8 FF
+      try{
+        var bytes=typeof Buffer!=="undefined"?Buffer.from(b64,"base64"):null;
+        if(bytes){
+          if(bytes.length>=8&&bytes[0]===0x89&&bytes[1]===0x50&&bytes[2]===0x4e&&bytes[3]===0x47) {/* png ok */}
+          else if(bytes.length>=3&&bytes[0]===0xff&&bytes[1]===0xd8&&bytes[2]===0xff) {/* jpeg ok */}
+          else return null;
+        }
+      }catch(e){ return null; }
+      return imageDataUrl;
+    }catch(e){ return null; }
+  }
+
   // SAM box picker: the highest-confidence usable box wins; when no box
   // carries a numeric confidence the first usable box wins. A rect is
   // usable when it is [x,y,w,h] fractions with positive area overlapping
@@ -182,8 +214,10 @@
       if(typeof phrase!=="string"||!phrase) phrase="garment";
       var rect=await segmentRect(imageDataUrl,o.metaClient,phrase);
       var thumb=captureThumb(imageDataUrl,rect);
+      var original=captureOriginal(imageDataUrl);
       var input={ category:cat, attributes:{}, source_share_id:sid };
       if(thumb) input.photo_thumb=thumb;
+      if(original) input.image_original=original;
       try{ var p=catalog.addPiece(input); pieces.push(p); if(catalog.save) try{ await catalog.save(); }catch(e){} }catch(e){
         // The thumbnail must never block cataloguing: retry bare.
         try{ var bare=catalog.addPiece({ category:cat, attributes:{}, source_share_id:sid }); pieces.push(bare); if(catalog.save) try{ await catalog.save(); }catch(e2){} }catch(e3){}
