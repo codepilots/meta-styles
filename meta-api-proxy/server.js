@@ -41,6 +41,17 @@ const MAX_BODY = 12 * 1024 * 1024;
 // users), so keys must hash full inputs (never just input length) and the
 // Map must stay bounded via the LRU helpers in createHandler.
 const CACHE_MAX_ENTRIES = 200;
+// Opus finding #15: every upstream Meta API call gets its own server-side
+// bound, SHORTER than the matching browser client timeout in
+// app/meta-client.js (classify/palette/copy/assemble 60s, route 30s,
+// preview 120s, segment 180s for the whole op). Without this, one hung
+// upstream stalls the proxy request until the client gives up — and the
+// proxy keeps the abandoned work open. Timeouts reuse the 502 shape so
+// callers fall back to the same skill-fallback path as other failures.
+const DEFAULT_UPSTREAM_TIMEOUT_MS = 45000;
+const SEGMENT_PHRASE_TIMEOUT_MS = 20000; // x <=8 phrases: whole op < 180s client
+const PREVIEW_UPSTREAM_TIMEOUT_MS = 100000; // < 120s client
+const ROUTE_UPSTREAM_TIMEOUT_MS = 20000; // < 30s client
 
 const TAXONOMY = [
   "base/top", "base/bottom", "dress",
@@ -185,17 +196,58 @@ function createHandler(config) {
     while (cache.size > CACHE_MAX_ENTRIES) cache.delete(cache.keys().next().value);
   }
 
-  async function upstream(path, body) {
+  // Opus finding #15: resolve the per-call bound. cfg.timeoutMs caps
+  // every route (tests inject a tiny value); otherwise each route uses
+  // its own bound, all shorter than the matching client timeout.
+  function resolveTimeout(routeMs) {
+    const cap = cfg.timeoutMs !== undefined ? cfg.timeoutMs : DEFAULT_UPSTREAM_TIMEOUT_MS;
+    return routeMs !== undefined ? Math.min(routeMs, cap) : cap;
+  }
+
+  function timeoutError(ms) {
+    const e = new Error("Meta API timeout after " + ms + "ms");
+    e.status = 502; e.code = "upstream_timeout";
+    e.upstream = { raw: "proxy upstream timeout after " + ms + "ms" };
+    return e;
+  }
+
+  async function upstream(path, body, routeTimeoutMs) {
     if (!apiKey) {
       const e = new Error("MODEL_API_KEY is not set on the proxy");
       e.status = 503; e.code = "key_missing";
       throw e;
     }
-    const res = await fetchImpl(apiBase + path, {
+    const ms = resolveTimeout(routeTimeoutMs);
+    // AbortController lets a well-behaved fetchImpl (real fetch) drop the
+    // socket on timeout; the Promise.race below ALSO bounds mocks that
+    // ignore the signal and never settle. Mirror app/meta-client.js post():
+    // clearTimeout(timer) on every path so no timer leaks.
+    const ctrl = new AbortController();
+    let timer = null;
+    const timeoutP = new Promise((_, reject) => {
+      timer = setTimeout(() => { ctrl.abort(); reject(timeoutError(ms)); }, ms);
+    });
+    const fetchP = fetchImpl(apiBase + path, {
       method: "POST",
       headers: { Authorization: "Bearer " + apiKey, "Content-Type": "application/json" },
       body: JSON.stringify(body),
+      signal: ctrl.signal,
     });
+    // Mark a late settlement handled so a hung mock resolving after the
+    // race already settled never surfaces as an unhandled rejection.
+    if (fetchP && typeof fetchP.catch === "function") fetchP.catch(() => {});
+    let res;
+    try {
+      res = await Promise.race([fetchP, timeoutP]);
+    } catch (err) {
+      clearTimeout(timer);
+      // A fetchImpl that honours the signal rejects with an abort error
+      // instead of hanging until our race fires — classify that as the
+      // same 502 timeout shape.
+      if (ctrl.signal.aborted && (!err || err.code !== "upstream_timeout")) throw timeoutError(ms);
+      throw err;
+    }
+    clearTimeout(timer);
     const text = await res.text();
     let json = null;
     try { json = JSON.parse(text); } catch { /* keep raw below */ }
@@ -209,7 +261,7 @@ function createHandler(config) {
     return json;
   }
 
-  async function sparkJson(systemText, userContent, cacheTag) {
+  async function sparkJson(systemText, userContent, cacheTag, routeTimeoutMs) {
     const cacheK = cacheTag ? hashKey(cacheTag) : null;
     if (cacheK) { const hit = cacheGet(cacheK); if (hit !== undefined) return { parsed: hit, cached: true }; }
     const body = await upstream("/responses", {
@@ -221,7 +273,7 @@ function createHandler(config) {
           ...(Array.isArray(userContent) ? userContent : []),
         ],
       }],
-    });
+    }, routeTimeoutMs);
     const parsed = parseJsonText(extractOutputText(body));
     if (cacheK && parsed) cacheSet(cacheK, parsed);
     return { parsed, cached: false };
@@ -283,7 +335,7 @@ function createHandler(config) {
             }],
             stream: false,
             metadata: { mask_encoding: "one_bit", include_confidence: "true" },
-          });
+          }, SEGMENT_PHRASE_TIMEOUT_MS);
           const got = parseSamOutput(extractOutputText(body), phrase);
           polygons = polygons.concat(got.polygons);
           boxes = boxes.concat(got.boxes);
@@ -394,9 +446,9 @@ function createHandler(config) {
           body = await upstream("/images/edits", {
             model: IMAGE_MODEL, prompt, n: 1,
             images: [{ image_url: payload.image }],
-          });
+          }, PREVIEW_UPSTREAM_TIMEOUT_MS);
         } else {
-          body = await upstream("/images/generations", { model: IMAGE_MODEL, prompt, n: 1 });
+          body = await upstream("/images/generations", { model: IMAGE_MODEL, prompt, n: 1 }, PREVIEW_UPSTREAM_TIMEOUT_MS);
         }
         const first = body && body.data && body.data[0];
         if (!first || !first.b64_json) { sendJson(res, 502, { error: "no_image_returned" }, corsOrigin); return; }
@@ -461,7 +513,7 @@ function createHandler(config) {
           model: SPARK_MODEL,
           input: [{ type: "message", role: "user", content: [{ type: "input_text", text: systemText + "\n\n" + userStr }] }],
           text: { format: { type: "json_object" } }
-        });
+        }, ROUTE_UPSTREAM_TIMEOUT_MS);
         var parsed = parseJsonText(extractOutputText(out));
         if (!parsed || typeof parsed.skill !== "string" || SKILL_NAMES.indexOf(parsed.skill) === -1) {
           var e2 = new Error("route: unparseable or invalid skill");
@@ -512,4 +564,6 @@ module.exports = {
   extractOutputText, parseJsonText, parseSamOutput, normalizeCategory,
   TAXONOMY, SAM_LABEL_MAP, DEFAULT_PORT, SPARK_MODEL, SAM_MODEL, IMAGE_MODEL,
   CACHE_MAX_ENTRIES,
+  DEFAULT_UPSTREAM_TIMEOUT_MS, SEGMENT_PHRASE_TIMEOUT_MS,
+  PREVIEW_UPSTREAM_TIMEOUT_MS, ROUTE_UPSTREAM_TIMEOUT_MS,
 };
