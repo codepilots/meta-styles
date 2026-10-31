@@ -113,6 +113,48 @@
       // (media deleted after the reply) is recognised as already answered.
       // SYNTH fallback only when no share context exists (unit tests).
       var sid=(o && typeof o.shareId==="string" && o.shareId) ? o.shareId : ("SYNTH_share_"+Date.now());
+      // Idempotent catalogue guard (2026-10-31 incident): retries after a
+      // failed/partial send re-offer the same share id with media still
+      // available. Check already-loaded pieces for a matching
+      // source_share_id before adding — one catalogue per share, safe to
+      // reply as often as needed. No load-time dedup, no wipe.
+      var alreadyCatalogued=null;
+      try{
+        if(catalog&&typeof catalog.getPieces==="function"){
+          var existing=catalog.getPieces();
+          for(var gi=0;gi<existing.length;gi++){
+            var ep=existing[gi];
+            if(ep&&ep.source_share_id===sid){ alreadyCatalogued=ep; break; }
+          }
+        }
+      }catch(e){ alreadyCatalogued=null; }
+      if(alreadyCatalogued){
+        // Honest idempotent turn: no second copy, no save, do not claim
+        // a new addition. Still record the turn and allow the reply/send
+        // to proceed — the caller handles send idempotency separately.
+        var dupNoun=plainNoun(alreadyCatalogued.category)||"piece";
+        var dupGapText="That "+dupNoun+" is already in your wardrobe, loveling \u2728 — keeping one copy safe. Want me to put a look together from what you've got?";
+        // Try same-turn proposal even on idempotent replays — the wardrobe
+        // may now have enough for a look.
+        var dupLookRes=await trySameTurnProposal(o);
+        if(dupLookRes&&dupLookRes.meta&&typeof dupLookRes.meta.selectedCount==="number"&&dupLookRes.meta.selectedCount>0&&typeof dupLookRes.text==="string"&&dupLookRes.text){
+          var dupLookText="That "+dupNoun+" is already in your wardrobe, loveling \u2728 — keeping one copy safe. "+dupLookRes.text;
+          var dupLookPersist="Already in wardrobe — keeping one copy. "+((dupLookRes.persist&&dupLookRes.persist.summaryDelta)||"Proposed a look.");
+          // Record turn honestly: no new catalogue, but a turn did happen.
+          try{ if(catalog&&typeof catalog.recordTurn==="function") catalog.recordTurn({ userText:text, proposal:null, verdict:true, reasons:["idempotent_catalogue_guard"] }); }catch(e){}
+          recordLookExpectation(catalog, dupLookText);
+          // If proposal path, propose_look already recorded its expectation; don't double.
+          // Overwrite the expectation already recorded for the non-look path would be duplicate, so only return.
+          return { text:dupLookText, image:dupLookRes.image||null,
+            persist:{ summaryDelta:dupLookPersist, preferencesDelta:"" }, skill:"catalogue_piece",
+            meta:{ source:(dupLookRes.meta&&dupLookRes.meta.source)||"fallback", selectedCount:dupLookRes.meta.selectedCount,
+              rejectedReason:(dupLookRes.meta&&dupLookRes.meta.rejectedReason)||null,
+              imageDelivery:(dupLookRes.meta&&dupLookRes.meta.imageDelivery)||{ requested:false, generated:false, delivered:false, reason:"no_same_turn_look_image" } } };
+        }
+        try{ if(catalog&&typeof catalog.recordTurn==="function") catalog.recordTurn({ userText:text, proposal:null, verdict:true, reasons:["idempotent_catalogue_guard"] }); }catch(e){}
+        recordLookExpectation(catalog, dupGapText);
+        return { text:dupGapText, image:null, persist:{ summaryDelta:"Already in wardrobe — keeping one copy.", preferencesDelta:"" }, skill:"catalogue_piece" };
+      }
       // SAM-segment the crop: phrase names the detected category (plain
       // noun the proxy's SAM_LABEL_MAP understands), falling back to a
       // generic garment phrase. Any failure resolves null and the thumb
