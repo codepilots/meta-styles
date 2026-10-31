@@ -240,6 +240,7 @@ function createService(opts) {
     polled: 0, processed: 0, sent: 0, skipped: 0,
     duplicates: 0, errors: 0, gave_up: 0, images_delivered: 0,
     catalog_save_failed: 0,
+    deletions_cleared: 0,
   };
   // Observed-call truth, one value each: "unprobed" (never attempted),
   // "live" (proxy answered and the result was used), "fallback" (proxy
@@ -259,6 +260,7 @@ function createService(opts) {
   var lastTurnText = "";
   var lastError = null;
   var tickInFlight = false;
+  var reconcileInFlight = false;
   var timer = null;
   var server = null;
 
@@ -493,6 +495,7 @@ function createService(opts) {
       last_processed_share: lastProcessedShareAt,
       pieces_count: piecesCount(),
       users_known: users.size,
+      deletions_cleared: counts.deletions_cleared,
       last_turn_text: lastTurnText,
       counts: Object.assign({}, counts),
       live_paths: Object.assign({}, livePaths),
@@ -519,6 +522,52 @@ function createService(opts) {
       activity: activity.slice(),
       last_error: lastError,
     };
+  }
+
+  // --- Deletion reconciliation -----------------------------------------------
+  // Live only: polls GET /ig/deletion-status/<user_ref> (Bearer catalogToken)
+  // per known user. Mock mode has no deletion model — never probed.
+  // Purges ONLY on HTTP 200 + JSON {scrubbed:true}; everything else (non-200,
+  // malformed, scrubbed:false, network error) keeps silently (fail-open).
+  // Purge: users.delete(ref), bump deletions_cleared, anonymous activity line
+  // (PUBLIC via /wardrobe/status — never id/ref). Concurrent-safe via a
+  // single-flight guard; harmless to double-run (users.delete is idempotent).
+  function reconcileDeletions() {
+    if (mode === "mock") return Promise.resolve();
+    if (reconcileInFlight) return Promise.resolve();
+    reconcileInFlight = true;
+    var refs = [];
+    users.forEach(function (_, ref) { refs.push(ref); });
+    if (refs.length === 0) {
+      reconcileInFlight = false;
+      return Promise.resolve();
+    }
+    var checks = refs.map(function (ref) {
+      return fetch(botBase + "/ig/deletion-status/" + encodeURIComponent(ref), {
+        headers: authHeaders(catalogToken),
+      }).then(function (res) {
+        if (res.status !== 200) return null;
+        return res.json().then(function (body) {
+          if (!body || body.scrubbed !== true) return null;
+          return ref;
+        }, function () { return null; });
+      }, function () { return null; });
+    });
+    return Promise.all(checks).then(function (results) {
+      results.forEach(function (r) {
+        if (typeof r === "string" && r) {
+          if (users.has(r)) {
+            users.delete(r);
+            counts.deletions_cleared += 1;
+            say("a wardrobe was cleared by its owner's deletion request");
+          }
+        }
+      });
+    }).then(function () {
+      reconcileInFlight = false;
+    }, function () {
+      reconcileInFlight = false;
+    });
   }
 
   // --- Bot I/O (same contracts inbox-bridge.js already calls) --------------
@@ -1027,7 +1076,9 @@ function createService(opts) {
     if (tickInFlight) return Promise.resolve({ tick: "busy" });
     tickInFlight = true;
     scheduler.setPendingTurn(true);
-    return fetchSharesPage().then(function (page) {
+    return reconcileDeletions().then(function () {
+      return fetchSharesPage();
+    }).then(function (page) {
       var items = page.items || [];
       counts.polled += items.length;
       scheduler.noteInboundPoll(items.length);
@@ -1130,7 +1181,11 @@ function createService(opts) {
       return;
     }
     if (req.method === "GET" && url.pathname === "/wardrobe/status") {
-      finish(200, statusBody());
+      reconcileDeletions().then(function () {
+        finish(200, statusBody());
+      }, function () {
+        finish(200, statusBody());
+      });
       return;
     }
     finish(404, { error: "not_found" });
@@ -1175,6 +1230,7 @@ function createService(opts) {
     stop: stop,
     status: statusBody,
     processOne: processOne,
+    reconcileDeletions: reconcileDeletions,
     // M21 agentic surface for tests / introspection
     getAgenticLog: getAgenticLog,
     MAX_TOOL_STEPS: MAX_TOOL_STEPS,
