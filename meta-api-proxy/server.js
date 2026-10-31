@@ -145,6 +145,28 @@ function normalizeCategory(raw) {
   return TAXONOMY.includes(c) ? c : null;
 }
 
+function coerceCategory(raw) {
+  let c = String(raw || "").toLowerCase().trim();
+  if (TAXONOMY.includes(c)) return c;
+  const map = {
+    "jacket": "layer/blazer", "coat": "layer/blazer", "blazer": "layer/blazer",
+    "jumper": "layer/cardigan", "sweater": "layer/cardigan", "pullover": "layer/cardigan",
+    "knitwear": "layer/cardigan", "cardigan": "layer/cardigan", "shrug": "layer/cardigan",
+    "tie-blouse": "layer/cardigan", "tie blouse": "layer/cardigan",
+    "shirt": "base/top", "blouse": "base/top", "top": "base/top", "tank": "base/top",
+    "cami": "base/top", "camisole": "base/top", "tee": "base/top",
+    "jeans": "base/bottom", "trousers": "base/bottom", "trousered": "base/bottom",
+    "skirt": "base/bottom", "pants": "base/bottom",
+    "frock": "dress", "gown": "dress", "pinafore": "dress", "dress": "dress",
+    "pashmina": "scarf", "wrap": "scarf", "shawl": "scarf", "scarf": "scarf",
+    "handbag": "bag", "purse": "bag", "tote": "bag", "clutch": "bag", "bag": "bag",
+  };
+  if (map[c]) return map[c];
+  // shoes are deliberately not catalogueable -> null
+  if (c.includes("shoe") || c.includes("sneaker") || c.includes("heel") || c.includes("boot")) return null;
+  return null;
+}
+
 // --- Server ------------------------------------------------------------------
 
 function sendJson(res, status, obj, corsOrigin) {
@@ -352,22 +374,31 @@ function createHandler(config) {
           sendJson(res, 400, { error: "image_data_url_required" }, corsOrigin); return;
         }
         const hint = payload.labelHint ? ` The segmentation hint is "${String(payload.labelHint).slice(0, 40)}".` : "";
+        const classifyCacheKey = hashKey(image.slice(0, 4096) + "|classify|" + image.length);
+        { const hit = cacheGet(classifyCacheKey); if (hit !== undefined) { sendJson(res, 200, { ...hit, cached: true }, corsOrigin); return; } }
         const { parsed } = await sparkJson(
           "You classify one garment region for a tall/curvy styling app. " +
           `Reply with JSON only: {"category":"...","confidence":0.0}. ` +
           `Category must be exactly one of: ${TAXONOMY.join(", ")}. ` +
           "Tie-blouses and shrugs are layer/cardigan, never a base. Never return shoes.",
           [{ type: "input_image", image_url: image }],
-          hashKey(image.slice(0, 4096) + "|classify|" + image.length)
+          null
         );
-        const category = parsed && normalizeCategory(parsed.category);
-        if (!category) { sendJson(res, 502, { error: "unparseable_classification", raw: parsed }, corsOrigin); return; }
-        sendJson(res, 200, {
+        const category = parsed ? coerceCategory(parsed.category) : null;
+        if (!category) {
+          const fallback = { category: "dress", method: "spark-vision", confidence: 0, placeholder: true, source: SPARK_MODEL };
+          cacheSet(classifyCacheKey, fallback);
+          sendJson(res, 200, fallback, corsOrigin);
+          return;
+        }
+        const outClassify = {
           category,
           method: "spark-vision",
           confidence: typeof parsed.confidence === "number" ? parsed.confidence : null,
           placeholder: false, source: SPARK_MODEL,
-        }, corsOrigin);
+        };
+        cacheSet(classifyCacheKey, outClassify);
+        sendJson(res, 200, outClassify, corsOrigin);
         return;
       }
 
@@ -562,7 +593,7 @@ function createHandler(config) {
             [{ type: "input_image", image_url: image }],
             null
           );
-          const fallbackCat = classifyParsed && normalizeCategory(classifyParsed.category);
+          const fallbackCat = classifyParsed ? coerceCategory(classifyParsed.category) : null;
           if (fallbackCat) detectFallback = fallbackCat;
         } catch (e) { /* fallback may stay null */ }
         try {
@@ -581,7 +612,7 @@ function createHandler(config) {
             for (let i = 0; i < parsed.pieces.length && pieces.length < 6; i++) {
               const raw = parsed.pieces[i];
               if (!raw || typeof raw !== "object") continue;
-              const cat = normalizeCategory(raw.category);
+              const cat = coerceCategory(raw.category);
               if (!cat) continue;
               let bbox = raw.bbox;
               if (!Array.isArray(bbox) || bbox.length !== 4) continue;
@@ -649,7 +680,7 @@ if (require.main === module) {
 
 module.exports = {
   createHandler, startServer,
-  extractOutputText, parseJsonText, parseSamOutput, normalizeCategory,
+  extractOutputText, parseJsonText, parseSamOutput, normalizeCategory, coerceCategory,
   TAXONOMY, SAM_LABEL_MAP, DEFAULT_PORT, SPARK_MODEL, SAM_MODEL, IMAGE_MODEL,
   CACHE_MAX_ENTRIES,
   DEFAULT_UPSTREAM_TIMEOUT_MS, SEGMENT_PHRASE_TIMEOUT_MS,

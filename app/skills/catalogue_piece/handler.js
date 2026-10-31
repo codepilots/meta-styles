@@ -273,6 +273,11 @@
       }
     }
 
+    // Text-only no-pending branch: honest reply instead of photo-failure copy
+    if(!imageDataUrl && o.pendingBag === null){
+      return { text:"Nothing pending, loveling \u2728 \u2014 send a photo to catalogue pieces, or ask for what to wear!", image:null, persist:{ summaryDelta:"No pending catalogue.", preferencesDelta:"" }, skill:"catalogue_piece" };
+    }
+
     var pieces=[];
     if(catalog && imageDataUrl){
       var sid=(o && typeof o.shareId==="string" && o.shareId) ? o.shareId : ("SYNTH_share_"+Date.now());
@@ -374,7 +379,7 @@
 
       // Single-piece fallback: existing classify/segment/auto-add path
       var cat="dress";
-      try{ if(o.metaClient&&o.metaClient.classify){ var cr=await o.metaClient.classify(imageDataUrl,""); if(cr&&cr.category) cat=cr.category; } }catch(e){}
+      try{ if(o.metaClient&&o.metaClient.classify){ var cr=await o.metaClient.classify(imageDataUrl,""); if(cr&&cr.placeholder===true) throw new Error("classify placeholder"); if(cr&&cr.category) cat=cr.category; } }catch(e){}
       if(cat==="dress"){ var h=(text||"").toLowerCase(); if(/scarf/.test(h)) cat="scarf"; else if(/bag|purse/.test(h)) cat="bag"; else if(/blazer|jacket/.test(h)) cat="layer/blazer"; else if(/cardigan|shrug/.test(h)) cat="layer/cardigan"; else if(/top|cami/.test(h)) cat="base/top"; else if(/trouser|jean|skirt|bottom/.test(h)) cat="base/bottom"; }
       var phrase=plainNoun(cat)||"garment";
       if(typeof phrase!=="string"||!phrase) phrase="garment";
