@@ -106,6 +106,10 @@
     return post("/api/classify", { image: imageDataUrl, labelHint: labelHint || "" }, 60000);
   }
 
+  function detectGarments(imageDataUrl) {
+    return post("/api/detect", { image: imageDataUrl }, 60000);
+  }
+
   function palette(imageDataUrl) {
     return post("/api/palette", { image: imageDataUrl }, 60000);
   }
@@ -174,7 +178,7 @@
     health: health, segment: segment, classify: classify,
     palette: palette,
     copy: copy, assemble: assemble, preview: preview,
-    route: route,
+    route: route, detectGarments: detectGarments,
     cardSignature: cardSignature,
   };
 

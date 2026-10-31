@@ -115,6 +115,7 @@ var MAX_ATTEMPTS = 5;
 var ACTIVITY_RING = 30;
 var STOPPED_CLAMP_MS = Scheduler.BACKOFF_POLL_MS;
 var MAX_TOOL_STEPS = 20;
+var DETECT_BAG_TTL_MS = 24 * 3600 * 1000;
 
 // Plain nouns for the status activity feed — category slugs stay in code,
 // never in front of a watcher. (Same convention as the retired browser
@@ -310,7 +311,7 @@ function createService(opts) {
     // summary/preferences canNOT be persisted through it (Opus finding
     // #10 — see app/summariser.js). Lost on restart; nothing claims
     // otherwise. Pieces remain the only persisted data.
-    var ctx = { catalog: catalog, loop: loop, send: send, loaded: false, wardrobeSummary: "", preferences: "", lastAgenticDecision: null, lastSkillSteps: 0 };
+    var ctx = { catalog: catalog, loop: loop, send: send, loaded: false, wardrobeSummary: "", preferences: "", lastAgenticDecision: null, lastSkillSteps: 0, detectBag: null };
     users.set(userRef, ctx);
     return ctx;
   }
@@ -395,7 +396,27 @@ function createService(opts) {
         },
       });
 
-      return loop.handleTurn({
+      // Multi-detect pending bag: handle add/discard before routing when a text reply targets a pending catalogue_piece expectation
+      var pendingBagForTurn = null;
+      if (!hasImage && ctx.detectBag && ctx.detectBag.regions) {
+        var bagAge = nowMs() - (ctx.detectBag.at || 0);
+        if (bagAge > DETECT_BAG_TTL_MS) {
+          ctx.detectBag = null;
+          try{
+            var pqsExp = ctx.catalog.getPendingQuestions()||[];
+            for(var pe=0;pe<pqsExp.length;pe++){
+              if(pqsExp[pe]&&pqsExp[pe].skill==="catalogue_piece"&&pqsExp[pe].expects==="yes_no"){
+                try{ ctx.catalog.resolveQuestion(pqsExp[pe].id); }catch(e){}
+                break;
+              }
+            }
+          }catch(e){}
+        } else {
+          pendingBagForTurn = ctx.detectBag;
+        }
+      }
+      // Pass pendingBag to agentic loop via extra; catalogue_piece will handle yes/no
+      var turnOpts = {
         message: message,
         hasImage: hasImage,
         imageDataUrl: imageDataUrl,
@@ -403,7 +424,9 @@ function createService(opts) {
         wardrobeSummary: wardrobeSummary,
         preferences: preferences,
         lastTurns: lastTurns,
-      }).then(function (result) {
+      };
+      if (pendingBagForTurn) turnOpts.pendingBag = pendingBagForTurn;
+      return loop.handleTurn(turnOpts).then(function (result) {
         if (result && typeof result.summary === "string") ctx.wardrobeSummary = result.summary;
         if (result && typeof result.preferences === "string") ctx.preferences = result.preferences;
 
@@ -433,6 +456,31 @@ function createService(opts) {
         // summaryPersisted:false — the pieces-only catalog contract cannot
         // hold them); here we ensure PIECES are saved (best-effort, never
         // blocking), which is the only restart-persisted data.
+        // Persist pendingBag from catalogue_piece multi-detect ask; clear on add/discard or expiry
+        try{
+          var hr2 = result && result.handlerResult;
+          if(hr2 && hr2.pendingBag && Array.isArray(hr2.pendingBag.regions)){
+            ctx.detectBag = hr2.pendingBag;
+          } else if(skillName==="catalogue_piece" && hr2 && hasImage===false && pendingBagForTurn){
+            // text reply that resolved the pending bag -> clear
+            ctx.detectBag = null;
+          } else if(hr2 && hr2.text && /Found \d+ pieces in that photo/.test(hr2.text)===false){
+            // If single-piece or other outcome, ensure no stale bag from earlier photo that expired but wasn't cleared
+          }
+        }catch(e){}
+        // Also detect expiry after the turn: if bag still present but expired, clear it
+        if(ctx.detectBag && (nowMs() - (ctx.detectBag.at||0) > DETECT_BAG_TTL_MS)){
+          ctx.detectBag=null;
+          try{
+            var pqs2 = ctx.catalog.getPendingQuestions()||[];
+            for(var pqi=0;pqi<pqs2.length;pqi++){
+              if(pqs2[pqi]&&pqs2[pqi].skill==="catalogue_piece"&&pqs2[pqi].expects==="yes_no"){
+                try{ ctx.catalog.resolveQuestion(pqs2[pqi].id); }catch(e){}
+                break;
+              }
+            }
+          }catch(e){}
+        }
         return saveBestEffort(ctx).then(function () {
           return { result: result, toolCalls: toolCalls, totalSteps: totalSteps, skill: skillName };
         });
@@ -1268,7 +1316,7 @@ function buildLastTurns(catalog) {
 }
 
 if (typeof module !== "undefined" && module.exports) {
-  module.exports = { createService: createService, resolveConfig: Config.resolveConfig, buildLastTurns: buildLastTurns };
+  module.exports = { createService: createService, resolveConfig: Config.resolveConfig, buildLastTurns: buildLastTurns, DETECT_BAG_TTL_MS: DETECT_BAG_TTL_MS };
 }
 
 if (require.main === module) {

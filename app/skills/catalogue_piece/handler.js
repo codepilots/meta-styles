@@ -1,17 +1,11 @@
 "use strict";
-/* meta-styles Milestone 21 — skill: catalogue_piece. NEW hackathon work (building period Oct 27 – Nov 4, 2026).
+/* meta-styles Milestone 21 + multi-detect — skill: catalogue_piece. NEW hackathon work (building period Oct 27 – Nov 4, 2026).
  * Persona: cheery green witch, fairy-core, warm complimentary, never shaming.
  */
 (function (root) {
 
   function plainNoun(c){ var m={"base/top":"top","base/bottom":"bottom","dress":"dress","layer/cardigan":"cardigan","layer/blazer":"blazer","scarf":"scarf","bag":"bag"}; return m[c]||c; }
 
-  // Pending expectation (Milestone 24): the "Want me to put a look
-  // together from what you've got?" closer below is a yes/no moment — a
-  // plain "yes" matches no router trigger and would otherwise fall to
-  // off_topic instead of firing propose_look. Recorded on the catalog
-  // (the single source of truth agentic-loop.js checks before routing).
-  // Never throws: a catalog failure must not break the reply itself.
   function recordLookExpectation(catalog, questionText){
     try{
       if(catalog && typeof catalog.askQuestion==="function"){
@@ -20,14 +14,6 @@
     }catch(e){}
   }
 
-  // Photo-reference capture (M21 photo-reference work): shrink the inbound
-  // photo to a small PNG data URL via photo-thumb.js makeSync() and store
-  // it as the piece's photo_thumb. When a SAM box rect is supplied, the
-  // decoded pixels are cropped to the garment's bounding box BEFORE
-  // downscaling, so the thumb shows the garment instead of the whole
-  // photo. Fail-soft by contract: undecodable input (or a missing thumb
-  // module) resolves null and the piece still catalogues — the thumbnail
-  // must never block cataloguing.
   function captureThumb(imageDataUrl, cropRect){
     try{
       var pt=null;
@@ -39,10 +25,6 @@
     }catch(e){ return null; }
   }
 
-  // Original retention (M25): keep the received source data URL as
-  // image_original when it passes JPEG/PNG magic sniff + 1 MB cap.
-  // Oversize or non-image -> omit field (thumb-only piece), same
-  // honest no-drama fallback as the thumb path. Never throws.
   function captureOriginal(imageDataUrl){
     try{
       if(typeof imageDataUrl!=="string"||!imageDataUrl) return null;
@@ -58,7 +40,6 @@
       }catch(e){ return null; }
       if(rawLen>1*1024*1024) return null;
       if(imageDataUrl.length>1400000) return null;
-      // Magic sniff on decoded bytes: PNG 89 50 4E 47..., JPEG FF D8 FF
       try{
         var bytes=typeof Buffer!=="undefined"?Buffer.from(b64,"base64"):null;
         if(bytes){
@@ -71,12 +52,6 @@
     }catch(e){ return null; }
   }
 
-  // SAM box picker: the highest-confidence usable box wins; when no box
-  // carries a numeric confidence the first usable box wins. A rect is
-  // usable when it is [x,y,w,h] fractions with positive area overlapping
-  // the unit square (the proxy's parseSamOutput already normalizes to
-  // fractions; mask is metadata-only, so boxes are the only croppable
-  // shape).
   function validRect(r){
     if(!Array.isArray(r)||r.length!==4) return false;
     for(var i=0;i<4;i++){ if(typeof r[i]!=="number"||!isFinite(r[i])) return false; }
@@ -97,10 +72,6 @@
     return best;
   }
 
-  // SAM segmentation for the crop step: same call pattern as classify
-  // (o.metaClient.segment, awaited, optional). Resolves the winning box
-  // rect or null — a throw, a timeout, and unusable outputs all fall back
-  // to the whole-photo thumbnail; never throws up to handle().
   async function segmentRect(imageDataUrl, metaClient, phrase){
     try{
       if(!metaClient||typeof metaClient.segment!=="function"||!imageDataUrl) return null;
@@ -111,14 +82,6 @@
     }catch(e){ return null; }
   }
 
-  // Same-turn proposal (two-photo wardrobe arc): after a piece is
-  // catalogued, run the existing propose_look selection/validation stack
-  // (Spark -> strictShape/assembleLook -> deterministic fallback) in the
-  // same turn instead of ending on a classifier-only acknowledgement.
-  // Reuses propose_look's handle() directly so the fit rules live in
-  // exactly one place — never a second fit engine. Resolves the
-  // propose_look result, or null on any failure (fail-soft: the caller
-  // then falls back to the honest gap reply, never a broken turn).
   async function trySameTurnProposal(o){
     try{
       var mod=null;
@@ -133,23 +96,187 @@
     }catch(e){ return null; }
   }
 
+  function computeCropHash(croppedOriginal){
+    if(!croppedOriginal || typeof croppedOriginal!=="string") return null;
+    try{
+      var m=/^data:[^,]+;base64,([A-Za-z0-9+/=]+)$/.exec(croppedOriginal);
+      var bytes;
+      if(m){
+        if(typeof Buffer!=="undefined") bytes=Buffer.from(m[1],"base64");
+        else return null;
+      } else {
+        if(typeof Buffer!=="undefined") bytes=Buffer.from(croppedOriginal,"utf8");
+        else return null;
+      }
+      var crypto=null;
+      try{ if(typeof require!=="undefined") crypto=require("crypto"); }catch(e){}
+      if(crypto && typeof crypto.createHash==="function"){
+        return crypto.createHash("sha256").update(bytes).digest("hex").slice(0,16);
+      }
+      return null;
+    }catch(e){ return null; }
+  }
+
+  // Build region crops: for each usable region, crop via SAM refinement then capture thumb+original+hash.
+  async function buildRegions(imageDataUrl, detectPieces, metaClient, sid){
+    var regions=[];
+    for(var i=0;i<detectPieces.length;i++){
+      var dp=detectPieces[i];
+      if(!dp||!dp.bbox||!validRect(dp.bbox)) continue;
+      var phrase=plainNoun(dp.category)||"garment";
+      var rect=dp.bbox;
+      // SAM refines each box with category phrase when proxy segment succeeds
+      var samRect=null;
+      try{
+        samRect=await segmentRect(imageDataUrl, metaClient, phrase);
+      }catch(e){ samRect=null; }
+      var cropRect=samRect||dp.bbox;
+      var thumb=captureThumb(imageDataUrl,cropRect);
+      var original=captureOriginal(imageDataUrl);
+      var hashInput=(thumb||original||imageDataUrl)+"|"+dp.category+"|"+dp.bbox.join(",");
+      var ch=computeCropHash(hashInput);
+      var attrs={};
+      if(dp.attributes && typeof dp.attributes==="object"){
+        if(dp.attributes.color) attrs.color=dp.attributes.color;
+      }
+      if(dp.layer_role) attrs.layer_role=dp.layer_role;
+      regions.push({
+        category: dp.category,
+        attributes: attrs,
+        bbox: dp.bbox,
+        cropRect: cropRect,
+        thumb: thumb,
+        original: original,
+        crop_hash: ch||("SYNTH_hash_"+i+"_"+Date.now()),
+        source_share_id: sid
+      });
+    }
+    return regions;
+  }
+
+  // Add path: invoked when turn text is YES for pending detection
+  async function handleAddDetected(o){
+    var catalog=o.catalog;
+    var bag=o.pendingBag;
+    if(!catalog||!bag||!Array.isArray(bag.regions)||!bag.regions.length){
+      return { text:"Oh loveling, that little bundle seems to have fluttered away \u2728 Mind resending the photo and I'll give it another go?", image:null, persist:{ summaryDelta:"No bag to add.", preferencesDelta:"" }, skill:"catalogue_piece" };
+    }
+    var sid=bag.source_share_id||o.shareId||"SYNTH_share_"+Date.now();
+    // dedupe against existing pieces by crop_hash under same source_share_id
+    var existing=[];
+    try{ existing=catalog.getPieces()||[]; }catch(e){ existing=[]; }
+    var existingHashes={};
+    for(var ei=0;ei<existing.length;ei++){
+      var ep=existing[ei];
+      if(ep&&ep.crop_hash) existingHashes[ep.crop_hash]=true;
+    }
+    var added=[];
+    for(var ri=0;ri<bag.regions.length;ri++){
+      var reg=bag.regions[ri];
+      if(!reg) continue;
+      if(reg.crop_hash && existingHashes[reg.crop_hash]) continue;
+      var input={ category:reg.category, attributes:reg.attributes||{}, source_share_id:sid };
+      if(reg.thumb) input.photo_thumb=reg.thumb;
+      if(reg.original) input.image_original=reg.original;
+      if(reg.crop_hash) input.crop_hash=reg.crop_hash;
+      try{
+        var p=catalog.addPiece(input);
+        added.push(p);
+        if(reg.crop_hash) existingHashes[reg.crop_hash]=true;
+      }catch(e){
+        // duplicate piece_id or validation edge: try without thumb
+        try{
+          var bare={ category:reg.category, attributes:reg.attributes||{}, source_share_id:sid };
+          if(reg.crop_hash) bare.crop_hash=reg.crop_hash;
+          var p2=catalog.addPiece(bare);
+          added.push(p2);
+          if(reg.crop_hash) existingHashes[reg.crop_hash]=true;
+        }catch(e2){}
+      }
+    }
+    if(added.length){
+      try{ if(catalog.save) await catalog.save(); }catch(e){}
+    }
+    // resolve pending expectation
+    try{
+      var pqs=catalog.getPendingQuestions()||[];
+      for(var qi=0;qi<pqs.length;qi++){
+        if(pqs[qi]&&pqs[qi].skill==="catalogue_piece"&&pqs[qi].expects==="yes_no"){
+          try{ catalog.resolveQuestion(pqs[qi].id); }catch(e){}
+          break;
+        }
+      }
+    }catch(e){}
+    if(!added.length){
+      return { text:"Those pieces are already in your wardrobe, loveling \u2728 — keeping one copy of each safe. Want me to put a look together from what you've got?", image:null, persist:{ summaryDelta:"Already had all pieces.", preferencesDelta:"" }, skill:"catalogue_piece" };
+    }
+    var nouns=added.map(function(p){ return plainNoun(p.category); });
+    var summary=nouns.join(", ");
+    // honest summary
+    var countText=added.length===1? "1 piece in" : added.length+" pieces in";
+    var reply=countText+", loveling \u2728 — "+summary+" are yours now.";
+    // try same-turn look proposal
+    var lookRes=await trySameTurnProposal(o);
+    if(lookRes&&lookRes.meta&&typeof lookRes.meta.selectedCount==="number"&&lookRes.meta.selectedCount>0&&typeof lookRes.text==="string"&&lookRes.text){
+      reply += " "+lookRes.text;
+      var lookPersist="Added "+added.length+" pieces: "+summary+". "+((lookRes.persist&&lookRes.persist.summaryDelta)||"Proposed a look.");
+      return { text:reply, image:lookRes.image||null,
+        persist:{ summaryDelta:lookPersist, preferencesDelta:"" }, skill:"catalogue_piece",
+        meta:{ source:(lookRes.meta&&lookRes.meta.source)||"fallback", selectedCount:lookRes.meta.selectedCount,
+          rejectedReason:(lookRes.meta&&lookRes.meta.rejectedReason)||null,
+          imageDelivery:(lookRes.meta&&lookRes.meta.imageDelivery)||{ requested:false, generated:false, delivered:false, reason:"no_same_turn_look_image" } } };
+    }
+    reply += " Want me to put a look together from what you've got?";
+    recordLookExpectation(catalog, reply);
+    return { text:reply, image:null, persist:{ summaryDelta:"Added "+added.length+" pieces: "+summary+".", preferencesDelta:"" }, skill:"catalogue_piece" };
+  }
+
+  function handleDiscard(o){
+    var catalog=o.catalog;
+    try{
+      var pqs=catalog&&typeof catalog.getPendingQuestions==="function"?catalog.getPendingQuestions()||[]:[];
+      for(var qi=0;qi<pqs.length;qi++){
+        if(pqs[qi]&&pqs[qi].skill==="catalogue_piece"&&pqs[qi].expects==="yes_no"){
+          try{ catalog.resolveQuestion(pqs[qi].id); }catch(e){}
+          break;
+        }
+      }
+    }catch(e){}
+    return { text:"No worries, loveling \u2728 — I left those out. Just say the word if you change your mind!", image:null, persist:{ summaryDelta:"Declined multi-piece add.", preferencesDelta:"" }, skill:"catalogue_piece" };
+  }
+
+  function isNegativeReply(text){
+    if(typeof text!=="string") return false;
+    var t=text.toLowerCase().trim().replace(/^[.,!?\s]+|[.,!?\s]+$/g,"");
+    var negs=["no","nope","nah","not now","no thanks","no thank you","never mind","cancel","skip","pass","no thank you loveling"];
+    for(var i=0;i<negs.length;i++){ if(t===negs[i]) return true; }
+    if(t==="no"||t==="nope"||t==="nah") return true;
+    return false;
+  }
+
   async function handle(opts){
     var o=opts||{}, catalog=o.catalog, text=o.text||"", imageDataUrl=o.imageDataUrl||null;
+
+    // Discard/add path for pending bag text replies (no image)
+    if(!imageDataUrl && o.pendingBag && catalog){
+      var pqs=null;
+      try{ pqs=catalog.getPendingQuestions()||[]; }catch(e){}
+      var hasPending=false;
+      if(pqs) for(var pi=0;pi<pqs.length;pi++){ if(pqs[pi]&&pqs[pi].skill==="catalogue_piece"&&pqs[pi].expects==="yes_no"){ hasPending=true; break; } }
+      if(hasPending){
+        // Check if bag expired — caller sets pendingBag null on expiry, but double-check TTL here too
+        var isNeg=isNegativeReply(text);
+        if(isNeg) return handleDiscard(o);
+        // affirmative path — use agentic-loop's isAffirmative logic already checked before routing here,
+        // but handler also accepts plain "yes"
+        return await handleAddDetected(o);
+      }
+    }
+
     var pieces=[];
     if(catalog && imageDataUrl){
-      var cat="dress";
-      try{ if(o.metaClient&&o.metaClient.classify){ var cr=await o.metaClient.classify(imageDataUrl,""); if(cr&&cr.category) cat=cr.category; } }catch(e){}
-      if(cat==="dress"){ var h=(text||"").toLowerCase(); if(/scarf/.test(h)) cat="scarf"; else if(/bag|purse/.test(h)) cat="bag"; else if(/blazer|jacket/.test(h)) cat="layer/blazer"; else if(/cardigan|shrug/.test(h)) cat="layer/cardigan"; else if(/top|cami/.test(h)) cat="base/top"; else if(/trouser|jean|skirt|bottom/.test(h)) cat="base/bottom"; }
-      // Provenance pointer the wardrobe-service matches on restart replays:
-      // the real share id when the turn carries one, so a collected share
-      // (media deleted after the reply) is recognised as already answered.
-      // SYNTH fallback only when no share context exists (unit tests).
       var sid=(o && typeof o.shareId==="string" && o.shareId) ? o.shareId : ("SYNTH_share_"+Date.now());
-      // Idempotent catalogue guard (2026-10-31 incident): retries after a
-      // failed/partial send re-offer the same share id with media still
-      // available. Check already-loaded pieces for a matching
-      // source_share_id before adding — one catalogue per share, safe to
-      // reply as often as needed. No load-time dedup, no wipe.
+      // Idempotent guard for single-piece era: same source_share_id
       var alreadyCatalogued=null;
       try{
         if(catalog&&typeof catalog.getPieces==="function"){
@@ -161,13 +288,6 @@
         }
       }catch(e){ alreadyCatalogued=null; }
       if(alreadyCatalogued){
-        // Honest idempotent turn: no second copy, no save, do not claim
-        // a new addition. Still record the turn and allow the reply/send
-        // to proceed — the caller handles send idempotency separately.
-        // Per-piece discriminator: category noun + short stable piece field
-        // (piece_id tail — never mid/user_ref) so duplicate_send backstop
-        // (text_hash) does not swallow distinct pieces and idempotency
-        // contract (same piece -> same text) still holds.
         var dupNoun=plainNoun(alreadyCatalogued.category)||"piece";
         var _disc=(function(p){
           try{
@@ -184,18 +304,12 @@
           return "000";
         })(alreadyCatalogued);
         var dupGapText="That "+dupNoun+" (#"+_disc+") is already in your wardrobe, loveling \u2728 — keeping one copy safe. Want me to put a look together from what you've got?";
-        // Try same-turn proposal even on idempotent replays — the wardrobe
-        // may now have enough for a look. Deterministic-per-piece same-turn
-        // wording for the same duplicate_send reason.
         var dupLookRes=await trySameTurnProposal(o);
         if(dupLookRes&&dupLookRes.meta&&typeof dupLookRes.meta.selectedCount==="number"&&dupLookRes.meta.selectedCount>0&&typeof dupLookRes.text==="string"&&dupLookRes.text){
           var dupLookText="That "+dupNoun+" (#"+_disc+") is already in your wardrobe, loveling \u2728 — keeping one copy safe. "+dupLookRes.text;
           var dupLookPersist="Already in wardrobe — keeping one copy. "+((dupLookRes.persist&&dupLookRes.persist.summaryDelta)||"Proposed a look.");
-          // Record turn honestly: no new catalogue, but a turn did happen.
           try{ if(catalog&&typeof catalog.recordTurn==="function") catalog.recordTurn({ userText:text, proposal:null, verdict:true, reasons:["idempotent_catalogue_guard"] }); }catch(e){}
           recordLookExpectation(catalog, dupLookText);
-          // If proposal path, propose_look already recorded its expectation; don't double.
-          // Overwrite the expectation already recorded for the non-look path would be duplicate, so only return.
           return { text:dupLookText, image:dupLookRes.image||null,
             persist:{ summaryDelta:dupLookPersist, preferencesDelta:"" }, skill:"catalogue_piece",
             meta:{ source:(dupLookRes.meta&&dupLookRes.meta.source)||"fallback", selectedCount:dupLookRes.meta.selectedCount,
@@ -206,21 +320,75 @@
         recordLookExpectation(catalog, dupGapText);
         return { text:dupGapText, image:null, persist:{ summaryDelta:"Already in wardrobe — keeping one copy.", preferencesDelta:"" }, skill:"catalogue_piece" };
       }
-      // SAM-segment the crop: phrase names the detected category (plain
-      // noun the proxy's SAM_LABEL_MAP understands), falling back to a
-      // generic garment phrase. Any failure resolves null and the thumb
-      // below is the whole photo, exactly as before this change.
+
+      // Detection path: try metaClient.detectGarments
+      var detectResult=null;
+      var detectUsable=null;
+      if(o.metaClient && typeof o.metaClient.detectGarments==="function"){
+        try{
+          detectResult=await o.metaClient.detectGarments(imageDataUrl);
+          if(detectResult && Array.isArray(detectResult.pieces)){
+            // filter to usable: sane bbox + valid category
+            var usable=[];
+            for(var di=0;di<detectResult.pieces.length;di++){
+              var dr=detectResult.pieces[di];
+              if(!dr||!dr.bbox||!validRect(dr.bbox)) continue;
+              if(!dr.category) continue;
+              usable.push(dr);
+            }
+            // Only multi-piece (>1) triggers ask flow; placeholder or single -> fallback
+            if(!detectResult.placeholder && usable.length>1){
+              detectUsable=usable;
+            }
+          }
+        }catch(e){ detectUsable=null; }
+      }
+
+      if(detectUsable && detectUsable.length>1){
+        // Multi-piece: build regions, store bag, ask
+        var regions=await buildRegions(imageDataUrl, detectUsable, o.metaClient, sid);
+        // Cap at 6 already done at proxy; ensure here too
+        if(regions.length>6) regions=regions.slice(0,6);
+        if(regions.length>1){
+          var bag={ at: Date.now(), regions: regions, source_share_id: sid };
+          if(o.pendingBag!==undefined){
+            o.pendingBag=bag;
+          }
+          // Build persona listing
+          var foundNouns=regions.map(function(r){ return plainNoun(r.category); });
+          var listStr="";
+          if(foundNouns.length===2) listStr=foundNouns[0]+" and "+foundNouns[1];
+          else if(foundNouns.length>2) listStr=foundNouns.slice(0,-1).join(", ")+" and "+foundNouns[foundNouns.length-1];
+          else listStr=foundNouns.join(", ");
+          var askText="Found "+regions.length+" pieces in that photo, loveling \u2728 — a "+listStr+". Shall I add all of them?";
+          try{
+            if(catalog&&typeof catalog.askQuestion==="function"){
+              catalog.askQuestion({ text:askText, skill:"catalogue_piece", expects:"yes_no" });
+            }
+          }catch(e){}
+          // Return with pendingBag attached for service to store on ctx
+          return { text:askText, image:null, persist:{ summaryDelta:"Detected "+regions.length+" pieces, awaiting confirmation.", preferencesDelta:"" }, skill:"catalogue_piece", pendingBag: bag };
+        }
+        // fell through to single path if regions collapsed to 1
+      }
+
+      // Single-piece fallback: existing classify/segment/auto-add path
+      var cat="dress";
+      try{ if(o.metaClient&&o.metaClient.classify){ var cr=await o.metaClient.classify(imageDataUrl,""); if(cr&&cr.category) cat=cr.category; } }catch(e){}
+      if(cat==="dress"){ var h=(text||"").toLowerCase(); if(/scarf/.test(h)) cat="scarf"; else if(/bag|purse/.test(h)) cat="bag"; else if(/blazer|jacket/.test(h)) cat="layer/blazer"; else if(/cardigan|shrug/.test(h)) cat="layer/cardigan"; else if(/top|cami/.test(h)) cat="base/top"; else if(/trouser|jean|skirt|bottom/.test(h)) cat="base/bottom"; }
       var phrase=plainNoun(cat)||"garment";
       if(typeof phrase!=="string"||!phrase) phrase="garment";
       var rect=await segmentRect(imageDataUrl,o.metaClient,phrase);
       var thumb=captureThumb(imageDataUrl,rect);
       var original=captureOriginal(imageDataUrl);
+      var cropHashVal=null;
+      if(thumb||original) cropHashVal=computeCropHash(thumb||original);
       var input={ category:cat, attributes:{}, source_share_id:sid };
       if(thumb) input.photo_thumb=thumb;
       if(original) input.image_original=original;
+      if(cropHashVal) input.crop_hash=cropHashVal;
       try{ var p=catalog.addPiece(input); pieces.push(p); if(catalog.save) try{ await catalog.save(); }catch(e){} }catch(e){
-        // The thumbnail must never block cataloguing: retry bare.
-        try{ var bare=catalog.addPiece({ category:cat, attributes:{}, source_share_id:sid }); pieces.push(bare); if(catalog.save) try{ await catalog.save(); }catch(e2){} }catch(e3){}
+        try{ var bareInput={ category:cat, attributes:{}, source_share_id:sid }; if(cropHashVal) bareInput.crop_hash=cropHashVal; var bare=catalog.addPiece(bareInput); pieces.push(bare); if(catalog.save) try{ await catalog.save(); }catch(e2){} }catch(e3){}
       }
     }
     var noun=pieces.length? plainNoun(pieces[0].category):"piece";
@@ -229,31 +397,22 @@
       recordLookExpectation(catalog, failText);
       return { text:failText, image:null, persist:{ summaryDelta:"Catalogued "+noun+".", preferencesDelta:"" }, skill:"catalogue_piece" };
     }
-    // A newly catalogued piece may complete a full look: run the
-    // propose_look stack in this same turn.
-    var lookRes=await trySameTurnProposal(o);
-    if(lookRes&&lookRes.meta&&typeof lookRes.meta.selectedCount==="number"&&lookRes.meta.selectedCount>0&&typeof lookRes.text==="string"&&lookRes.text){
-      // Valid look produced — the reply names the cross-piece combination
-      // and the fit-rule result (propose_look's own text). propose_look
-      // already recorded its revise_look yes/no expectation, so this path
-      // records NO further expectation (a second one would be a duplicate
-      // pointing at propose_look after the look already exists).
-      var lookText="Got your "+noun+" \u2014 noted, loveling! \u2728 It's tucked safely in your wardrobe. "+lookRes.text;
-      var lookPersist="Catalogued "+noun+". "+((lookRes.persist&&lookRes.persist.summaryDelta)||"Proposed a look.");
-      return { text:lookText, image:lookRes.image||null,
+    var lookRes2=await trySameTurnProposal(o);
+    if(lookRes2&&lookRes2.meta&&typeof lookRes2.meta.selectedCount==="number"&&lookRes2.meta.selectedCount>0&&typeof lookRes2.text==="string"&&lookRes2.text){
+      var lookText="Got your "+noun+" \u2014 noted, loveling! \u2728 It's tucked safely in your wardrobe. "+lookRes2.text;
+      var lookPersist="Catalogued "+noun+". "+((lookRes2.persist&&lookRes2.persist.summaryDelta)||"Proposed a look.");
+      return { text:lookText, image:lookRes2.image||null,
         persist:{ summaryDelta:lookPersist, preferencesDelta:"" }, skill:"catalogue_piece",
-        meta:{ source:(lookRes.meta&&lookRes.meta.source)||"fallback", selectedCount:lookRes.meta.selectedCount,
-          rejectedReason:(lookRes.meta&&lookRes.meta.rejectedReason)||null,
-          imageDelivery:(lookRes.meta&&lookRes.meta.imageDelivery)||{ requested:false, generated:false, delivered:false, reason:"no_same_turn_look_image" } } };
+        meta:{ source:(lookRes2.meta&&lookRes2.meta.source)||"fallback", selectedCount:lookRes2.meta.selectedCount,
+          rejectedReason:(lookRes2.meta&&lookRes2.meta.rejectedReason)||null,
+          imageDelivery:(lookRes2.meta&&lookRes2.meta.imageDelivery)||{ requested:false, generated:false, delivered:false, reason:"no_same_turn_look_image" } } };
     }
-    // No valid look yet: honest gap, never framed as a complete look.
-    // The missing-finish rule is exact: one layer, or a scarf plus a bag.
     var gapText="Got your "+noun+" \u2014 noted, loveling! \u2728 It's tucked safely in your wardrobe. A "+noun+" alone isn't a full look yet \u2014 it needs exactly one finish: one layer, or a scarf plus a bag. Share one of those next and I'll style the complete look. Want me to put a look together from what you've got?";
     recordLookExpectation(catalog, gapText);
     return { text:gapText, image:null, persist:{ summaryDelta:"Catalogued "+noun+".", preferencesDelta:"" }, skill:"catalogue_piece" };
   }
 
-  var api = { handle: handle, skill: "catalogue_piece" };
+  var api = { handle: handle, skill: "catalogue_piece", handleAddDetected: handleAddDetected, plainNoun: plainNoun, validRect: validRect, computeCropHash: computeCropHash };
   root.MetaStyles = root.MetaStyles || {};
   root.MetaStyles.skills = root.MetaStyles.skills || {};
   root.MetaStyles.skills["catalogue_piece"] = api;

@@ -544,6 +544,78 @@ function createHandler(config) {
         return;
       }
 
+      if (url.pathname === "/api/detect") {
+        const image = payload.image;
+        if (typeof image !== "string" || !image.startsWith("data:image/")) {
+          sendJson(res, 400, { error: "image_data_url_required" }, corsOrigin); return;
+        }
+        if (!apiKey) { const e=new Error("MODEL_API_KEY is not set on the proxy"); e.status=503; e.code="key_missing"; throw e; }
+        const detectCacheKey = hashKey(image.slice(0, 4096) + "|detect|" + image.length);
+        { const hit = cacheGet(detectCacheKey); if (hit !== undefined) { sendJson(res, 200, Object.assign({}, hit, { cached: true }), corsOrigin); return; } }
+        var detectFallback = null;
+        try {
+          const { parsed: classifyParsed } = await sparkJson(
+            "You classify one garment region for a tall/curvy styling app. " +
+            `Reply with JSON only: {"category":"...","confidence":0.0}. ` +
+            `Category must be exactly one of: ${TAXONOMY.join(", ")}. ` +
+            "Tie-blouses and shrugs are layer/cardigan, never a base. Never return shoes.",
+            [{ type: "input_image", image_url: image }],
+            null
+          );
+          const fallbackCat = classifyParsed && normalizeCategory(classifyParsed.category);
+          if (fallbackCat) detectFallback = fallbackCat;
+        } catch (e) { /* fallback may stay null */ }
+        try {
+          const { parsed } = await sparkJson(
+            "You detect every garment in this outfit photo for a tall/curvy styling app. " +
+            `Categories must be exactly one of: ${TAXONOMY.join(", ")}. ` +
+            'Reply with STRICT JSON only: {"pieces":[{"category":"...","layer_role":null or word,"attributes":{"color":null or word},"bbox":[x,y,w,h]}]} ' +
+            "where bbox is fractional [x,y,w,h] in [0,1] for the garment bounding box. " +
+            "List every distinct garment visible. Category must be exactly one of the 7 listed. Never return shoes. " +
+            "If only one garment is visible, return a single-element pieces array.",
+            [{ type: "input_image", image_url: image }],
+            null
+          );
+          let pieces = [];
+          if (parsed && Array.isArray(parsed.pieces)) {
+            for (let i = 0; i < parsed.pieces.length && pieces.length < 6; i++) {
+              const raw = parsed.pieces[i];
+              if (!raw || typeof raw !== "object") continue;
+              const cat = normalizeCategory(raw.category);
+              if (!cat) continue;
+              let bbox = raw.bbox;
+              if (!Array.isArray(bbox) || bbox.length !== 4) continue;
+              let ok = true;
+              for (let j = 0; j < 4; j++) { if (typeof bbox[j] !== "number" || !isFinite(bbox[j])) { ok = false; break; } }
+              if (!ok) continue;
+              if (bbox[2] <= 0 || bbox[3] <= 0) continue;
+              const x1 = Math.min(1, bbox[0] + bbox[2]), y1 = Math.min(1, bbox[1] + bbox[3]);
+              if (x1 <= Math.max(0, bbox[0]) || y1 <= Math.max(0, bbox[1])) continue;
+              bbox = [Math.max(0, Math.min(1, bbox[0])), Math.max(0, Math.min(1, bbox[1])), Math.max(0, Math.min(1, bbox[2])), Math.max(0, Math.min(1, bbox[3]))];
+              let attrs = {};
+              if (raw.attributes && typeof raw.attributes === "object" && !Array.isArray(raw.attributes)) {
+                if (typeof raw.attributes.color === "string" && raw.attributes.color.trim()) attrs.color = raw.attributes.color.trim().slice(0, 40);
+              }
+              let layerRole = null;
+              if (typeof raw.layer_role === "string" && raw.layer_role.trim()) layerRole = raw.layer_role.trim().slice(0, 40);
+              pieces.push({ category: cat, layer_role: layerRole, attributes: attrs, bbox: bbox });
+            }
+          }
+          if (pieces.length === 0) throw new Error("no valid pieces parsed");
+          const out = { placeholder: false, pieces: pieces, source: SPARK_MODEL };
+          cacheSet(detectCacheKey, out);
+          sendJson(res, 200, out, corsOrigin);
+          return;
+        } catch (e) {
+          if(e && (e.status===503 || e.code==="key_missing" || e.code==="upstream_timeout" || e.status===502 && e.code==="upstream_timeout")) throw e;
+          const fbPieces = detectFallback ? [{ category: detectFallback, layer_role: null, attributes: {}, bbox: [0, 0, 1, 1] }] : [];
+          const out = { placeholder: true, pieces: fbPieces, source: SPARK_MODEL };
+          cacheSet(detectCacheKey, out);
+          sendJson(res, 200, out, corsOrigin);
+          return;
+        }
+      }
+
       sendJson(res, 404, { error: "not_found" }, corsOrigin);
     } catch (err) {
       sendJson(res, err.status || 500, {

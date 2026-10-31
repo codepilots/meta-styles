@@ -91,6 +91,7 @@
     "photo_thumb",
     "image_original",
     "held_until",
+    "crop_hash",
     "status",
   ];
   // Per-thumb size bound, mirrors app/photo-thumb.js MAX_CHARS so a stored
@@ -332,6 +333,7 @@
         photo_thumb: p.photo_thumb === undefined || p.photo_thumb === null ? null : p.photo_thumb,
         image_original: p.image_original === undefined || p.image_original === null ? null : p.image_original,
         held_until: p.held_until === undefined || p.held_until === null ? null : p.held_until,
+        crop_hash: p.crop_hash === undefined || p.crop_hash === null ? null : p.crop_hash,
         status: p.status,
       };
     }
@@ -393,6 +395,19 @@
       return isoOrThrow(value, label);
     }
 
+    // Optional crop hash: null/absent is valid (old pieces before multi-detect).
+    // A present value must be a 16-hex-char string (SHA-256 prefix of cropped
+    // original bytes); anything else throws (fail-closed).
+    function checkCropHash(value, label) {
+      if (value === undefined || value === null) return null;
+      if (typeof value !== "string" || !/^[0-9a-f]{16}$/.test(value)) {
+        throw new Error(
+          "wardrobe-catalog: " + label + " must be a 16-hex-char string"
+        );
+      }
+      return value;
+    }
+
     // Fail-closed validation for one piece record read back from the
     // persisted store (Milestone 19h load path). Same interface-agnostic
     // schema as addPiece, except stored pieces may carry any of the four
@@ -430,6 +445,7 @@
       checkPhotoThumb(p.photo_thumb, "stored photo_thumb");
       checkImageOriginal(p.image_original, "stored image_original");
       checkHeldUntil(p.held_until, "stored held_until");
+      checkCropHash(p.crop_hash, "stored crop_hash");
       if (PIECE_STATUSES.indexOf(p.status) === -1) {
         throw new Error("wardrobe-catalog: stored piece has an unknown status");
       }
@@ -547,6 +563,7 @@
         photo_thumb: checkPhotoThumb(v.photo_thumb, "photo_thumb"),
         image_original: checkImageOriginal(v.image_original, "image_original"),
         held_until: checkHeldUntil(v.held_until, "held_until"),
+        crop_hash: checkCropHash(v.crop_hash, "crop_hash"),
         status: status,
       };
       pieces.push(piece);

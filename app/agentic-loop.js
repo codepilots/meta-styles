@@ -222,7 +222,8 @@
         catalog: skillCatalog, text: message, imageDataUrl: imageDataUrl, imagePresent: hasImage,
         wardrobeSummary: wardrobeSummary, preferences: preferences, lastTurns: lastTurns,
         metaClient: o.metaClient || null, sendClient: o.sendClient || null, assembler: assembler,
-        shareId: inp.shareId || null, stageImage: o.stageImage || null
+        shareId: inp.shareId || null, stageImage: o.stageImage || null,
+        pendingBag: inp.pendingBag || null
       });
 
       var outText = (result && result.text) || "";
