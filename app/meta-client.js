@@ -137,8 +137,22 @@
   // image *length* served one user's image-edit to another user's different
   // photo of equal length. The proxy already caches previews by full-image
   // hash (bounded LRU), so always round-trip instead of caching here.
-  function preview(prompt, imageDataUrl) {
-    return post("/api/preview", { prompt: prompt, image: imageDataUrl || null }, 120000);
+  function preview(prompt, imageOrImages) {
+    var images = null;
+    if (Array.isArray(imageOrImages)) {
+      images = imageOrImages.filter(function (u) { return typeof u === "string" && u; });
+      if (images.length === 0) images = null;
+    } else if (typeof imageOrImages === "string" && imageOrImages) {
+      images = [imageOrImages];
+    }
+    var body = { prompt: prompt };
+    if (images && images.length) {
+      body.images = images;
+      body.image = images[0];
+    } else {
+      body.image = null;
+    }
+    return post("/api/preview", body, 120000);
   }
 
   function route(text, ctx) {

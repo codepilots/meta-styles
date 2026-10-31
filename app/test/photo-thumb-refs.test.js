@@ -169,11 +169,16 @@ async function run() {
     };
     const r = await ProposeLook.handle({ catalog: cat, metaClient: mc });
     assert.strictEqual(seen.length, 1, "preview called once");
-    assert.strictEqual(seen[0].image, thumb, "stored thumb passed as the reference image");
+    // Multi-reference: both selected pieces have thumbs, so preview receives both in order.
+    const gotImages = Array.isArray(seen[0].image) ? seen[0].image : [seen[0].image];
+    assert.strictEqual(gotImages.length, 2, "both thumbs forwarded");
+    assert.ok(gotImages.every(function (u) { return u === thumb; }), "thumbs forwarded in order");
     assert.ok(/reference garment photo/.test(seen[0].prompt), "prompt notes the reference");
+    assert.ok(/distinct wardrobe garment/.test(seen[0].prompt), "prompt preserves every reference distinctly");
     assert.strictEqual(r.meta.referenceThumb, true, "meta flags reference use");
+    assert.strictEqual(r.meta.referencePieces, 2, "meta reports correct reference count");
     assert.ok(r.image && r.image.dataURL.startsWith("data:image/"), "preview image surfaced");
-    console.log("  pass: stored thumb forwarded to preview as the single reference");
+    console.log("  pass: stored thumbs forwarded to preview in order");
 
     // Old pieces without thumbs: text-only path still works.
     const catOld = Wardrobe.createCatalog({ userKey: "SYNTH_thumb_c_old" });

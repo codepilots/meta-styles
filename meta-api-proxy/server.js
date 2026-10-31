@@ -434,18 +434,34 @@ function createHandler(config) {
       if (url.pathname === "/api/preview") {
         const prompt = String(payload.prompt || "").slice(0, 1000);
         if (!prompt) { sendJson(res, 400, { error: "prompt_required" }, corsOrigin); return; }
-        // Opus finding #14: hash the FULL image data URL, not just its length —
+        // Multi-reference preview (max 4): accept legacy `image` or new `images[]`.
+        let refs = null;
+        if (payload.images !== undefined) {
+          if (!Array.isArray(payload.images) || payload.images.length === 0 || payload.images.length > 4) {
+            sendJson(res, 400, { error: "image_data_url_required" }, corsOrigin); return;
+          }
+          for (const u of payload.images) {
+            if (typeof u !== "string" || !u.startsWith("data:image/")) {
+              sendJson(res, 400, { error: "image_data_url_required" }, corsOrigin); return;
+            }
+          }
+          refs = payload.images;
+        } else if (payload.image !== undefined && payload.image !== null) {
+          if (typeof payload.image !== "string" || !payload.image.startsWith("data:image/")) {
+            sendJson(res, 400, { error: "image_data_url_required" }, corsOrigin); return;
+          }
+          refs = [payload.image];
+        }
+        // Opus finding #14: hash the FULL image data URLs, not just length —
         // two different garment photos with equal-length data URLs must never
         // share a cache entry. Text-only previews keep their exact old key.
-        const ck = payload.image
-          ? hashKey(prompt + "|" + payload.image)
-          : hashKey(prompt + "|0");
+        const ck = refs ? hashKey(prompt + "|" + refs.join("|")) : hashKey(prompt + "|0");
         { const prevHit = cacheGet(ck); if (prevHit !== undefined) { sendJson(res, 200, { ...prevHit, cached: true }, corsOrigin); return; } }
         let body;
-        if (typeof payload.image === "string" && payload.image.startsWith("data:image/")) {
+        if (refs) {
           body = await upstream("/images/edits", {
             model: IMAGE_MODEL, prompt, n: 1,
-            images: [{ image_url: payload.image }],
+            images: refs.map(function (u) { return { image_url: u }; }),
           }, PREVIEW_UPSTREAM_TIMEOUT_MS);
         } else {
           body = await upstream("/images/generations", { model: IMAGE_MODEL, prompt, n: 1 }, PREVIEW_UPSTREAM_TIMEOUT_MS);

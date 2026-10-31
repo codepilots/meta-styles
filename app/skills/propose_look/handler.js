@@ -406,29 +406,28 @@
     reply += " Want me to tweak anything?";
 
     // 5. Preview only after a validated look; honour the real return shape.
-    // Photo-reference (M21 photo-reference work, option b): pass the single
-    // most relevant stored thumb — the first chosen piece that carries one
-    // (chosen order is base-first, so this is the look's base garment) — as
-    // the preview's reference image. metaClient.preview(prompt,
-    // imageDataUrl) and the proxy's /api/preview {prompt, image?} route
-    // only demonstrate single-image use upstream (images/edits with one
-    // image_url), so multi-piece referencing stays a known limitation for a
-    // future pass. No thumb anywhere -> the existing text-only prompt path.
+    // Photo-reference: collect every selected piece with a valid photo_thumb
+    // in selected-look order and forward all of them as references.
     var byId = byIdMap(active);
-    var refThumb = null;
-    var refPieces = 0;
+    var refThumbs = [];
     for (var ti = 0; ti < chosen.items.length; ti++) {
       var lp = byId[chosen.items[ti].id];
       if (lp && typeof lp.photo_thumb === "string" && /^data:image\//.test(lp.photo_thumb)) {
-        refPieces += 1;
-        if (!refThumb) refThumb = lp.photo_thumb;
+        refThumbs.push(lp.photo_thumb);
       }
     }
+    var refPieces = refThumbs.length;
+    var refThumb = refThumbs[0] || null;
+    var missingRefs = chosen.items.length - refThumbs.length;
     var previewPrompt =
       "Y2K fairycore flat-lay look card, soft pastel background, garments laid out neatly: " +
       nouns + ". No people, no worn try-on, no readable text.";
-    if (refThumb) {
+    if (refThumbs.length > 0) {
       previewPrompt += " Use the attached reference garment photo for the true colors and silhouette.";
+      previewPrompt += " Each attached image is a distinct wardrobe garment; preserve the colour, print, silhouette, and details of every attached reference as a separate flat-lay item; do not substitute generic garments; do not add unreferenced garments; no person/try-on/readable text.";
+      if (missingRefs > 0) {
+        previewPrompt += " Only " + refThumbs.length + " of " + chosen.items.length + " selected pieces have reference photos; the remaining piece(s) are not represented in references.";
+      }
     }
     var imageDelivery = { requested: false, generated: false, delivered: false, reason: "no_preview_client" };
     var image = null;
@@ -437,7 +436,10 @@
       imageDelivery.reason = "preview_failed";
       toolSteps += 1;
       try {
-        var pr = await metaClient.preview(previewPrompt, refThumb || null);
+        var previewRef = null;
+        if (refThumbs.length === 1) previewRef = refThumbs[0];
+        else if (refThumbs.length > 1) previewRef = refThumbs;
+        var pr = await metaClient.preview(previewPrompt, previewRef);
         var durl = pr && (pr.dataURL || pr.dataUrl || pr.data_url);
         if (typeof durl === "string" && /^data:image\//.test(durl)) {
           imageDelivery.generated = true;
