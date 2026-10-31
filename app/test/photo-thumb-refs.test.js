@@ -111,13 +111,41 @@ async function run() {
     assert.strictEqual(maxdiff(gOut.rgb, PhotoThumb.resampleFit({ w: 64, h: 48, rgb: gray }, 96).rgb), 0,
       "gray thumb pixel-perfect");
 
-    // JPEG bytes and garbage fail soft — never throw, never a thumb.
+    // Truncated JPEG / garbage / non-URL fail soft to null.
     const jpegMagic = "data:image/jpeg;base64," + Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0, 10, 1, 2, 3, 4]).toString("base64");
-    assert.strictEqual(PhotoThumb.makeSync(jpegMagic), null, "JPEG input -> null (PNG-only)");
+    assert.strictEqual(PhotoThumb.makeSync(jpegMagic), null, "truncated JPEG -> null");
     assert.strictEqual(PhotoThumb.makeSync("data:image/png;base64,AAAA"), null, "garbage -> null");
     assert.strictEqual(PhotoThumb.makeSync("not a url"), null, "non-URL -> null");
     assert.strictEqual(PhotoThumb.makeSync(null), null, "null -> null");
-    console.log("  pass: JPEG/garbage/non-URL inputs all fail soft to null");
+    console.log("  pass: truncated JPEG/garbage/non-URL inputs all fail soft to null");
+
+    // Synthetic JPEG regression: tiny deterministic JPEG via ffmpeg fixture
+    // (4x4 pixels, produced from PNG->JPEG with ffmpeg; no real photo).
+    // When ffmpeg is available, JPEG makeSync must return a PNG thumb;
+    // when ffmpeg is absent, null is explicitly allowed (not a failure).
+    const TINY_JPEG_B64 = "/9j//gAQTGF2YzYyLjExLjEwMAD/2wBDAAgEBAQEBAUFBQUFBQYGBgYGBgYGBgYGBgYHBwcICAgHBwcGBgcHCAgICAkJCQgICAgJCQoKCgwMCwsODg4RERT/xABqAAEBAAAAAAAAAAAAAAAAAAAFBgEBAQEAAAAAAAAAAAAAAAAABQMEEAAABAYDAQAAAAAAAAAAAAAGAQMAAhUHJPBioVE1QREAAAUCBgMBAAAAAAAAAAAAAAYCBVEEsRYUJCPwgdFiNDb/wAARCAAEAAQDARIAAhIAAxIA/9oADAMBAAIRAxEAPwCpD1PgxK0bTmHotW2HvLRz4TDczI7Zte9fyMDn9a+SKEg3PmHqbUTMJ9gaSPz1N3ZI/9k=";
+    const tinyJpegUrl = "data:image/jpeg;base64," + TINY_JPEG_B64;
+    // Detect ffmpeg availability (spawn check)
+    let ffmpegAvail = false;
+    try {
+      const cp = require("node:child_process");
+      const r = cp.spawnSync("ffmpeg", ["-version"], { timeout: 2000, windowsHide: true });
+      ffmpegAvail = !!(r && r.status === 0);
+    } catch (e) { ffmpegAvail = false; }
+    const jThumb = PhotoThumb.makeSync(tinyJpegUrl);
+    if (ffmpegAvail) {
+      assert.ok(typeof jThumb === "string" && jThumb.startsWith("data:image/png;base64,"),
+        "JPEG fixture -> PNG thumb when ffmpeg available, got: " + String(jThumb).slice(0, 60));
+      const jRaw = Buffer.from(jThumb.split(",")[1], "base64");
+      assert.ok(jRaw.length <= PhotoThumb.BYTE_BUDGET, `JPEG thumb raw ${jRaw.length} fits budget`);
+      assert.ok(jThumb.length <= PhotoThumb.MAX_CHARS, "JPEG thumb fits MAX_CHARS");
+      const jOut = PhotoThumb.decodePng(new Uint8Array(jRaw));
+      assert.ok(Math.max(jOut.w, jOut.h) <= PhotoThumb.MAX_DIM, "JPEG thumb within MAX_DIM");
+      console.log(`  pass: synthetic JPEG fixture thumb ${jRaw.length} raw bytes, ${jOut.w}x${jOut.h} (ffmpeg present)`);
+    } else {
+      assert.strictEqual(jThumb, null, "JPEG fixture -> null only when ffmpeg unavailable");
+      console.log("  pass: synthetic JPEG fixture -> null (ffmpeg unavailable, allowed)");
+    }
   }
 
   // --- (b) catalogue_piece stores photo_thumb, fail-soft without it ---

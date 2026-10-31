@@ -9,21 +9,26 @@
  * the result as the piece's `photo_thumb` (wardrobe-catalog schema);
  * propose_look later passes those thumbs as Muse Image reference inputs.
  *
- * PNG-only by decision (Bramble, 2026-10-30): an earlier revision carried
- * a hand-written baseline JPEG codec whose encode->decode path corrupted
- * any 8x8 block with nonzero AC coefficients (flat-DC blocks round-tripped
- * exact; gradient blocks showed maxdiff ~100+; Huffman/magnitude/DC/
- * zigzag paths each verified clean in isolation, so the fault sat in the
- * coefficient-domain FDCT/quant path or MCU assembly). Rather than debug
- * the custom lossy codec further, the JPEG path was removed entirely:
- * PNG already round-tripped pixel-perfect (maxdiff 0) in this same file,
- * PNG is lossless so there is no quality tradeoff, and stdlib-only via
- * node:zlib is still honoured.
+ * PNG pure-JS; JPEG via optional Node ffmpeg conversion (2026-10-31):
+ * an earlier revision carried a hand-written baseline JPEG codec whose
+ * encode->decode path corrupted any 8x8 block with nonzero AC coefficients
+ * (flat-DC blocks round-tripped exact; gradient blocks showed maxdiff ~100+;
+ * Huffman/magnitude/DC/zigzag paths each verified clean in isolation, so
+ * the fault sat in the coefficient-domain FDCT/quant path or MCU assembly).
+ * Rather than debug the custom lossy codec further, the JPEG path was
+ * removed and PNG kept pixel-perfect (maxdiff 0) via node:zlib. Live
+ * Instagram photos are commonly JPEG data URLs, so Node now optionally
+ * converts JPEG->PNG via the already-installed ffmpeg binary (spawnSync,
+ * arg-array, no shell, stdin/stdout pipes, bounded I/O/time, no temp
+ * files, no image-byte logging); the converted PNG then flows through the
+ * same PNG decode/resample/crop/encode path so output stays <=96px,
+ * <=10KB PNG. No npm dependency added. Browsers keep makeCanvas().
  *
  * Constraints honoured:
  * - stdlib-only, zero npm dependencies (same convention as the servers):
  *   PNG via node:zlib (guarded require — browsers use makeCanvas()
- *   instead).
+ *   instead); JPEG via optional ffmpeg executable (Node only, fail-soft
+ *   to null when unavailable).
  * - Real resize, never a byte-budget trim of the original (a trim
  *   corrupts the image): decode -> box-average resample -> re-encode.
  * - Small output: longest side <= 96px, PNG raw bytes <= 10KB, so one
@@ -33,10 +38,12 @@
  * - Lossless filters only: the encoder picks the best of the five PNG
  *   filters per row (min sum of absolute residuals); the decoder already
  *   handles all filter types, so filtered output still round-trips exact.
- * - Fail-soft: anything undecodable (non-PNG input, JPEG bytes, GIF/WebP
- *   in pure Node, oversized input, garbage fixtures) resolves null — the
- *   piece still catalogues, the preview just falls back to text
- *   description. Never throws for bad input (only for programmer errors).
+ * - Fail-soft: anything undecodable (non-JPEG/PNG input, GIF/WebP
+ *   in pure Node when ffmpeg cannot handle it, oversized input, garbage
+ *   fixtures, missing ffmpeg) resolves null — the piece still catalogues,
+ *   the preview just falls back to text description. JPEG conversion
+ *   failure never blocks cataloguing. Never throws for bad input (only
+ *   for programmer errors).
  *
  * All fixtures this module is tested with are synthetic gradients made
  * from scratch — never real photos.
@@ -348,20 +355,67 @@
     return { w: dw, h: dh, rgb: dst };
   }
 
-  // PNG-only: any non-PNG input (JPEG bytes, GIF/WebP, garbage with an
-  // image data-URL wrapper) throws fail() here and the caller maps it to
-  // null — the piece still catalogues without a thumb.
-  function decodePixels(bytes) {
-    if (sniffKind(bytes) === "png") return decodePng(bytes);
-    throw fail("unsupported image kind for thumbnail (PNG-only)");
+  // --- JPEG -> PNG via optional ffmpeg (Node only) ----------------------
+  // Converts JPEG input bytes to PNG bytes using the system ffmpeg binary
+  // when available. Bounded: input already capped by MAX_INPUT_BYTES,
+  // output capped, no shell, arg-array only, stdin/stdout pipes, timeout,
+  // no temp files, no image-byte logging. Returns Uint8Array PNG or null.
+  // Never throws for bad input; programmer errors still throw fail().
+  function jpegToPngBytes(jpegBytes) {
+    if (!jpegBytes || jpegBytes.length === 0 || jpegBytes.length > MAX_INPUT_BYTES) return null;
+    var cp = null;
+    try {
+      if (typeof require === "undefined") return null;
+      cp = require("node:child_process");
+    } catch (e) { return null; }
+    if (!cp || typeof cp.spawnSync !== "function") return null;
+    try {
+      var res = cp.spawnSync("ffmpeg", [
+        "-hide_banner", "-loglevel", "error",
+        "-f", "image2pipe", "-i", "pipe:0",
+        "-frames:v", "1",
+        "-vf", "scale=w=96:h=96:force_original_aspect_ratio=decrease",
+        "-f", "image2pipe", "-vcodec", "png",
+        "pipe:1"
+      ], {
+        input: Buffer.from(jpegBytes),
+        maxBuffer: 2 * 1024 * 1024,
+        timeout: 5000,
+        windowsHide: true
+      });
+      if (!res || res.error || res.status !== 0) return null;
+      var out = res.stdout;
+      if (!out || out.length === 0) return null;
+      if (out.length < 8 || out[0] !== 0x89 || out[1] !== 0x50 || out[2] !== 0x4e || out[3] !== 0x47) return null;
+      return new Uint8Array(out);
+    } catch (e) {
+      return null;
+    }
   }
 
-  // Synchronous pure-JS path (Node stdlib; works anywhere node:zlib loads).
+  // PNG pure-JS; JPEG via optional Node ffmpeg conversion. Any other kind
+  // (GIF/WebP, garbage with an image data-URL wrapper) throws fail() and
+  // the caller maps it to null — the piece still catalogues without a thumb.
+  // JPEG conversion failure also maps to fail() so callers keep fail-soft.
+  function decodePixels(bytes) {
+    var kind = sniffKind(bytes);
+    if (kind === "png") return decodePng(bytes);
+    if (kind === "jpeg") {
+      var pngBytes = jpegToPngBytes(bytes);
+      if (pngBytes) return decodePng(pngBytes);
+      throw fail("JPEG conversion unavailable or failed");
+    }
+    throw fail("unsupported image kind for thumbnail (PNG pure-JS; JPEG via optional ffmpeg)");
+  }
+
+  // Synchronous path (Node stdlib + optional ffmpeg for JPEG).
   // Returns a small data:image/png;base64,... thumbnail or null.
-  // Optional cropRect ([x,y,w,h] fractions in [0,1], the SAM box shape)
-  // crops the decoded pixels BEFORE resampling; invalid rects keep the
-  // whole photo. Never throws for bad input — null means "catalogue
-  // without a thumb".
+  // PNG is handled pure-JS via node:zlib; JPEG is converted via optional
+  // Node ffmpeg (spawnSync, bounded, fail-soft to null) then decoded the
+  // same way so output stays <=96px, <=10KB PNG. Optional cropRect
+  // ([x,y,w,h] fractions in [0,1], the SAM box shape) crops the decoded
+  // pixels BEFORE resampling; invalid rects keep the whole photo. Never
+  // throws for bad input — null means "catalogue without a thumb".
   function makeSync(dataUrl, cropRect) {
     try {
       var parsed = parseDataUrl(dataUrl);
@@ -438,6 +492,7 @@
     cropPixels: cropPixels,
     resampleFit: resampleFit,
     isValidPhotoThumb: isValidPhotoThumb,
+    jpegToPngBytes: jpegToPngBytes,
     makeSync: makeSync,
     makeCanvas: makeCanvas,
   };
