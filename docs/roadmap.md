@@ -24,6 +24,16 @@ Nothing is called done on the strength of a plan doc alone.
    live isolation/E2E pass against *that* surface (mock bot stopped is
    N/A here since the chat flow already defaults to the mock bot by
    design) — not the M13 static-panel walk as scoped in 2026-10-28.
+   **Status: LANDED 2026-10-31.** `wardrobe-service/test/network-isolation-e2e.test.js`
+   wraps global `fetch` plus `http`/`https.request` to record every outbound target, runs
+   the real mock bot + keyless meta-api-proxy in-process on ephemeral loopback ports, and
+   drives a 4-turn conversation (photo → photo → "show me a look" → purchase question)
+   through the real `wardrobe-service` `processOne` path. Verdict: all 43 outbound attempts
+   to 127.0.0.1, 4 real bot replies in `/mock/outbound` (no vacuous pass). Commit 9ef4774,
+   author `muse-code <muse-code@noreply.invalid>` — correct per the app-code attribution rule.
+   Verified: new test green standalone and under `node --test`; full suite 49/50 (1
+   pre-existing environmental fail, `live-proxy` static-serve 502 in sandbox, fails on the
+   clean tree too); `git show` diff clean of secrets.
 3. **M16 — judge-ready local install+run** (blocks Demo 25%: judges
    assess the live product, not only the video). **Status update
    (Bramble, 2026-10-30):** per decision #8(3), M16 is a local one-shot
