@@ -42,9 +42,12 @@ Nothing is called done on the strength of a plan doc alone.
    judge framing) is substantially done: `README.md` documents the
    one-command `start.sh` path, which already launches the real
    `wardrobe-service` chat product, not just the old static panel.
-   Remaining under M16: confirm `README.md`'s architecture section
-   mentions the M21/M22 skill router (not just the M13/M14 pipeline), and
-   close M16d's stale-decision cleanup.
+   **Status 2026-10-31: M16 closed.** `README.md`'s architecture section
+   (lines ~157-165) already names the "M21 agentic router + 11 skills"
+   and per-turn skill dispatch — satisfies the remaining confirm-check.
+   M16d's stale-decision cleanup is also closed (see Milestone 17 and
+   the `docs/instagram-integration-plan.md` pointer update, both done
+   2026-10-31). Nothing further under M16 before submission.
 4. **M4 — submission cut** (video, public repo, package; start the
    script early, finish last).
 
@@ -272,12 +275,22 @@ no runnable product, and there is no root `README.md` at all.
   that are synthetic or Autumn's own (never real DM captures — see
   compliance skill, synthetic-data rule). Check the flow on a phone-
   width viewport: the input story is a mirror selfie.
-- **16d — Close stale decisions.** Record in `docs/decisions.md`:
-  boutique-ui vs Next.js is settled de facto (vanilla static app in
-  `app/` — strike the open question with that reasoning), and the
-  M8 descope + M17 send decision outcomes.
+- **16d — Close stale decisions. CLOSED 2026-10-31.** Recorded in
+  `docs/decisions.md`: boutique-ui vs Next.js was already settled de
+  facto (struck 2026-10-29); the M8 descope and M17 send decision
+  outcomes are both already covered by decision #8(2)/(3) — this pass
+  added explicit "RESOLVED"/"SUPERSEDED" cross-reference notes at
+  Milestone 17 above and at `docs/instagram-integration-plan.md`'s
+  Milestones 7/8 (now marked superseded/descoped, pointing back to
+  decision #8), so neither reads as an open gap any more.
 
-### Milestone 17 (P2 — decision first): real send path, or descope it
+### Milestone 17 (P2 — decision first): real send path, or descope it — RESOLVED 2026-10-31
+
+**Resolved via decision #8(2)/(3) (Autumn, 2026-10-29): option (ii) — sends
+stay mock-only (`mock-ig-bot/`) for this submission.** Real Instagram DM
+sends are a stretch goal only, still gated by the compliance skill's
+send-approval rule if ever pursued. Nothing further to build here before
+submission. Leaving the original gap/options text below for record.
 
 **Gap:** M12's bot side is live but unusable end-to-end (no client,
 placeholder Graph token), while M13's mock already proves the send
@@ -363,9 +376,9 @@ and a pass/fail Meta-model gate in front of it.
 ## See also
 
 - Build vs reuse vs risks per Instagram milestone:
-  `docs/instagram-integration-plan.md` (Milestones 7/8 there are
-  superseded/descoped per above; that file needs a pointer update when
-  M16d lands).
+  `docs/instagram-integration-plan.md` (Milestones 7/8 there are now
+  marked superseded/descoped, pointing back to decision #8 — update
+  landed 2026-10-31 with M16d).
 - Compliance and the pass/fail gate: `skills/meta-hackathon-compliance/SKILL.md`.
 
 ## Milestone 21 — Agentic wardrobe skills + router (MUSE SPARK)
