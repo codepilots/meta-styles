@@ -120,7 +120,8 @@ var DETECT_BAG_TTL_MS = 24 * 3600 * 1000;
 function mergeDetectBag(existing, incoming){
   if(!incoming || !Array.isArray(incoming.regions)) return existing;
   if(!existing || !Array.isArray(existing.regions) || !existing.regions.length){
-    var copy = { at: incoming.at, regions: incoming.regions.slice(), source_share_id: incoming.source_share_id, source_share_ids: incoming.source_share_ids ? incoming.source_share_ids.slice() : (incoming.source_share_id ? [incoming.source_share_id] : []) };
+    var copy = { at: incoming.at, regions: incoming.regions.slice(), source_share_id: incoming.source_share_id, source_share_ids: incoming.source_share_ids ? incoming.source_share_ids.slice() : (incoming.source_share_id ? [incoming.source_share_id] : []), source_media_ids: incoming.source_media_ids ? incoming.source_media_ids.slice() : (incoming.source_media_id ? [incoming.source_media_id] : []) };
+    if(incoming.source_media_id && (!copy.source_media_ids || copy.source_media_ids.indexOf(incoming.source_media_id)===-1)) copy.source_media_ids.push(incoming.source_media_id);
     return copy;
   }
   var seen={};
@@ -139,7 +140,11 @@ function mergeDetectBag(existing, incoming){
   var incSids = incoming.source_share_ids ? incoming.source_share_ids : (incoming.source_share_id ? [incoming.source_share_id] : []);
   for(var k=0;k<incSids.length;k++){ if(sids.indexOf(incSids[k])===-1) sids.push(incSids[k]); }
   if(incoming.source_share_id && sids.indexOf(incoming.source_share_id)===-1) sids.push(incoming.source_share_id);
-  return { at: oldestAt, regions: mergedRegions, source_share_id: existing.source_share_id||incoming.source_share_id, source_share_ids: sids };
+  var mids = (existing.source_media_ids||[]).slice();
+  var incMids = incoming.source_media_ids ? incoming.source_media_ids : (incoming.source_media_id ? [incoming.source_media_id] : []);
+  for(var km=0;km<incMids.length;km++){ if(mids.indexOf(incMids[km])===-1) mids.push(incMids[km]); }
+  if(incoming.source_media_id && mids.indexOf(incoming.source_media_id)===-1) mids.push(incoming.source_media_id);
+  return { at: oldestAt, regions: mergedRegions, source_share_id: existing.source_share_id||incoming.source_share_id, source_share_ids: sids, source_media_ids: mids };
 }
 function bagRegionsChanged(before, after){
   if(!before && after) return true;
@@ -502,7 +507,16 @@ function createService(opts) {
             else livePaths.assemble = livePaths.assemble === "live" ? "live" : "fallback";
           }
         } catch (e) { /* status must never break the turn */ }
-        var entry = { shareId: shareId, skill: skillName, toolCalls: toolCalls, totalSteps: totalSteps, at: new Date(nowMs()).toISOString() };
+        var traceForEntry = [];
+        try{
+          if(result && Array.isArray(result.trace)) traceForEntry = result.trace.slice(0,40);
+          else if(result && result.handlerResult && Array.isArray(result.handlerResult.trace)) traceForEntry = result.handlerResult.trace.slice(0,40);
+        }catch(e){ traceForEntry=[]; }
+        // sanitize to strings only, id-free by construction
+        try{ traceForEntry = traceForEntry.filter(function(s){ return typeof s==="string"; }).slice(0,40); }catch(e){ traceForEntry=[]; }
+        var outcomeForEntry = (result && result.outcome) ? result.outcome : skillName;
+        if(result && result.handlerResult && result.handlerResult.outcome === "handler_error") outcomeForEntry = "handler_error";
+        var entry = { shareId: shareId, skill: skillName, toolCalls: toolCalls, totalSteps: totalSteps, at: new Date(nowMs()).toISOString(), trace: traceForEntry.slice(), outcome: outcomeForEntry };
         logAgentic(entry);
         ctx.lastAgenticDecision = skillName;
         ctx.lastSkillSteps = totalSteps;
@@ -541,7 +555,12 @@ function createService(opts) {
           return { result: result, toolCalls: toolCalls, totalSteps: totalSteps, skill: skillName };
         });
       }, function (err) {
-        var entry2 = { shareId: shareId, skill: "error", toolCalls: [], totalSteps: MAX_TOOL_STEPS, at: new Date(nowMs()).toISOString(), error: String((err && err.message) || err) };
+        var traceErr = [];
+        try{ if(err && Array.isArray(err.trace)) traceErr = err.trace.slice(0,40); }catch(e){}
+        try{ traceErr = traceErr.filter(function(s){ return typeof s==="string"; }).slice(0,40); }catch(e){ traceErr=[]; }
+        var skillErr = "error";
+        try{ if(err && err.skill) skillErr = err.skill; }catch(e){}
+        var entry2 = { shareId: shareId, skill: skillErr, toolCalls: [], totalSteps: MAX_TOOL_STEPS, at: new Date(nowMs()).toISOString(), error: String((err && err.message) || err), trace: traceErr, outcome: "handler_error" };
         logAgentic(entry2);
         throw err;
       });
@@ -635,7 +654,12 @@ function createService(opts) {
             var tcs=e.toolCalls||[];
             for(var j=0;j<tcs.length;j++){ if(tcs[j]&&typeof tcs[j].tool==="string") tools.push(tcs[j].tool); }
           }catch(e2){}
-          out.push({ skill: e.skill||"unknown", steps: typeof e.totalSteps==="number"?e.totalSteps:(tools.length), tools: tools, outcome: e.skill||"unknown" });
+          var traceArr=[];
+          try{
+            if(e.trace && Array.isArray(e.trace)) traceArr = e.trace.filter(function(s){ return typeof s==="string"; }).slice(0,40);
+          }catch(e2){}
+          var outcomeVal = e.outcome || e.skill || "unknown";
+          out.push({ skill: e.skill||"unknown", steps: typeof e.totalSteps==="number"?e.totalSteps:(tools.length), tools: tools, outcome: outcomeVal, trace: traceArr });
         }
         return out;
       })(),
@@ -949,6 +973,11 @@ function createService(opts) {
       if(hrPending && Array.isArray(hrPending.regions) && hrPending.regions.length){
         // Ensure source_share_ids tracking
         if(!hrPending.source_share_ids) hrPending.source_share_ids = hrPending.source_share_id ? [hrPending.source_share_id] : [];
+        if(item && item.media_id){
+          hrPending.source_media_id = item.media_id;
+          if(!hrPending.source_media_ids) hrPending.source_media_ids = [item.media_id];
+          else if(hrPending.source_media_ids.indexOf(item.media_id)===-1) hrPending.source_media_ids.push(item.media_id);
+        }
         // Merge into ctx.detectBag instead of replacing (append by crop_hash, oldest at, record sources)
         var before = ctx.detectBag;
         ctx.detectBag = mergeDetectBag(ctx.detectBag, hrPending);
@@ -1013,12 +1042,39 @@ function createService(opts) {
         hr.meta && hr.meta.imageDelivery &&
         hr.meta.imageDelivery.delivered === true);
       return sendComposed(ctx, id, text, { withImage: withImage }).then(function (outcome) {
-        // Media ack only on a terminal outcome (the share is handled, so
-        // the bytes will never be needed again) — never on "retry", where
-        // the share is re-offered next tick and still needs its media.
-        // Best-effort, never blocking the outcome.
         if (item.media_id && typeof outcome === "string" && outcome.indexOf("terminal:") === 0) {
-          acknowledgeMedia(item.media_id);
+          var _hr = result && result.handlerResult ? result.handlerResult : result;
+          var _isCat = skill === "catalogue_piece";
+          var _isFailure = false;
+          if(_isCat && _hr){
+            if(_hr.meta && _hr.meta.addFailure && _hr.meta.addFailure.kind) _isFailure = true;
+            else if(_hr.trace && Array.isArray(_hr.trace) && _hr.trace.indexOf("added:0")!==-1 && _hr.trace.indexOf("return:fail")!==-1) _isFailure = true;
+          }
+          if(_isCat && _isFailure){
+            say("Your photo stays with me until its pieces land.");
+          } else {
+            acknowledgeMedia(item.media_id);
+            // On successful yes-add, also ack original photo media retained from ask
+            if(_isCat && _hr && _hr.trace && _hr.trace.indexOf("regions:")!==-1){
+              // detect successful add via added>0 and return:added / return:already with pieces
+            }
+            // If this was a successful yes-add, ack the bag's original media ids (retained from ask)
+            try{
+              var _bagForAck = ctx.detectBag;
+              // bag is cleared after success in runAgenticTurn, so check pendingBagForTurn
+              var _pendingForAck = pendingBagForTurn;
+              var _srcIds = null;
+              if(_pendingForAck && Array.isArray(_pendingForAck.source_share_ids)) _srcIds = _pendingForAck.source_share_ids;
+              else if(_pendingForAck && _pendingForAck.source_share_id) _srcIds = [_pendingForAck.source_share_id];
+              // Only ack retained media when we actually added pieces (not on fail/empty)
+              var _addedOk = _hr && _hr.trace && _hr.trace.some(function(s){ return typeof s==="string" && s.indexOf("added:")===0 && s!=="added:0"; });
+              if(_srcIds && _addedOk){
+                // We need media_ids: stored as source_media_ids if available, else try acknowledge via share's media (fallback: no-op if not found)
+                var _mediaIds = _pendingForAck && Array.isArray(_pendingForAck.source_media_ids) ? _pendingForAck.source_media_ids : [];
+                for(var _mi=0; _mi<_mediaIds.length; _mi++){ if(_mediaIds[_mi]) acknowledgeMedia(_mediaIds[_mi]); }
+              }
+            }catch(e){}
+          }
         }
         return outcome;
       });
@@ -1341,14 +1397,9 @@ function createService(opts) {
             // Fix the outcomes array: replace pending_ask entry for lastShare with the combined ask send outcome
             // We will send via ordinary send path, inheriting confirm/idempotency/window semantics
             var p = sendComposed(ctx, lastShare.id, askText, { withImage: false }).then(function(outcome){
-              // On terminal, ack media of last share (and optionally all pending shares' media? but only last share's send consumes one idempotency key)
-              // For other pending shares, their media will never be acked via send; but they are marked pending_ask terminal, so no retry needed
-              // However we should ack media for all contributing shares to prevent retry of media fetch
-              var sids = after.source_share_ids || [];
-              for(var si=0; si<sids.length; si++){
-                var sidAck = sids[si];
-                // Find corresponding item in page to get media_id
-                for(var ii2=0; ii2<items.length; ii2++){ if(items[ii2].id===sidAck && items[ii2].media_id) acknowledgeMedia(items[ii2].media_id); }
+              // Media retained until pieces land: ask turn is not a catalogue success (detection pieces NOT added), so do NOT ack any media here.
+              if(typeof outcome === "string" && outcome.indexOf("terminal:")===0){
+                say("Your photo stays with me until its pieces land.");
               }
               // outcomes array update: find pending_ask index for lastShare and replace with outcome tag (sent)
               // outcomes already contains pending_ask terminals; we need to replace that entry's outcome string for cursor logic

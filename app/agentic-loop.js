@@ -218,13 +218,31 @@
       // shareId + stageImage pass straight through to skills that can use
       // them (propose_look stages its preview for an image send); skills
       // that ignore unknown opts are unaffected.
-      var result = await handler.handle({
-        catalog: skillCatalog, text: message, imageDataUrl: imageDataUrl, imagePresent: hasImage,
-        wardrobeSummary: wardrobeSummary, preferences: preferences, lastTurns: lastTurns,
-        metaClient: o.metaClient || null, sendClient: o.sendClient || null, assembler: assembler,
-        shareId: inp.shareId || null, stageImage: o.stageImage || null,
-        pendingBag: inp.pendingBag || null
-      });
+      var result;
+      var handlerError = null;
+      try{
+        result = await handler.handle({
+          catalog: skillCatalog, text: message, imageDataUrl: imageDataUrl, imagePresent: hasImage,
+          wardrobeSummary: wardrobeSummary, preferences: preferences, lastTurns: lastTurns,
+          metaClient: o.metaClient || null, sendClient: o.sendClient || null, assembler: assembler,
+          shareId: inp.shareId || null, stageImage: o.stageImage || null,
+          pendingBag: inp.pendingBag || null
+        });
+      }catch(e){
+        handlerError = e;
+        var partialTrace = null;
+        try{
+          if(e && Array.isArray(e.trace)) partialTrace = e.trace.slice();
+          else if(e && e.result && Array.isArray(e.result.trace)) partialTrace = e.result.trace.slice();
+          else if(e && e.partialTrace && Array.isArray(e.partialTrace)) partialTrace = e.partialTrace.slice();
+          else if(result && Array.isArray(result.trace)) partialTrace = result.trace.slice();
+        }catch(ee){}
+        if(!partialTrace) partialTrace = [];
+        // preserve skill name, surface trace, distinguish via handler_error outcome
+        result = { text: (e && e.result && e.result.text) || "Oh loveling, I couldn't get that piece tucked into your wardrobe just now \u2728 Mind resending the photo and I'll give it another go? Want me to put a look together from what you've got?", image: null, skill: decision.skill, trace: partialTrace.slice(0,40), outcome: "handler_error", error: String((e && e.message) || e) };
+        // ensure trace is also on result for downstream
+        if(!result.trace) result.trace = partialTrace.slice(0,40);
+      }
 
       var outText = (result && result.text) || "";
       var sum = { summary: wardrobeSummary, preferences: preferences };
@@ -247,7 +265,14 @@
         } catch (e) {}
       }
 
-      return { text: outText, image: result.image || null, skill: decision.skill, decision: decision, summary: sum.summary, preferences: sum.preferences, summaryPersisted: sumPersisted, handlerResult: result, toolCalls: wrapped.getCalls(), totalSteps: wrapped.getSteps() };
+      var handlerTrace = (result && Array.isArray(result.trace)) ? result.trace.slice(0,40) : [];
+      var handlerOutcome = handlerError ? "handler_error" : (result && result.outcome) || decision.skill;
+      // ensure handlerResult carries trace/outcome for service layer
+      if(result && typeof result === "object"){
+        if(!Array.isArray(result.trace) && handlerTrace.length) result.trace = handlerTrace;
+        if(!result.outcome) result.outcome = handlerOutcome;
+      }
+      return { text: outText, image: result.image || null, skill: decision.skill, decision: decision, summary: sum.summary, preferences: sum.preferences, summaryPersisted: sumPersisted, handlerResult: result, trace: handlerTrace, outcome: handlerOutcome, toolCalls: wrapped.getCalls(), totalSteps: wrapped.getSteps() };
     }
 
     return { handleTurn: handleTurn, router: router, summariser: summariser, DEFAULT_MAX_STEPS: DEFAULT_MAX_STEPS };

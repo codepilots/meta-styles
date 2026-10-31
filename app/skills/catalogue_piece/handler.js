@@ -29,6 +29,12 @@
   }
   function plainNoun(c){ var m={"base/top":"top","base/bottom":"bottom","dress":"dress","layer/cardigan":"cardigan","layer/blazer":"blazer","scarf":"scarf","bag":"bag"}; return m[c]||c; }
 
+  function pushTrace(trace, entry){
+    try{
+      if(Array.isArray(trace) && typeof entry==="string" && entry) trace.push(entry);
+    }catch(e){}
+  }
+
   function recordLookExpectation(catalog, questionText){
     try{
       if(catalog && typeof catalog.askQuestion==="function"){
@@ -181,8 +187,16 @@
   async function handleAddDetected(o){
     var catalog=o.catalog;
     var bag=o.pendingBag;
+    var trace = (o && o._trace && Array.isArray(o._trace)) ? o._trace : [];
+    // if not shared, ensure caller sees trace via _trace reference
+    if(o && !o._trace) o._trace = trace;
+    if(bag && Array.isArray(bag.regions)) pushTrace(trace, "regions:"+bag.regions.length);
     if(!catalog||!bag||!Array.isArray(bag.regions)||!bag.regions.length){
-      return { text:"Oh loveling, that little bundle seems to have fluttered away \u2728 Mind resending the photo and I'll give it another go?", image:null, persist:{ summaryDelta:"No bag to add.", preferencesDelta:"" }, skill:"catalogue_piece" };
+      pushTrace(trace, "bag:missing");
+      pushTrace(trace, "return:fail");
+      var rMissing={ text:"Oh loveling, that little bundle seems to have fluttered away \u2728 Mind resending the photo and I'll give it another go?", image:null, persist:{ summaryDelta:"No bag to add.", preferencesDelta:"" }, skill:"catalogue_piece" };
+      rMissing.trace = trace.slice();
+      return rMissing;
     }
     // dedupe against existing pieces by crop_hash
     var existing=[];
@@ -208,6 +222,8 @@
         added.push(p);
         if(reg.crop_hash) existingHashes[reg.crop_hash]=true;
       }catch(e){
+        var kindFirst=classifyAddFailure(e);
+        pushTrace(trace, "add:thrown:"+kindFirst);
         // duplicate piece_id or validation edge: try without thumb
         try{
           var bare={ category:reg.category, attributes:reg.attributes||{}, source_share_id:sidPerRegion };
@@ -216,10 +232,13 @@
           added.push(p2);
           if(reg.crop_hash) existingHashes[reg.crop_hash]=true;
         }catch(e2){
-          lastAddFailure={ kind: classifyAddFailure(e2||e), detail: sanitizeDetail(e2||e) };
+          var kindSecond=classifyAddFailure(e2||e);
+          pushTrace(trace, "add:thrown:"+kindSecond);
+          lastAddFailure={ kind: kindSecond, detail: sanitizeDetail(e2||e) };
         }
       }
     }
+    pushTrace(trace, "added:"+added.length);
     if(added.length){
       try{ if(catalog.save) await catalog.save(); }catch(e){}
     }
@@ -233,10 +252,15 @@
       }
     }catch(e){}
     if(!added.length){
+      pushTrace(trace, "return:already");
       if(lastAddFailure){
-        return { text:"Those pieces are already in your wardrobe, loveling \u2728 — keeping one copy of each safe. Want me to put a look together from what you've got?", image:null, persist:{ summaryDelta:"Already had all pieces.", preferencesDelta:"" }, skill:"catalogue_piece", meta:{ addFailure: lastAddFailure } };
+        var rAlreadyFail={ text:"Those pieces are already in your wardrobe, loveling \u2728 — keeping one copy of each safe. Want me to put a look together from what you've got?", image:null, persist:{ summaryDelta:"Already had all pieces.", preferencesDelta:"" }, skill:"catalogue_piece", meta:{ addFailure: lastAddFailure } };
+        rAlreadyFail.trace = trace.slice();
+        return rAlreadyFail;
       }
-      return { text:"Those pieces are already in your wardrobe, loveling \u2728 — keeping one copy of each safe. Want me to put a look together from what you've got?", image:null, persist:{ summaryDelta:"Already had all pieces.", preferencesDelta:"" }, skill:"catalogue_piece" };
+      var rAlready={ text:"Those pieces are already in your wardrobe, loveling \u2728 — keeping one copy of each safe. Want me to put a look together from what you've got?", image:null, persist:{ summaryDelta:"Already had all pieces.", preferencesDelta:"" }, skill:"catalogue_piece" };
+      rAlready.trace = trace.slice();
+      return rAlready;
     }
     var nouns=added.map(function(p){ return plainNoun(p.category); });
     var summary=nouns.join(", ");
@@ -248,19 +272,28 @@
     if(lookRes&&lookRes.meta&&typeof lookRes.meta.selectedCount==="number"&&lookRes.meta.selectedCount>0&&typeof lookRes.text==="string"&&lookRes.text){
       reply += " "+lookRes.text;
       var lookPersist="Added "+added.length+" pieces: "+summary+". "+((lookRes.persist&&lookRes.persist.summaryDelta)||"Proposed a look.");
-      return { text:reply, image:lookRes.image||null,
+      pushTrace(trace, "proposal:yes");
+      pushTrace(trace, "return:added");
+      var rAddedLook={ text:reply, image:lookRes.image||null,
         persist:{ summaryDelta:lookPersist, preferencesDelta:"" }, skill:"catalogue_piece",
         meta:{ source:(lookRes.meta&&lookRes.meta.source)||"fallback", selectedCount:lookRes.meta.selectedCount,
           rejectedReason:(lookRes.meta&&lookRes.meta.rejectedReason)||null,
           imageDelivery:(lookRes.meta&&lookRes.meta.imageDelivery)||{ requested:false, generated:false, delivered:false, reason:"no_same_turn_look_image" } } };
+      rAddedLook.trace = trace.slice();
+      return rAddedLook;
     }
     reply += " Want me to put a look together from what you've got?";
     recordLookExpectation(catalog, reply);
-    return { text:reply, image:null, persist:{ summaryDelta:"Added "+added.length+" pieces: "+summary+".", preferencesDelta:"" }, skill:"catalogue_piece" };
+    pushTrace(trace, "proposal:no");
+    pushTrace(trace, "return:added");
+    var rAdded={ text:reply, image:null, persist:{ summaryDelta:"Added "+added.length+" pieces: "+summary+".", preferencesDelta:"" }, skill:"catalogue_piece" };
+    rAdded.trace = trace.slice();
+    return rAdded;
   }
 
   function handleDiscard(o){
     var catalog=o.catalog;
+    var trace = (o && o._trace && Array.isArray(o._trace)) ? o._trace : null;
     try{
       var pqs=catalog&&typeof catalog.getPendingQuestions==="function"?catalog.getPendingQuestions()||[]:[];
       for(var qi=0;qi<pqs.length;qi++){
@@ -270,7 +303,12 @@
         }
       }
     }catch(e){}
-    return { text:"No worries, loveling \u2728 — I left those out. Just say the word if you change your mind!", image:null, persist:{ summaryDelta:"Declined multi-piece add.", preferencesDelta:"" }, skill:"catalogue_piece" };
+    var rDiscard={ text:"No worries, loveling \u2728 — I left those out. Just say the word if you change your mind!", image:null, persist:{ summaryDelta:"Declined multi-piece add.", preferencesDelta:"" }, skill:"catalogue_piece" };
+    if(trace){
+      pushTrace(trace, "return:already");
+      rDiscard.trace = trace.slice();
+    }
+    return rDiscard;
   }
 
   function isNegativeReply(text){
@@ -284,13 +322,25 @@
 
   async function handle(opts){
     var o=opts||{}, catalog=o.catalog, text=o.text||"", imageDataUrl=o.imageDataUrl||null;
+    var trace=[];
+    // attach shared trace to opts for handleAddDetected/handleDiscard
+    o._trace = trace;
+    try{
 
     // Discard/add path for pending bag text replies (no image)
     if(!imageDataUrl && o.pendingBag && catalog){
-      var pqs=null;
-      try{ pqs=catalog.getPendingQuestions()||[]; }catch(e){}
-      var hasPending=false;
-      if(pqs) for(var pi=0;pi<pqs.length;pi++){ if(pqs[pi]&&pqs[pi].skill==="catalogue_piece"&&pqs[pi].expects==="yes_no"){ hasPending=true; break; } }
+      var hasPending = !!(o.pendingBag && Array.isArray(o.pendingBag.regions) && o.pendingBag.regions.length);
+      // trace: pending bag vs question vs none (bag is the pending state)
+      (function(){
+        var qHas=false;
+        try{
+          var _pqs=catalog.getPendingQuestions()||[];
+          for(var _pi=0;_pi<_pqs.length;_pi++){ if(_pqs[_pi]&&_pqs[_pi].skill==="catalogue_piece"&&_pqs[_pi].expects==="yes_no"){ qHas=true; break; } }
+        }catch(e){}
+        if(hasPending) pushTrace(trace, "pending:bag");
+        else if(qHas) pushTrace(trace, "pending:question");
+        else pushTrace(trace, "pending:none");
+      })();
       if(hasPending){
         // Check if bag expired — caller sets pendingBag null on expiry, but double-check TTL here too
         var isNeg=isNegativeReply(text);
@@ -303,7 +353,10 @@
 
     // Text-only no-pending branch: honest reply instead of photo-failure copy
     if(!imageDataUrl && o.pendingBag === null){
-      return { text:"Nothing pending, loveling \u2728 \u2014 send a photo to catalogue pieces, or ask for what to wear!", image:null, persist:{ summaryDelta:"No pending catalogue.", preferencesDelta:"" }, skill:"catalogue_piece" };
+      pushTrace(trace, "return:fail");
+      var rNoPending={ text:"Nothing pending, loveling \u2728 \u2014 send a photo to catalogue pieces, or ask for what to wear!", image:null, persist:{ summaryDelta:"No pending catalogue.", preferencesDelta:"" }, skill:"catalogue_piece" };
+      rNoPending.trace = trace.slice();
+      return rNoPending;
     }
 
     var pieces=[];
@@ -321,6 +374,7 @@
         }
       }catch(e){ alreadyCatalogued=null; }
       if(alreadyCatalogued){
+        pushTrace(trace, "guard:hit");
         var dupNoun=plainNoun(alreadyCatalogued.category)||"piece";
         var _disc=(function(p){
           try{
@@ -343,20 +397,30 @@
           var dupLookPersist="Already in wardrobe — keeping one copy. "+((dupLookRes.persist&&dupLookRes.persist.summaryDelta)||"Proposed a look.");
           try{ if(catalog&&typeof catalog.recordTurn==="function") catalog.recordTurn({ userText:text, proposal:null, verdict:true, reasons:["idempotent_catalogue_guard"] }); }catch(e){}
           recordLookExpectation(catalog, dupLookText);
-          return { text:dupLookText, image:dupLookRes.image||null,
+          pushTrace(trace, "proposal:yes");
+          pushTrace(trace, "return:already");
+          var rDupLook={ text:dupLookText, image:dupLookRes.image||null,
             persist:{ summaryDelta:dupLookPersist, preferencesDelta:"" }, skill:"catalogue_piece",
             meta:{ source:(dupLookRes.meta&&dupLookRes.meta.source)||"fallback", selectedCount:dupLookRes.meta.selectedCount,
               rejectedReason:(dupLookRes.meta&&dupLookRes.meta.rejectedReason)||null,
               imageDelivery:(dupLookRes.meta&&dupLookRes.meta.imageDelivery)||{ requested:false, generated:false, delivered:false, reason:"no_same_turn_look_image" } } };
+          rDupLook.trace = trace.slice();
+          return rDupLook;
         }
         try{ if(catalog&&typeof catalog.recordTurn==="function") catalog.recordTurn({ userText:text, proposal:null, verdict:true, reasons:["idempotent_catalogue_guard"] }); }catch(e){}
         recordLookExpectation(catalog, dupGapText);
-        return { text:dupGapText, image:null, persist:{ summaryDelta:"Already in wardrobe — keeping one copy.", preferencesDelta:"" }, skill:"catalogue_piece" };
+        pushTrace(trace, "proposal:no");
+        pushTrace(trace, "return:already");
+        var rDup={ text:dupGapText, image:null, persist:{ summaryDelta:"Already in wardrobe — keeping one copy.", preferencesDelta:"" }, skill:"catalogue_piece" };
+        rDup.trace = trace.slice();
+        return rDup;
       }
+      pushTrace(trace, "guard:pass");
 
       // Detection path: try metaClient.detectGarments
       var detectResult=null;
       var detectUsable=null;
+      var detectPushed=false;
       if(o.metaClient && typeof o.metaClient.detectGarments==="function"){
         try{
           detectResult=await o.metaClient.detectGarments(imageDataUrl);
@@ -369,16 +433,38 @@
               if(!dr.category) continue;
               usable.push(dr);
             }
-            if(!detectResult.placeholder && usable.length>=1){
+            if(detectResult.placeholder){
+              pushTrace(trace, "detect:placeholder");
+              detectPushed=true;
+            } else if(usable.length>=1){
+              pushTrace(trace, "detect:"+usable.length+"-usable");
+              detectPushed=true;
               detectUsable=usable;
+            } else {
+              pushTrace(trace, "detect:placeholder");
+              detectPushed=true;
             }
+          } else if(detectResult && detectResult.placeholder){
+            pushTrace(trace, "detect:placeholder");
+            detectPushed=true;
+          } else {
+            pushTrace(trace, "detect:placeholder");
+            detectPushed=true;
           }
-        }catch(e){ detectUsable=null; }
+        }catch(e){
+          pushTrace(trace, "detect:throw");
+          detectPushed=true;
+          detectUsable=null;
+        }
+      } else {
+        pushTrace(trace, "detect:unavailable");
+        detectPushed=true;
       }
 
       if(detectUsable && detectUsable.length>=1){
         // Detect-bearing: build regions, store bag, ask (covers single too for batch uniformity)
         var regions=await buildRegions(imageDataUrl, detectUsable, o.metaClient, sid);
+        pushTrace(trace, "regions:"+regions.length);
         // Cap at 6 already done at proxy; ensure here too
         if(regions.length>6) regions=regions.slice(0,6);
         if(regions.length>=1){
@@ -396,58 +482,115 @@
           try{
             if(catalog&&typeof catalog.askQuestion==="function"){
               catalog.askQuestion({ text:askText, skill:"catalogue_piece", expects:"yes_no" });
+              pushTrace(trace, "ask:recorded");
             }
           }catch(e){}
           // Return with pendingBag attached for service to store on ctx
-          return { text:askText, image:null, persist:{ summaryDelta:"Detected "+regions.length+" pieces, awaiting confirmation.", preferencesDelta:"" }, skill:"catalogue_piece", pendingBag: bag };
+          pushTrace(trace, "return:ask");
+          var rAsk={ text:askText, image:null, persist:{ summaryDelta:"Detected "+regions.length+" pieces, awaiting confirmation.", preferencesDelta:"" }, skill:"catalogue_piece", pendingBag: bag };
+          rAsk.trace = trace.slice();
+          return rAsk;
         }
         // fell through to single path if regions collapsed to 1
       }
 
       // Single-piece fallback: existing classify/segment/auto-add path
       var cat="dress";
-      try{ if(o.metaClient&&o.metaClient.classify){ var cr=await o.metaClient.classify(imageDataUrl,""); if(cr&&cr.placeholder===true) throw new Error("classify placeholder"); if(cr&&cr.category) cat=cr.category; } }catch(e){}
+      var classifyThrew=false;
+      try{ if(o.metaClient&&o.metaClient.classify){ var cr=await o.metaClient.classify(imageDataUrl,""); if(cr&&cr.placeholder===true) throw new Error("classify placeholder"); if(cr&&cr.category) cat=cr.category; } }catch(e){ classifyThrew=true; }
+      if(classifyThrew){
+        pushTrace(trace, "single:classify:throw");
+      } else {
+        pushTrace(trace, "single:classify:ok:"+cat);
+      }
       if(cat==="dress"){ var h=(text||"").toLowerCase(); if(/scarf/.test(h)) cat="scarf"; else if(/bag|purse/.test(h)) cat="bag"; else if(/blazer|jacket/.test(h)) cat="layer/blazer"; else if(/cardigan|shrug/.test(h)) cat="layer/cardigan"; else if(/top|cami/.test(h)) cat="base/top"; else if(/trouser|jean|skirt|bottom/.test(h)) cat="base/bottom"; }
       var phrase=plainNoun(cat)||"garment";
       if(typeof phrase!=="string"||!phrase) phrase="garment";
       var rect=await segmentRect(imageDataUrl,o.metaClient,phrase);
+      pushTrace(trace, rect ? "single:segment:rect" : "single:segment:null");
       var thumb=captureThumb(imageDataUrl,rect);
+      pushTrace(trace, thumb ? "single:thumb:ok" : "single:thumb:null");
       var original=captureOriginal(imageDataUrl);
+      pushTrace(trace, original ? "single:original:ok" : "single:original:null");
       var cropHashVal=null;
       if(thumb||original) cropHashVal=computeCropHash(thumb||original);
+      pushTrace(trace, cropHashVal ? "hash:ok" : "hash:null");
       var input={ category:cat, attributes:{}, source_share_id:sid };
       if(thumb) input.photo_thumb=thumb;
       if(original) input.image_original=original;
       if(cropHashVal) input.crop_hash=cropHashVal;
       var singleAddFailure=null;
       try{ var p=catalog.addPiece(input); pieces.push(p); if(catalog.save) try{ await catalog.save(); }catch(e){} }catch(e){
+        var k1=classifyAddFailure(e);
+        pushTrace(trace, "add:thrown:"+k1);
         try{ var bareInput={ category:cat, attributes:{}, source_share_id:sid }; if(cropHashVal) bareInput.crop_hash=cropHashVal; var bare=catalog.addPiece(bareInput); pieces.push(bare); if(catalog.save) try{ await catalog.save(); }catch(e2){} }catch(e3){
-          singleAddFailure={ kind: classifyAddFailure(e3||e), detail: sanitizeDetail(e3||e) };
+          var k2=classifyAddFailure(e3||e);
+          pushTrace(trace, "add:thrown:"+k2);
+          singleAddFailure={ kind: k2, detail: sanitizeDetail(e3||e) };
         }
+      }
+      if(pieces.length){
+        pushTrace(trace, "added:"+pieces.length);
+      } else {
+        pushTrace(trace, "added:0");
+      }
+    } else if(catalog && imageDataUrl){
+      // This branch is unreachable due to above if, but keep for completeness
+    } else {
+      // No catalog or no image: will fall through to fail path
+      // Still record detect unavailable for consistency if we haven't
+      if(!detectPushed && !imageDataUrl){
+        // For no-image turns we skip detect; still ensure trace has something minimal
       }
     }
     var noun=pieces.length? plainNoun(pieces[0].category):"piece";
     if(!pieces.length){
       var failText="Oh loveling, I couldn't get that piece tucked into your wardrobe just now \u2728 Mind resending the photo and I'll give it another go? Want me to put a look together from what you've got?";
       recordLookExpectation(catalog, failText);
-      if(singleAddFailure){
-        return { text:failText, image:null, persist:{ summaryDelta:"Catalogued "+noun+".", preferencesDelta:"" }, skill:"catalogue_piece", meta:{ addFailure: singleAddFailure } };
+      if(pieces.length===0 && trace.indexOf("added:0")===-1){
+        // If we didn't go through single path added marker (e.g., catalog null), add it
+        try{ pushTrace(trace, "added:0"); }catch(e){}
       }
-      return { text:failText, image:null, persist:{ summaryDelta:"Catalogued "+noun+".", preferencesDelta:"" }, skill:"catalogue_piece" };
+      pushTrace(trace, "return:fail");
+      if(singleAddFailure){
+        var rFailMeta={ text:failText, image:null, persist:{ summaryDelta:"Catalogued "+noun+".", preferencesDelta:"" }, skill:"catalogue_piece", meta:{ addFailure: singleAddFailure } };
+        rFailMeta.trace = trace.slice();
+        return rFailMeta;
+      }
+      var rFail={ text:failText, image:null, persist:{ summaryDelta:"Catalogued "+noun+".", preferencesDelta:"" }, skill:"catalogue_piece" };
+      rFail.trace = trace.slice();
+      return rFail;
     }
     var lookRes2=await trySameTurnProposal(o);
     if(lookRes2&&lookRes2.meta&&typeof lookRes2.meta.selectedCount==="number"&&lookRes2.meta.selectedCount>0&&typeof lookRes2.text==="string"&&lookRes2.text){
       var lookText="Got your "+noun+" \u2014 noted, loveling! \u2728 It's tucked safely in your wardrobe. "+lookRes2.text;
       var lookPersist="Catalogued "+noun+". "+((lookRes2.persist&&lookRes2.persist.summaryDelta)||"Proposed a look.");
-      return { text:lookText, image:lookRes2.image||null,
+      pushTrace(trace, "proposal:yes");
+      pushTrace(trace, "return:added");
+      var rLook={ text:lookText, image:lookRes2.image||null,
         persist:{ summaryDelta:lookPersist, preferencesDelta:"" }, skill:"catalogue_piece",
         meta:{ source:(lookRes2.meta&&lookRes2.meta.source)||"fallback", selectedCount:lookRes2.meta.selectedCount,
           rejectedReason:(lookRes2.meta&&lookRes2.meta.rejectedReason)||null,
           imageDelivery:(lookRes2.meta&&lookRes2.meta.imageDelivery)||{ requested:false, generated:false, delivered:false, reason:"no_same_turn_look_image" } } };
+      rLook.trace = trace.slice();
+      return rLook;
     }
     var gapText="Got your "+noun+" \u2014 noted, loveling! \u2728 It's tucked safely in your wardrobe. A "+noun+" alone isn't a full look yet \u2014 it needs exactly one finish: one layer, or a scarf plus a bag. Share one of those next and I'll style the complete look. Want me to put a look together from what you've got?";
     recordLookExpectation(catalog, gapText);
-    return { text:gapText, image:null, persist:{ summaryDelta:"Catalogued "+noun+".", preferencesDelta:"" }, skill:"catalogue_piece" };
+    pushTrace(trace, "proposal:no");
+    pushTrace(trace, "return:added");
+    var rGap={ text:gapText, image:null, persist:{ summaryDelta:"Catalogued "+noun+".", preferencesDelta:"" }, skill:"catalogue_piece" };
+    rGap.trace = trace.slice();
+    return rGap;
+    }catch(err){
+      // Attach partial trace to thrown error for agentic-loop to surface
+      try{
+        if(err && typeof err==="object" && !err.trace) err.trace = trace.slice();
+        else if(err && typeof err==="object" && Array.isArray(err.trace)===false) err.trace = trace.slice();
+        // also attach to a result-like object if throw was not Error
+      }catch(e){}
+      throw err;
+    }
   }
 
   var api = { handle: handle, skill: "catalogue_piece", handleAddDetected: handleAddDetected, plainNoun: plainNoun, validRect: validRect, computeCropHash: computeCropHash };
