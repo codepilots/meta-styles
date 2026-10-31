@@ -240,8 +240,8 @@
         return root.Promise ? root.Promise.resolve(fail("empty_image")) : null;
       }
       var stagePath = stageMode === "live"
-        ? "/ig/outbound-stage/" + encodeURIComponent(String(shareId))
-        : "/mock/stage-outbound-image/" + encodeURIComponent(String(shareId));
+        ? "/ig/outbound-stage/" + String(shareId)
+        : "/mock/stage-outbound-image/" + String(shareId);
       var url = joinBase(base, stagePath);
       return root.fetch(url, {
         method: "POST",

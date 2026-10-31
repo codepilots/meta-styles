@@ -132,13 +132,32 @@
         // Honest idempotent turn: no second copy, no save, do not claim
         // a new addition. Still record the turn and allow the reply/send
         // to proceed — the caller handles send idempotency separately.
+        // Per-piece discriminator: category noun + short stable piece field
+        // (piece_id tail — never mid/user_ref) so duplicate_send backstop
+        // (text_hash) does not swallow distinct pieces and idempotency
+        // contract (same piece -> same text) still holds.
         var dupNoun=plainNoun(alreadyCatalogued.category)||"piece";
-        var dupGapText="That "+dupNoun+" is already in your wardrobe, loveling \u2728 — keeping one copy safe. Want me to put a look together from what you've got?";
+        var _disc=(function(p){
+          try{
+            if(p&&typeof p.piece_id==="string"&&p.piece_id){
+              var id=p.piece_id;
+              var tail=id.indexOf("_")!==-1?id.slice(id.lastIndexOf("_")+1):id.slice(-4);
+              if(tail.length>4) tail=tail.slice(-4);
+              return tail;
+            }
+            if(p&&typeof p.photo_thumb==="string"&&p.photo_thumb.length>30){
+              return p.photo_thumb.slice(22,26);
+            }
+          }catch(e){}
+          return "000";
+        })(alreadyCatalogued);
+        var dupGapText="That "+dupNoun+" (#"+_disc+") is already in your wardrobe, loveling \u2728 — keeping one copy safe. Want me to put a look together from what you've got?";
         // Try same-turn proposal even on idempotent replays — the wardrobe
-        // may now have enough for a look.
+        // may now have enough for a look. Deterministic-per-piece same-turn
+        // wording for the same duplicate_send reason.
         var dupLookRes=await trySameTurnProposal(o);
         if(dupLookRes&&dupLookRes.meta&&typeof dupLookRes.meta.selectedCount==="number"&&dupLookRes.meta.selectedCount>0&&typeof dupLookRes.text==="string"&&dupLookRes.text){
-          var dupLookText="That "+dupNoun+" is already in your wardrobe, loveling \u2728 — keeping one copy safe. "+dupLookRes.text;
+          var dupLookText="That "+dupNoun+" (#"+_disc+") is already in your wardrobe, loveling \u2728 — keeping one copy safe. "+dupLookRes.text;
           var dupLookPersist="Already in wardrobe — keeping one copy. "+((dupLookRes.persist&&dupLookRes.persist.summaryDelta)||"Proposed a look.");
           // Record turn honestly: no new catalogue, but a turn did happen.
           try{ if(catalog&&typeof catalog.recordTurn==="function") catalog.recordTurn({ userText:text, proposal:null, verdict:true, reasons:["idempotent_catalogue_guard"] }); }catch(e){}

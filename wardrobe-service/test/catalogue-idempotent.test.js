@@ -64,7 +64,24 @@ async function testHandlerGuard(){
   const ids = catalog.getPieces().map(p=>p.source_share_id);
   assert.ok(ids.indexOf(SHARE_A)!==-1 && ids.indexOf(SHARE_B)!==-1, "both share ids present, got "+JSON.stringify(ids));
 
-  console.log("  pass: handler idempotent guard");
+  // Per-piece distinctive guard replies: two different pieces' guard replays
+  // must produce DIFFERENT texts (so bot's duplicate_send text_hash backstop
+  // does not swallow all but the first). Same piece replayed twice must
+  // produce the SAME text (idempotency contract holds).
+  const rA_guard2 = await handler.handle({ catalog, text:"", imageDataUrl: img, shareId: SHARE_A });
+  assert.strictEqual(rA_guard2.text, r2.text, "same piece replay must produce SAME reply text (idempotent)");
+  const rB_guard = await handler.handle({ catalog, text:"", imageDataUrl: img, shareId: SHARE_B });
+  assert.ok(/already in your wardrobe/i.test(rB_guard.text), "second piece guard still claims already in wardrobe");
+  assert.notStrictEqual(r2.text, rB_guard.text, "two different pieces' guard replies must be DIFFERENT texts, got A="+JSON.stringify(r2.text.slice(0,120))+" B="+JSON.stringify(rB_guard.text.slice(0,120)));
+  // Same-piece second replay still identical
+  const rB_guard2 = await handler.handle({ catalog, text:"", imageDataUrl: img, shareId: SHARE_B });
+  assert.strictEqual(rB_guard2.text, rB_guard.text, "same second piece replay must also be SAME text");
+  // Guard texts must not leak mid/user_ref, but must contain discriminator (piece tail)
+  [r2.text, rB_guard.text].forEach(function(t){
+    assert.ok(t.indexOf("SYNTH_share")===-1, "guard reply must not leak share id, got "+t.slice(0,120));
+  });
+
+  console.log("  pass: handler idempotent guard + per-piece distinctive reply");
 }
 
 async function testServiceRetry(){
