@@ -257,6 +257,38 @@ function renderOutgoing(entry) {
   when.className = "when";
   when.textContent = "sent by app · " + entry.message_id + " · " + whenLine(entry.sent_at);
   div.appendChild(when);
+  // Auto-sent look image: nothing staged from this tab, so fetch the raw
+  // staged bytes from the mock debug route and upgrade this bubble in place
+  // (mirrors renderIncoming's fetch-then-patch shape). Silent on failure —
+  // the "(+ photo)" fallback above stays as-is.
+  if (entry.image_message_id && !outboundPreview[entry.share_id] && HAS_MOCK_OUTBOUND) {
+    (function (bubble, whenEl, shareId) {
+      function showStaged(src) {
+        if (bubble.querySelector(".staged-wrap")) return;
+        var fetched = document.createElement("div");
+        fetched.className = "staged-wrap";
+        var fetchedImg = document.createElement("img");
+        fetchedImg.src = src;
+        fetchedImg.alt = "Staged look preview image";
+        fetched.appendChild(fetchedImg);
+        var fetchedCap = document.createElement("span");
+        fetchedCap.className = "staged-cap";
+        fetchedCap.textContent = "Staged look image via POST /mock/stage-outbound-image/" + shareId;
+        fetched.appendChild(fetchedCap);
+        bubble.insertBefore(fetched, whenEl);
+      }
+      authed("/mock/outbound-image/" + encodeURIComponent(shareId)).then(function (res) {
+        if (!res.ok) throw new Error("outbound-image HTTP " + res.status);
+        return res.blob();
+      }).then(function (blob) {
+        var objectURL = URL.createObjectURL(blob);
+        outboundPreview[shareId] = objectURL;
+        showStaged(objectURL);
+      }).catch(function () {
+        // Keep the "(+ photo)" fallback — never throw, never show an error.
+      });
+    })(div, when, entry.share_id);
+  }
   return div;
 }
 
