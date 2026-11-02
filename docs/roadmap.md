@@ -256,7 +256,7 @@ no runnable product, and there is no root `README.md` at all.
   make the hosted build cached-first with live calls clearly optional.
   Acceptance: fresh browser, logged out, one URL → complete look card,
   no console errors, no `127.0.0.1` dependency in the primary flow.~~
-- **16b — Root README + judge framing.** Add `README.md` at repo root:
+- **16b — Root README + judge framing. STATUS: LANDED (verified by cron pipeline 2026-11-02)** — `README.md` exists at repo root with the one-shot run command, architecture summary, and prior-work boundary note; status note was missing even though the file landed earlier. Add `README.md` at repo root:
   one-line pitch centred on full-look assembly + fit rules +
   resale-grounded copy (**not** the classify-a-photo mechanic — the
   avoid-list bans "simple image analyzers"; see AGENTS.md rule 4),
@@ -266,7 +266,7 @@ no runnable product, and there is no root `README.md` at all.
   `docs/prior-work-instagram.md`. Update the stale status in
   `docs/overview.md` (still dated 2026-10-14, "Not yet applied") and
   `docs/brief.md` in the same pass.
-- **16c — Product-surface polish.** `app/index.html` still titles
+- **16c — Product-surface polish. STATUS: LANDED (verified by cron pipeline 2026-11-02)** — `app/index.html` title is now "meta-styles · Full-look cards (Meta AI live)", not "Milestone 3"; retitling/reframing already landed, status note was missing. `app/index.html` still titles
   itself "Milestone 3", leads with "tag regions with the
   garment-classifier stub", and footers a list of stubs. Retitle and
   reframe around the full-look outcome; `placeholder` tags may remain
