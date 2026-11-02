@@ -512,7 +512,7 @@ function createHandler(config) {
       if (url.pathname === "/api/route") {
         var text = typeof payload.text === "string" ? payload.text : "";
         var SKILL_NAMES = [
-          "catalogue_piece","propose_look","revise_look","view_wardrobe_item","describe_wardrobe",
+          "catalogue_piece","propose_look","revise_look","view_wardrobe_item","delete_wardrobe_item","describe_wardrobe",
           "explain_fit","answer_no_data","off_topic",
           "Match_look","Complete_the_look","What_suits","Evaluate_prospective_purchase"
         ];
@@ -535,6 +535,7 @@ function createHandler(config) {
           // (locating a wardrobe item), not under propose_look.
           "describe_wardrobe: user wants to see/list wardrobe — e.g. \"what do I have\", \"show my wardrobe\", \"find the bag\"",
           "view_wardrobe_item: user names a wardrobe category to see it — e.g. \"show me the dresses\", \"see my tops\"; also the reply to an already-shown numbered list (a number or \"show more\")",
+          "delete_wardrobe_item: user names a wardrobe category to remove a piece — e.g. \"delete the dresses\", \"remove my cardigans\"; also the reply to an already-shown numbered list (a number or \"show more\")",
           "explain_fit: user asks why look works — e.g. \"why does this work\", \"explain the fit\"",
           "answer_no_data: fabric/price/vendor question — e.g. \"what fabric\", \"how much does it cost\"",
           "off_topic: unrelated topic or greeting with no wardrobe intent",
@@ -547,7 +548,7 @@ function createHandler(config) {
           "You are a router for a wardrobe styling app. Given the user's message and context, pick exactly one skill.\n" +
           "Skills and their triggers:\n" + triggers + "\n" +
           "Valid skills: " + skillList + "\n" +
-          "Rules: Return STRICT JSON only with exactly this shape: {\"skill\":\"<one of 12>\",\"confidence\":0-100,\"reason\":\"short\"}. " +
+          "Rules: Return STRICT JSON only with exactly this shape: {\"skill\":\"<one of 13>\",\"confidence\":0-100,\"reason\":\"short\"}. " +
           "Before defaulting a bare photo to catalogue_piece, check Recent turns for a just-asked pending question (e.g. a request to share photos); if present, route to that skill. " +
           "Use confidence 85-95 for clear matches, 40-65 for vague/ambiguous inputs like \"hmm\" or greetings. " +
           "Vague single-word or greeting inputs should get confidence <70 so the system can ask for clarification.";

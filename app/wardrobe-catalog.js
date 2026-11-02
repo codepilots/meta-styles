@@ -818,6 +818,66 @@
       return null;
     }
 
+    // Pending-deletion confirm state (delete_wardrobe_item Step C/D): which
+    // single piece is awaiting an explicit yes/no confirm (piece id + the
+    // short description shown in the confirm question, ISO expiry).
+    // Parallel to the list context above — same fail-closed conventions
+    // (isPlainObject, rejectUnknownKeys, isoOrThrow, expiry-checked-on-
+    // read-then-cleared) and the same skill-scoping (the skill field is
+    // checked on read so a stale entry from another skill never matches).
+    // Short-lived by the caller's clock (minutes, not the 24h list/pending
+    // windows) — a single immediate confirm step, not a browsing session.
+    // Hidden runtime state only — never serialized, never a piece field.
+    var PENDING_DELETION_KEYS = ["skill", "piece_id", "description", "expires_at"];
+    var pendingDeletion = null;
+
+    function checkPendingDeletion(v, label) {
+      if (!isPlainObject(v)) {
+        throw new Error("wardrobe-catalog: " + label + " must be an object");
+      }
+      rejectUnknownKeys(v, PENDING_DELETION_KEYS, label);
+      if (typeof v.skill !== "string" || v.skill.length === 0) {
+        throw new Error("wardrobe-catalog: " + label + " skill must be a non-empty skill name");
+      }
+      if (typeof v.piece_id !== "string" || v.piece_id.length === 0) {
+        throw new Error("wardrobe-catalog: " + label + " piece_id must be a non-empty string");
+      }
+      if (typeof v.description !== "string" || v.description.length === 0) {
+        throw new Error("wardrobe-catalog: " + label + " description must be a non-empty string");
+      }
+      isoOrThrow(v.expires_at, label + " expires_at");
+      return {
+        skill: v.skill,
+        piece_id: v.piece_id,
+        description: v.description,
+        expires_at: v.expires_at,
+      };
+    }
+
+    function setPendingDeletion(input) {
+      pendingDeletion = checkPendingDeletion(input, "pending deletion");
+      return getPendingDeletion();
+    }
+
+    function getPendingDeletion() {
+      if (!pendingDeletion) return null;
+      if (Date.parse(pendingDeletion.expires_at) <= Date.now()) {
+        pendingDeletion = null;
+        return null;
+      }
+      return {
+        skill: pendingDeletion.skill,
+        piece_id: pendingDeletion.piece_id,
+        description: pendingDeletion.description,
+        expires_at: pendingDeletion.expires_at,
+      };
+    }
+
+    function clearPendingDeletion() {
+      pendingDeletion = null;
+      return null;
+    }
+
     // Gap 4: the live side has no outbound-log route, so the app
     // records its own sent turns locally (text + opaque share linkage
     // only — never a recipient identifier).
@@ -932,6 +992,9 @@
       setListContext: setListContext,
       getListContext: getListContext,
       clearListContext: clearListContext,
+      setPendingDeletion: setPendingDeletion,
+      getPendingDeletion: getPendingDeletion,
+      clearPendingDeletion: clearPendingDeletion,
       recordSentTurn: recordSentTurn,
       getSentTurns: getSentTurns,
       toJSON: toJSON,

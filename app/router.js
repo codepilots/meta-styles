@@ -17,6 +17,7 @@
     "propose_look",
     "revise_look",
     "view_wardrobe_item",
+    "delete_wardrobe_item",
     "describe_wardrobe",
     "explain_fit",
     "answer_no_data",
@@ -75,6 +76,12 @@
     // Propose look — include natural variants like "cook up a look", "make me a look", "create a look"
     if (/\b(show me a look|propose.*look|what goes together|suggest.*look|put.*look together|style me|outfit idea|cook.*look|make.*look|create.*look|find.*bag|can you find)\b/.test(text)) {
       return { skill: "propose_look", confidence: 91, reason: "propose-look trigger" };
+    }
+    // Delete one wardrobe piece, with a yes/no confirm (delete_wardrobe_item).
+    // Checked before the view trigger below: the verb sets differ ("delete/
+    // remove" vs "show/see"), so the two can never collide either way.
+    if (/\b(delete|remove)\b.*\b(tops|bottoms|dresses|cardigans|blazers|scarves|bags)\b/.test(text)) {
+      return { skill: "delete_wardrobe_item", confidence: 93, reason: "wardrobe category delete trigger" };
     }
     // View one wardrobe category, then pick a numbered piece (view_wardrobe_item)
     if (/\b(show|see)\b.*\b(tops|bottoms|dresses|cardigans|blazers|scarves|bags)\b/.test(text)) {
