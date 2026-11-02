@@ -96,6 +96,10 @@ var lastOutboundTotal = 0;
 // operator log), so outbound is read as empty there — same as mock-dm.html.
 var RT0 = (typeof globalThis !== "undefined" && globalThis.__IG_RUNTIME__) || {};
 var IS_LIVE = !!(RT0.botBase);
+// Mock-via-proxy (same-origin live-proxy-server.js reaching the MOCK bot
+// for remote/Tailscale access, mode: "mock-remote") still serves
+// /mock/outbound, so it must keep polling it — only real live skips it.
+var HAS_MOCK_OUTBOUND = !IS_LIVE || RT0.mode === "mock-remote";
 
 function base() {
   return String(window.__CHAT_CONN__.base).replace(/\/+$/, "");
@@ -262,12 +266,12 @@ function refreshThread() {
       if (!res.ok) throw new Error("shares HTTP " + res.status);
       return res.json();
     }),
-    IS_LIVE
-      ? Promise.resolve({ outbound: [] })
-      : authed("/mock/outbound").then(function (res) {
+    HAS_MOCK_OUTBOUND
+      ? authed("/mock/outbound").then(function (res) {
         if (!res.ok) throw new Error("outbound HTTP " + res.status);
         return res.json();
-      }),
+      })
+      : Promise.resolve({ outbound: [] }),
   ]).then(function (parts) {
     var items = (parts[0].items || []).map(function (item) {
       return { at: item.received_at, el: renderIncoming(item) };

@@ -195,6 +195,16 @@ function proxyTo(target, upstreamPath, label, req, res) {
     if (lower === "host" || HOP_BY_HOP.has(lower) || PROXY_INDICATOR_HEADERS.has(lower)) continue;
     headers[lower] = req.headers[key];
   }
+  // This proxy's own outbound hop is server-to-server, not a browser
+  // cross-origin fetch, so it must never relay the browser's real Origin
+  // value: upstreams (bot, Meta proxy) reject any Origin other than their
+  // own "http://localhost:8000" allowlist entry with 403 forbidden_origin.
+  // Send the allowlisted value on this hop instead. Upstream allowlists are
+  // unchanged; requests with no incoming Origin stay Origin-less (also
+  // allowed upstream: `origin && !corsOrigin`).
+  if ("origin" in headers) {
+    headers["origin"] = "http://localhost:8000";
+  }
   const up = mod.request(
     {
       hostname: targetUrl.hostname,
@@ -241,7 +251,26 @@ function createHandler(opts) {
       return;
     }
     if (pathname === "/ig" || pathname.startsWith("/ig/")) {
-      proxyTo(bot, req.url, "bot", req, res);
+      // Mock-bot operator-simulation routes (POST /mock/incoming-text,
+      // POST /mock/incoming-photo, POST /mock/stage-outbound-image/<id>,
+      // GET /mock/outbound, GET /mock/state) are deliberately NOT part of
+      // the real Instagram bot's API surface and were never meant to be
+      // reached under "/ig/". But the shared client code calls them through
+      // the same relative-base path helper as the real "/ig/..." routes, so
+      // with the same-origin "/ig" base they arrive here as
+      // "/ig/mock/<...>". The proxy is the right layer to reconcile that
+      // mismatch — not the client code, which must keep working identically
+      // against the real live bot (which has no such routes at all and
+      // should never receive a /mock/* request; in LIVE mode this branch
+      // simply never matches since the client never calls /mock/* routes).
+      // Strip the "/ig" prefix for exactly this family; every other /ig/*
+      // path (shares, media, catalog, send, outbound-media) forwards
+      // verbatim as before.
+      const upstream =
+        /^\/ig\/mock(\/|$)/.test(pathname)
+          ? req.url.replace(/^\/ig\/mock/, "/mock")
+          : req.url;
+      proxyTo(bot, upstream, "bot", req, res);
       return;
     }
     if (pathname === "/api" || pathname.startsWith("/api/")) {
