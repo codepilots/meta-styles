@@ -574,6 +574,32 @@ function createHandler(store, config) {
       });
       return;
     }
+    // DEBUG/OPERATOR-ONLY: demo-convenience read for staged outbound look images.
+    // Why this exists: POST /ig/send with { image: true } mints a single-use
+    // mock-local outbound token but never returns that token to any caller, so
+    // the only byte route (GET /ig/outbound-media/<token>) is unreachable for
+    // demo chat pages — they would show "(+ photo)" text and never the image.
+    // This reads straight from store.outboundStaged (share_id-keyed) and never
+    // touches store.outboundTokens (no burn, no expiry), so the single-use
+    // real-fetch simulation keeps its semantics. NOT part of the real
+    // Instagram bot's API surface — same /mock/* operator-only category as the
+    // other mock-local routes above, debug/demo convenience only.
+    if (req.method === "GET" && url.pathname.indexOf("/mock/outbound-image/") === 0) {
+      const shareId = decodeURIComponent(url.pathname.slice("/mock/outbound-image/".length));
+      const entry = store.outboundStaged.get(shareId);
+      if (!entry) {
+        sendJson(res, 404, { error: "not_staged" }, corsOrigin);
+        return;
+      }
+      res.writeHead(200, {
+        "Content-Type": entry.contentType,
+        "Cache-Control": "private, max-age=60",
+        "Content-Length": entry.bytes.length,
+        ...(corsOrigin ? { "Access-Control-Allow-Origin": corsOrigin } : {}),
+      });
+      res.end(entry.bytes);
+      return;
+    }
     if (req.method === "GET" && url.pathname === "/mock/outbound") {
       sendJson(res, 200, { outbound: store.outbound }, corsOrigin);
       return;
