@@ -123,9 +123,18 @@
   // "image" (a photo reply, e.g. What_suits consent), "text" (any
   // non-empty text reply, e.g. revise_look's "which piece?" follow-up),
   // "yes_no" (a short affirmative reply, e.g. "want me to put a look
-  // together?"). Anything else throws rather than silently matching a
-  // turn it was never meant to match.
-  var EXPECTS_VALUES = ["image", "text", "yes_no"];
+  // together?"), "profile_image" (a photo reply that is a wearer profile
+  // reference — headshot or full-body — for explicit render-on-user
+  // requests, never a wardrobe garment). "profile_image" diverts the
+  // photo into profile storage instead of catalogue_piece; it is the
+  // ONLY expectation under which an inbound photo is filed as a
+  // profile reference. Anything else throws rather than silently
+  // matching a turn it was never meant to match.
+  var EXPECTS_VALUES = ["image", "text", "yes_no", "profile_image"];
+  // Wearer profile-reference types (render-on-user only). Deliberately
+  // NOT part of the piece taxonomy: profile photos are never pieces.
+  var PROFILE_TYPES = ["headshot", "full_body"];
+  var PROFILE_KEYS = ["headshot", "full_body", "consent", "updated_at"];
 
   // 24h reply window, measured against the USER's latest inbound
   // received_at (user-anchored per §4 Gap 3), never per share_id.
@@ -298,6 +307,13 @@
     // Absent by default — the catalog stays memory-only exactly as before.
     var store = o.store && typeof o.store.save === "function" &&
       typeof o.store.load === "function" ? o.store : null;
+    // Injected profile persistence (render-on-user): a
+    // createProfileStore() client for the per-user wearer profile
+    // record (headshot + full-body, never pieces). Absent by default —
+    // the profile stays memory-only exactly like the catalog.
+    var profileStore = o.profileStore && typeof o.profileStore.save === "function" &&
+      typeof o.profileStore.load === "function" &&
+      typeof o.profileStore.del === "function" ? o.profileStore : null;
 
     // Opus finding #5: a load must SUCCEED at least once before any
     // save() may PUT. A failed (or never-attempted) load leaves memory
@@ -878,6 +894,175 @@
       return null;
     }
 
+    // Wearer profile references (render-on-user only). A separate
+    // per-user record — NEVER the piece array: profile photos are not
+    // garments, carry no category/attributes, and never appear in
+    // getPieces/getActivePieces/historyForPrompt (prompts must never see
+    // raw bytes) or toJSON (status/debug surfaces must never carry
+    // bytes). Shape: { headshot, full_body, consent, updated_at } where
+    // each reference is a PNG/JPEG data URL (same 1 MB bound as
+    // image_original) or null, consent is the durable explicit-consent
+    // flag, and updated_at is ISO or null. The consent flag lives here
+    // (durable via the profile store) so a restart mid-flow never
+    // re-asks consent, and "what is missing" is always derived from the
+    // durable record — that is the restart-safe half of the two-photo
+    // flow (pending questions themselves stay memory-only like every
+    // other M24 expectation).
+    var profile = { headshot: null, full_body: null, consent: false, updated_at: null };
+    // Same load-confirmed discipline as pieces (Opus finding #5): a
+    // whole-record PUT must never overwrite the stored profile with
+    // whatever happens to be in memory before a load has succeeded.
+    var profileLoadConfirmed = false;
+
+    function checkProfileRecord(rec, label) {
+      if (!isPlainObject(rec) || Array.isArray(rec)) {
+        throw new Error("wardrobe-catalog: " + label + " must be a profile record object");
+      }
+      rejectUnknownKeys(rec, PROFILE_KEYS, label);
+      var out = {
+        headshot: null,
+        full_body: null,
+        consent: false,
+        updated_at: null,
+      };
+      if (rec.headshot !== undefined && rec.headshot !== null) {
+        out.headshot = checkImageOriginal(rec.headshot, label + " headshot");
+        if (!out.headshot) {
+          throw new Error("wardrobe-catalog: " + label + " headshot must be a PNG/JPEG data URL");
+        }
+      }
+      if (rec.full_body !== undefined && rec.full_body !== null) {
+        out.full_body = checkImageOriginal(rec.full_body, label + " full_body");
+        if (!out.full_body) {
+          throw new Error("wardrobe-catalog: " + label + " full_body must be a PNG/JPEG data URL");
+        }
+      }
+      if (rec.consent !== undefined) {
+        if (typeof rec.consent !== "boolean") {
+          throw new Error("wardrobe-catalog: " + label + " consent must be a boolean");
+        }
+        out.consent = rec.consent;
+      }
+      if (rec.updated_at !== undefined && rec.updated_at !== null) {
+        out.updated_at = isoOrThrow(rec.updated_at, label + " updated_at");
+      }
+      return out;
+    }
+
+    function copyProfile() {
+      return {
+        headshot: profile.headshot,
+        full_body: profile.full_body,
+        consent: profile.consent,
+        updated_at: profile.updated_at,
+      };
+    }
+
+    // Small receipt for user-facing logic: presence booleans only,
+    // never bytes (safe for logs and status-adjacent paths).
+    function profileReceipt() {
+      return {
+        stored: true,
+        headshot: !!profile.headshot,
+        full_body: !!profile.full_body,
+        consent: !!profile.consent,
+      };
+    }
+
+    function setProfileReference(type, dataUrl) {
+      if (PROFILE_TYPES.indexOf(type) === -1) {
+        throw new Error(
+          "wardrobe-catalog: profile reference type must be one of (" +
+          PROFILE_TYPES.join(", ") + ")"
+        );
+      }
+      var checked = checkImageOriginal(dataUrl, "profile " + type);
+      if (!checked) {
+        throw new Error("wardrobe-catalog: profile " + type + " needs a PNG/JPEG data URL");
+      }
+      profile[type] = checked;
+      profile.updated_at = nowIso();
+      return profileReceipt();
+    }
+
+    function getProfileReferences() {
+      return copyProfile();
+    }
+
+    function setProfileConsent(granted) {
+      profile.consent = granted === true;
+      profile.updated_at = nowIso();
+      return profileReceipt();
+    }
+
+    // Clears memory only; server-side removal is deleteProfile() below.
+    function clearProfileReferences() {
+      profile = { headshot: null, full_body: null, consent: false, updated_at: null };
+      return { cleared: true };
+    }
+
+    function noProfileStore(op) {
+      if (!root.Promise) return null;
+      return root.Promise.resolve({ ok: false, status: 0, body: {}, error: "no_store", op: op });
+    }
+
+    // PUT on profile update: persists the FULL profile record through
+    // the injected profile store (whole-record replace, last write
+    // wins). Same load_not_confirmed discipline as pieces: with a store
+    // attached, saveProfile() refuses to PUT until a loadProfile() has
+    // succeeded at least once. Memory is updated by the setters
+    // regardless; only the PUT is gated.
+    function saveProfile() {
+      if (!profileStore) return noProfileStore("saveProfile");
+      if (!profileLoadConfirmed) {
+        if (!root.Promise) return null;
+        return root.Promise.resolve({
+          ok: false, status: 0, body: {}, error: "load_not_confirmed", op: "saveProfile",
+        });
+      }
+      return profileStore.save(copyProfile());
+    }
+
+    // GET on load: fetches the stored record and whole-record-replaces
+    // local memory with it (validated fail-closed first — a corrupt
+    // stored record resolves an error and leaves memory untouched). A
+    // successful load (even an empty record) confirms the profile for
+    // saveProfile(); a failed load keeps refusing.
+    function loadProfile() {
+      if (!profileStore) return noProfileStore("loadProfile");
+      return profileStore.load().then(function (result) {
+        if (!result.ok) return result;
+        var checked;
+        try {
+          checked = checkProfileRecord(result.profile || {}, "stored profile");
+        } catch (err) {
+          return {
+            ok: false, status: result.status, body: {},
+            error: String((err && err.message) || err), op: "loadProfile",
+          };
+        }
+        profile = checked;
+        profileLoadConfirmed = true;
+        return { ok: true, status: result.status, body: {}, error: null, op: "loadProfile" };
+      });
+    }
+
+    // DELETE the stored record, then clear memory. With no store
+    // attached, clearing memory IS the delete (memory-only mode).
+    function deleteProfile() {
+      if (!profileStore) {
+        clearProfileReferences();
+        return root.Promise
+          ? root.Promise.resolve({ ok: true, status: 0, body: {}, error: null, op: "deleteProfile" })
+          : null;
+      }
+      return profileStore.del().then(function (result) {
+        if (!result.ok) return result;
+        clearProfileReferences();
+        return { ok: true, status: result.status, body: {}, error: null, op: "deleteProfile" };
+      });
+    }
+
     // Gap 4: the live side has no outbound-log route, so the app
     // records its own sent turns locally (text + opaque share linkage
     // only — never a recipient identifier).
@@ -971,6 +1156,7 @@
     return {
       userKey: userKey,
       store: store,
+      profileStore: profileStore,
       save: save,
       load: load,
       noteInboundShare: noteInboundShare,
@@ -995,15 +1181,118 @@
       setPendingDeletion: setPendingDeletion,
       getPendingDeletion: getPendingDeletion,
       clearPendingDeletion: clearPendingDeletion,
+      setProfileReference: setProfileReference,
+      getProfileReferences: getProfileReferences,
+      setProfileConsent: setProfileConsent,
+      clearProfileReferences: clearProfileReferences,
+      saveProfile: saveProfile,
+      loadProfile: loadProfile,
+      deleteProfile: deleteProfile,
       recordSentTurn: recordSentTurn,
       getSentTurns: getSentTurns,
       toJSON: toJSON,
     };
   }
 
+  // One persisted profile-reference client per user; mirrors the
+  // createCatalogStore contract (base/token/error conventions) against
+  // the server-side profile API:
+  //   PUT /ig/profile/<user_ref>  // body: full profile record object
+  //                               // (whole-record replace, last-write-wins)
+  //   GET /ig/profile/<user_ref>  // -> the stored record, or an empty
+  //                               // {headshot:null,full_body:null,...}
+  //                               // record when nothing stored (never 404)
+  //   DELETE /ig/profile/<user_ref> // removes the stored record (204)
+  // The record is a single object — never the piece array — and the
+  // server encrypts it at rest (same AES-256-GCM convention as the
+  // catalog). Requires root.fetch (browser + Node 18+).
+  function createProfileStore(opts) {
+    var o = opts || {};
+    var base = o.base || CATALOG_BASE;
+    var token = o.token || RUNTIME_CATALOG_TOKEN || "";
+    var userRef = o.userRef || "";
+
+    function url() {
+      return joinBase(base, "/ig/profile/" + encodeURIComponent(userRef));
+    }
+
+    // Whole-record replace: PUTs the FULL profile record for this
+    // user_ref. Last write wins. Resolves {ok:true} on 200/204.
+    function save(record) {
+      if (!root.Promise) return null;
+      if (!isPlainObject(record) || Array.isArray(record)) {
+        return root.Promise.resolve({
+          ok: false, status: 0, body: {}, error: "bad_profile", op: "save",
+        });
+      }
+      return root.fetch(url(), {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: "Bearer " + token,
+        },
+        body: JSON.stringify(record),
+      }).then(function (res) {
+        return res.text().then(function (text) {
+          return normalizeStoreResult(res.status, parseJsonBody(text) || {}, "save");
+        });
+      }, function () {
+        return { ok: false, status: 0, body: {}, error: "bot_unreachable", op: "save" };
+      });
+    }
+
+    // Whole-record read: GETs the stored record ({}-shaped, possibly
+    // empty when nothing stored). Non-object shapes surface as
+    // bad_profile, never passed through.
+    function load() {
+      if (!root.Promise) return null;
+      return root.fetch(url(), {
+        headers: { Authorization: "Bearer " + token },
+      }).then(function (res) {
+        return res.text().then(function (text) {
+          var parsed = parseJsonBody(text);
+          if (res.status === 200 && (!isPlainObject(parsed) || Array.isArray(parsed))) {
+            return { ok: false, status: 200, body: {}, error: "bad_profile", op: "load" };
+          }
+          var out = normalizeStoreResult(
+            res.status, {}, "load");
+          if (out.ok) out.profile = parsed;
+          return out;
+        });
+      }, function () {
+        return { ok: false, status: 0, body: {}, error: "bot_unreachable", op: "load" };
+      });
+    }
+
+    // Record removal: DELETEs the stored record. 204 whether or not a
+    // record existed (idempotent — absence just means nothing stored).
+    function del() {
+      if (!root.Promise) return null;
+      return root.fetch(url(), {
+        method: "DELETE",
+        headers: { Authorization: "Bearer " + token },
+      }).then(function (res) {
+        return res.text().then(function (text) {
+          return normalizeStoreResult(res.status, parseJsonBody(text) || {}, "delete");
+        });
+      }, function () {
+        return { ok: false, status: 0, body: {}, error: "bot_unreachable", op: "delete" };
+      });
+    }
+
+    return {
+      base: base,
+      userRef: userRef,
+      save: save,
+      load: load,
+      del: del,
+    };
+  }
+
   var api = {
     TAXONOMY: TAXONOMY,
     PIECE_STATUSES: PIECE_STATUSES,
+    PROFILE_TYPES: PROFILE_TYPES,
     PIECE_KEYS: PIECE_KEYS,
     PHOTO_THUMB_MAX_CHARS: PHOTO_THUMB_MAX_CHARS,
     IMAGE_ORIGINAL_MAX_BYTES: IMAGE_ORIGINAL_MAX_BYTES,
@@ -1016,6 +1305,7 @@
     joinBase: joinBase,
     createCatalog: createCatalog,
     createCatalogStore: createCatalogStore,
+    createProfileStore: createProfileStore,
   };
 
   if (root.MetaStyles === undefined) root.MetaStyles = {};

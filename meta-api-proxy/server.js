@@ -537,8 +537,8 @@ function createHandler(config) {
         var skillList = SKILL_NAMES.join(", ");
         var triggers = [
           "catalogue_piece: Photo(s) shared (image present, no other trigger — but FIRST check Recent turns: if the assistant just asked the user to share a photo, route to that skill instead)",
-          "propose_look: user wants a look suggested — e.g. \"show me a look\", \"what goes together\", \"style me\", \"outfit idea\", \"cook up a look\", \"make me a look\", \"can you find …\"",
-          "revise_look: user wants to change last look — e.g. \"no bag\", \"without blazer\", \"swap scarf\", \"drop the bag\", \"add the cardigan back\", \"swap the cardigan for the blazer\"",
+          "propose_look: user wants a look suggested — e.g. \"show me a look\", \"what goes together\", \"style me\", \"outfit idea\", \"cook up a look\", \"make me a look\", \"can you find …\"; also \"make me a look and show me wearing it\" (render-on-user: still propose_look — the skill checks saved profile photos); also \"delete my photos\" / \"forget my profile photos\" (saved headshot+full-body removal — never wardrobe pieces, also propose_look)",
+          "revise_look: user wants to change last look — e.g. \"no bag\", \"without blazer\", \"swap scarf\", \"drop the bag\", \"add the cardigan back\", \"swap the cardigan for the blazer\"; also a follow-up \"show me wearing this\" / \"render this on me\" / \"put this look on me\" (render the EXISTING look on the wearer — still revise_look)",
           // Opus finding #13: "find the bag" lives under describe_wardrobe only
           // (locating a wardrobe item), not under propose_look.
           "describe_wardrobe: user wants to see/list wardrobe — e.g. \"what do I have\", \"show my wardrobe\", \"find the bag\"",

@@ -226,6 +226,429 @@
     return m[reason] || "it didn't pass the fit rules";
   }
 
+  // ---- Render-on-user profile flow (shared with revise_look via the
+  // exported helpers below) ----
+  //
+  // Rule: a photo is filed as a wearer profile reference (headshot /
+  // full_body) ONLY while a profile_image expectation pends (the
+  // agentic loop routes that turn here with pendingSatisfied). Ordinary
+  // garment photos outside that expectation are never profile photos.
+  // The two-photo sequence is deterministic (headshot first, labels
+  // honoured) and restart-safe (consent + "what is missing" derive from
+  // the durable server-side record, not memory).
+
+  function getRouterSvc(opts) {
+    if (opts && opts.router && typeof opts.router.detectRenderIntent === "function") return opts.router;
+    try {
+      if (typeof require !== "undefined") {
+        var m = require("../../router.js");
+        if (m && typeof m.detectRenderIntent === "function") return m;
+      }
+    } catch (e) { /* fall through to global */ }
+    try {
+      if (root.MetaStyles && root.MetaStyles.router && typeof root.MetaStyles.router.detectRenderIntent === "function") {
+        return root.MetaStyles.router;
+      }
+    } catch (e2) { /* none available */ }
+    return null;
+  }
+
+  // Fail-closed: without the shared router vocabulary there is no
+  // render intent (flat-lay as before), never a guessed render.
+  function isRenderIntent(opts, text) {
+    try {
+      var r = getRouterSvc(opts);
+      if (r) return r.detectRenderIntent(text) === true;
+    } catch (e) {}
+    return false;
+  }
+
+  function isDeletePhotos(opts, text) {
+    try {
+      var r = getRouterSvc(opts);
+      if (r) return r.matchDeletePhotos(text) === true;
+    } catch (e) {}
+    return false;
+  }
+
+  var HEADSHOT_RE = /\bhead[\s-]?shot\b/i;
+  var FULLBODY_RE = /\bfull[\s-]?body\b/i;
+
+  // A single photo turn may carry the word "headshot" / "full body":
+  // that label wins outright (even over the slot we asked for). Both
+  // named or neither named -> null (caller falls back to next-missing).
+  function labelProfileType(text) {
+    var t = String(text || "");
+    var h = HEADSHOT_RE.test(t);
+    var f = FULLBODY_RE.test(t);
+    if (h && !f) return "headshot";
+    if (f && !h) return "full_body";
+    return null;
+  }
+
+  // Headshot first: the deterministic upload order.
+  function missingProfileTypes(profile) {
+    var out = [];
+    if (!profile || !profile.headshot) out.push("headshot");
+    if (!profile || !profile.full_body) out.push("full_body");
+    return out;
+  }
+
+  function safeGetProfile(catalog) {
+    try {
+      if (catalog && typeof catalog.getProfileReferences === "function") {
+        return catalog.getProfileReferences() || { headshot: null, full_body: null, consent: false, updated_at: null };
+      }
+    } catch (e) {}
+    return { headshot: null, full_body: null, consent: false, updated_at: null };
+  }
+
+  async function ensureProfileLoaded(catalog) {
+    try {
+      if (catalog && typeof catalog.loadProfile === "function") await catalog.loadProfile();
+    } catch (e) { /* best-effort: memory state still answers */ }
+  }
+
+  async function saveProfileBestEffort(catalog) {
+    try {
+      if (catalog && typeof catalog.saveProfile === "function") await catalog.saveProfile();
+    } catch (e) { /* best-effort: memory holds the truth, like pieces */ }
+  }
+
+  function recordConsentExpectation(catalog, skill, questionText) {
+    try {
+      if (catalog && typeof catalog.askQuestion === "function") {
+        catalog.askQuestion({ text: questionText, skill: skill, expects: "yes_no" });
+      }
+    } catch (e) {}
+  }
+
+  function recordProfileImageExpectation(catalog, skill, questionText) {
+    try {
+      if (catalog && typeof catalog.askQuestion === "function") {
+        catalog.askQuestion({ text: questionText, skill: skill, expects: "profile_image" });
+      }
+    } catch (e) {}
+  }
+
+  // Defensive: after a mid-flow delete, resolve our own profile
+  // pendings so the next photo can never strand (the loop already
+  // resolved them, but direct callers bypass the loop).
+  function resolveOwnProfilePendings(catalog, skill) {
+    try {
+      if (!catalog || typeof catalog.getPendingQuestions !== "function") return;
+      var pqs = catalog.getPendingQuestions() || [];
+      for (var i = 0; i < pqs.length; i++) {
+        if (pqs[i] && pqs[i].skill === skill &&
+            (pqs[i].expects === "profile_image" || pqs[i].expects === "yes_no")) {
+          try { catalog.resolveQuestion(pqs[i].id); } catch (e) {}
+        }
+      }
+    } catch (e2) {}
+  }
+
+  // Concise consent/storage question. Claims encryption because the
+  // actual server path (mock-ig-bot /ig/profile) encrypts the record
+  // at rest (AES-256-GCM) — never claim it for a path that does not.
+  var PROFILE_CONSENT_TEXT = "To show a look on you, darling \u2728 I\u2019ll keep just two photos \u2014 a headshot and a full-body \u2014 encrypted, only to render your looks on you and never for anything else. Say \u201Cdelete my photos\u201D anytime to remove them. May I keep them? A quick \u201Cyes\u201D and I\u2019ll ask for your headshot first.";
+
+  function profileAskText(missing) {
+    if (!missing || missing.length >= 2) {
+      return "Lovely \u2014 to render this on you I\u2019ll need two photos, one at a time: first your headshot, then a full-body photo, loveling \u2728 (Add the word \u201Cheadshot\u201D or \u201Cfull body\u201D alongside a photo and I\u2019ll file it under that name.) Share your headshot to begin?";
+    }
+    if (missing[0] === "headshot") {
+      return "Just your headshot to go, loveling \u2728 \u2014 share that photo (with the word \u201Cheadshot\u201D if you like) and I\u2019ll render the look on you.";
+    }
+    return "Headshot kept safe \u2728 \u2014 now just your full-body photo to go, loveling, and I\u2019ll render the look on you.";
+  }
+
+  function profileStoredText(slot, stillMissing) {
+    if (stillMissing.length === 0) return "";
+    if (slot === "headshot") {
+      return "Headshot kept safe \u2728 \u2014 now share your full-body photo and I\u2019ll render the look on you.";
+    }
+    return "Full-body photo kept safe \u2728 \u2014 now share your headshot and I\u2019ll render the look on you.";
+  }
+
+  function noPreviewDelivery(reason) {
+    return { requested: true, generated: false, delivered: false, reason: reason };
+  }
+
+  async function handleDeletePhotos(o) {
+    var catalog = o.catalog;
+    var skill = typeof o.skill === "string" && o.skill ? o.skill : "propose_look";
+    await ensureProfileLoaded(catalog);
+    var before = safeGetProfile(catalog);
+    var had = !!(before && (before.headshot || before.full_body || before.consent));
+    var delOk = true;
+    try {
+      if (catalog && typeof catalog.deleteProfile === "function") {
+        var r = await catalog.deleteProfile();
+        if (r && r.ok === false) delOk = false;
+      } else if (catalog && typeof catalog.clearProfileReferences === "function") {
+        catalog.clearProfileReferences();
+      }
+    } catch (e) { delOk = false; }
+    resolveOwnProfilePendings(catalog, skill);
+    if (!delOk) {
+      return {
+        text: "Oh loveling \u2728 I couldn\u2019t quite reach your saved photos just now \u2014 mind asking me again in a moment? Nothing was deleted yet.",
+        image: null,
+        persist: { summaryDelta: "Profile-photo delete failed; will retry.", preferencesDelta: "" },
+        skill: skill,
+        meta: { profileAction: "delete_failed", imageDelivery: noPreviewDelivery("profile_delete_failed") }
+      };
+    }
+    var text = had
+      ? "Done, loveling \u2728 \u2014 your saved headshot and full-body photo are deleted, and I won\u2019t render looks on you again until you share new ones. (One-off photos shared for colour advice were never kept in the first place.)"
+      : "There were no saved profile photos to delete, loveling \u2728 \u2014 your headshot and full-body photo were never kept. (One-off photos shared for colour advice aren\u2019t kept either \u2014 just for that read.)";
+    return {
+      text: text,
+      image: null,
+      persist: { summaryDelta: had ? "Deleted saved profile photos." : "Delete-photos request; nothing saved.", preferencesDelta: "" },
+      skill: skill,
+      meta: { profileAction: had ? "deleted" : "delete_noop", imageDelivery: { requested: false, generated: false, delivered: false, reason: "profile_delete" } }
+    };
+  }
+
+  // Intake: store one uploaded photo as a profile reference. Only ever
+  // called while a profile_image expectation pends (the loop routes that
+  // turn here with pendingSatisfied). Returns { complete, profile,
+  // reply }: complete=false replies ask for the next photo; complete=true
+  // means both references now exist and the caller should proceed to
+  // selection + render in the same turn.
+  async function handleProfileIntake(o) {
+    var catalog = o.catalog;
+    var skill = typeof o.skill === "string" && o.skill ? o.skill : "propose_look";
+    var imageDataUrl = typeof o.imageDataUrl === "string" ? o.imageDataUrl : null;
+    var userText = typeof o.text === "string" ? o.text : "";
+    await ensureProfileLoaded(catalog);
+    var profile = safeGetProfile(catalog);
+    if (!profile.consent) {
+      recordConsentExpectation(catalog, skill, PROFILE_CONSENT_TEXT);
+      return {
+        complete: false, profile: profile,
+        reply: {
+          text: PROFILE_CONSENT_TEXT,
+          image: null,
+          persist: { summaryDelta: "Asked for profile-photo consent.", preferencesDelta: "" },
+          skill: skill,
+          meta: { profileAction: "consent_asked", imageDelivery: noPreviewDelivery("profile_consent_pending") }
+        }
+      };
+    }
+    if (!imageDataUrl || !/^data:image\//.test(imageDataUrl)) {
+      var retryMissing = missingProfileTypes(profile);
+      var retryAsk = profileAskText(retryMissing);
+      recordProfileImageExpectation(catalog, skill, retryAsk);
+      return {
+        complete: false, profile: profile,
+        reply: {
+          text: "Oh loveling \u2728 that photo didn\u2019t come through in a form I can keep \u2014 mind resending it as an ordinary photo? " + retryAsk,
+          image: null,
+          persist: { summaryDelta: "Profile photo unreadable; asked again.", preferencesDelta: "" },
+          skill: skill,
+          meta: { profileAction: "intake_failed", profileMissing: retryMissing, imageDelivery: noPreviewDelivery("profile_refs_pending") }
+        }
+      };
+    }
+    var label = labelProfileType(userText);
+    var missing = missingProfileTypes(profile);
+    var slot = label || missing[0] || "headshot";
+    var storedReceipt = null;
+    try {
+      if (!catalog || typeof catalog.setProfileReference !== "function") throw new Error("no profile support");
+      storedReceipt = catalog.setProfileReference(slot, imageDataUrl);
+    } catch (e) {
+      var failMissing = missingProfileTypes(safeGetProfile(catalog));
+      var failAsk = profileAskText(failMissing);
+      recordProfileImageExpectation(catalog, skill, failAsk);
+      return {
+        complete: false, profile: safeGetProfile(catalog),
+        reply: {
+          text: "Oh loveling \u2728 that photo didn\u2019t come through in a form I can keep \u2014 mind resending it as an ordinary photo? " + failAsk,
+          image: null,
+          persist: { summaryDelta: "Profile photo unreadable; asked again.", preferencesDelta: "" },
+          skill: skill,
+          meta: { profileAction: "intake_failed", profileMissing: failMissing, imageDelivery: noPreviewDelivery("profile_refs_pending") }
+        }
+      };
+    }
+    await saveProfileBestEffort(catalog);
+    var after = safeGetProfile(catalog);
+    var stillMissing = missingProfileTypes(after);
+    if (stillMissing.length > 0) {
+      var ask = profileAskText(stillMissing);
+      recordProfileImageExpectation(catalog, skill, ask);
+      return {
+        complete: false, profile: after,
+        reply: {
+          text: profileStoredText(slot, stillMissing),
+          image: null,
+          persist: { summaryDelta: "Kept profile " + slot + "; still missing " + stillMissing.join(", ") + ".", preferencesDelta: "" },
+          skill: skill,
+          meta: { profileAction: "stored", profileSlot: slot, profileMissing: stillMissing, imageDelivery: noPreviewDelivery("profile_refs_pending") }
+        }
+      };
+    }
+    return { complete: true, profile: after, reply: null };
+  }
+
+  function refBytesLen(dataUrl) {
+    try {
+      var b64 = dataUrl.slice(dataUrl.indexOf(",") + 1);
+      if (typeof Buffer !== "undefined") return Buffer.from(b64, "base64").length;
+      return Math.ceil(b64.length * 3 / 4);
+    } catch (e) { return dataUrl.length; }
+  }
+
+  var ONUSER_REF_DIM_PX = 384;
+  var ONUSER_PAYLOAD_CAP = 2 * 1024 * 1024;
+
+  // Scale one reference to the shared 384px pipeline (same fail-soft as
+  // garment refs); raw bytes survive when the pipeline is unavailable.
+  function scaleProfileRef(dataUrl) {
+    if (typeof dataUrl !== "string" || !/^data:image\//.test(dataUrl)) return null;
+    try {
+      var pt = null;
+      try { if (typeof require !== "undefined") pt = require("../../photo-thumb.js"); } catch (e) { pt = null; }
+      if ((!pt || typeof pt.makeSync !== "function") && root.MetaStyles && root.MetaStyles.photoThumb) pt = root.MetaStyles.photoThumb;
+      if (pt && typeof pt.makeSync === "function") {
+        var r = pt.makeSync(dataUrl, null, ONUSER_REF_DIM_PX);
+        if (typeof r === "string" && r) return { url: r, scaled: true };
+      }
+    } catch (e) {}
+    return { url: dataUrl, scaled: false };
+  }
+
+  // Garment reference URLs for the on-user preview: prefer the 384px
+  // original-derived ref, fall back to the thumb (downgraded), skip
+  // pieces with no usable bytes. Same ≤2 MB defensive payload cap and
+  // first-ref-kept rule as the flat-lay path. Pure function over full
+  // piece objects — shared by propose_look and revise_look render paths
+  // so the two never drift (the flat-lay path keeps its own proven code).
+  function buildGarmentRefUrls(activePieces, chosenItems) {
+    var map = {};
+    (Array.isArray(activePieces) ? activePieces : []).forEach(function (p) {
+      if (p && p.piece_id) map[p.piece_id] = p;
+    });
+    var items = Array.isArray(chosenItems) ? chosenItems : [];
+    var urls = [];
+    var payloadBytes = 0;
+    var downgraded = false;
+    for (var i = 0; i < items.length && urls.length < 4; i++) {
+      var piece = map[items[i] && items[i].id];
+      if (!piece) { downgraded = true; continue; }
+      var u = null;
+      var down = false;
+      if (typeof piece.image_original === "string" && /^data:image\//.test(piece.image_original)) {
+        var s = scaleProfileRef(piece.image_original);
+        if (s) { u = s.url; down = !s.scaled; }
+        else if (typeof piece.photo_thumb === "string" && /^data:image\//.test(piece.photo_thumb)) { u = piece.photo_thumb; down = true; }
+        else { downgraded = true; continue; }
+      } else if (typeof piece.photo_thumb === "string" && /^data:image\//.test(piece.photo_thumb)) {
+        u = piece.photo_thumb; down = true;
+      } else { downgraded = true; continue; }
+      var len = refBytesLen(u);
+      if (urls.length === 0 || payloadBytes + len <= ONUSER_PAYLOAD_CAP) {
+        urls.push(u);
+        payloadBytes += len;
+        if (down) downgraded = true;
+      } else {
+        downgraded = true;
+      }
+    }
+    return { urls: urls, total: items.length, downgraded: downgraded, payloadBytes: payloadBytes };
+  }
+
+  // The on-user preview request: profile refs FIRST (headshot,
+  // full_body), then garment refs — order documented in the prompt and
+  // in meta. Max 4 images total (proxy cap): both profile refs plus up
+  // to 2 garment refs; truncation is reported honestly in the prompt
+  // and in meta. o: { metaClient, headshot, fullBody, garmentRefs[],
+  // garmentTotal, nouns, context, shareId, stageImage, toolSteps }.
+  async function requestOnUserPreview(o) {
+    var toolSteps = typeof o.toolSteps === "number" ? o.toolSteps : 0;
+    var imageDelivery = { requested: true, generated: false, delivered: false, reason: "preview_failed" };
+    var meta = {
+      renderOnUser: true, profileRefs: 0, referencePieces: 0,
+      referenceGarmentTotal: typeof o.garmentTotal === "number" ? o.garmentTotal : 0,
+      referenceDowngraded: false, referencePayloadBytes: 0, previewPrompt: ""
+    };
+    var hs = scaleProfileRef(o.headshot);
+    var fb = scaleProfileRef(o.fullBody);
+    if (!hs || !fb) {
+      imageDelivery.reason = "profile_ref_unavailable";
+      return { image: null, imageDelivery: imageDelivery, meta: meta, toolSteps: toolSteps };
+    }
+    meta.profileRefs = 2;
+    var garmentRefs = Array.isArray(o.garmentRefs) ? o.garmentRefs : [];
+    var images = [hs.url, fb.url];
+    var payloadBytes = refBytesLen(hs.url) + refBytesLen(fb.url);
+    var downgraded = !(hs.scaled && fb.scaled);
+    var passed = 0;
+    // Proxy cap: 4 images max, so at most 2 garment refs ride along.
+    for (var i = 0; i < garmentRefs.length && images.length < 4; i++) {
+      var len = refBytesLen(garmentRefs[i]);
+      if (payloadBytes + len <= ONUSER_PAYLOAD_CAP) {
+        images.push(garmentRefs[i]);
+        payloadBytes += len;
+        passed += 1;
+      } else {
+        downgraded = true;
+      }
+    }
+    if (meta.referenceGarmentTotal > passed) downgraded = true;
+    meta.referencePieces = passed;
+    meta.referenceDowngraded = downgraded;
+    meta.referencePayloadBytes = payloadBytes;
+    var previewPrompt =
+      "Render the selected look worn by the same user shown in the reference photos, preserving identity and garment details \u2014 not a flat-lay. " +
+      "Image 1 is the wearer's headshot and image 2 is their full-body reference: keep this person's face, identity, and proportions exactly. " +
+      "The remaining attached images are the selected wardrobe garments (" + o.nouns + "): dress the person in exactly this look, preserving each garment's colour, print, silhouette, and details; do not substitute generic garments; do not add unreferenced garments. " +
+      "Full-body portrait of the person wearing the complete look, soft pastel backdrop. No unworn garments laid out, no floating clothes, no readable text.";
+    if (o.context) {
+      previewPrompt += " Styling brief from the wearer: " + o.context + ".";
+    }
+    if (meta.referenceGarmentTotal > passed) {
+      previewPrompt += " Only " + passed + " of " + meta.referenceGarmentTotal + " selected pieces have attached references; render those faithfully and complete the look consistently.";
+    }
+    meta.previewPrompt = previewPrompt;
+    var image = null;
+    if (o.metaClient && typeof o.metaClient.preview === "function") {
+      toolSteps += 1;
+      try {
+        var pr = await o.metaClient.preview(previewPrompt, images);
+        var durl = pr && (pr.dataURL || pr.dataUrl || pr.data_url);
+        if (typeof durl === "string" && /^data:image\//.test(durl)) {
+          imageDelivery.generated = true;
+          image = { dataURL: durl, caption: o.nouns + " \u2014 styled on you with love" };
+          if (o.shareId && o.stageImage) {
+            toolSteps += 1;
+            var staged = null;
+            try { staged = await o.stageImage(o.shareId, durl); } catch (e) { staged = null; }
+            if (staged && staged.ok) {
+              imageDelivery.delivered = true;
+              imageDelivery.reason = "staged for send with image";
+            } else {
+              imageDelivery.reason = "stage_failed";
+            }
+          } else {
+            imageDelivery.reason = "text-only send; preview not staged for delivery";
+          }
+        } else {
+          imageDelivery.reason = "preview_unparseable";
+        }
+      } catch (e) {
+        imageDelivery.reason = "preview_failed";
+      }
+    } else {
+      imageDelivery.requested = false;
+      imageDelivery.reason = "no_preview_client";
+    }
+    return { image: image, imageDelivery: imageDelivery, meta: meta, toolSteps: toolSteps };
+  }
+
   function logDecision(source, selectedCount, rejectedReason, toolSteps) {
     try {
       console.log("propose_look " + JSON.stringify({
@@ -277,6 +700,83 @@
     var stageImage = typeof o.stageImage === "function" ? o.stageImage : null;
     var toolSteps = 0;
 
+    // Render-on-user preamble (delete / intake / consent-yes / gate).
+    // Delete works with any wardrobe state, so it runs first.
+    var renderIntent = isRenderIntent(o, userText);
+    var imageDataUrl = typeof o.imageDataUrl === "string" ? o.imageDataUrl : null;
+    var pendingSatisfied = o.pendingSatisfied && typeof o.pendingSatisfied === "object" ? o.pendingSatisfied : null;
+    if (isDeletePhotos(o, userText)) {
+      return await handleDeletePhotos({ catalog: catalog, skill: "propose_look" });
+    }
+    // A photo arriving while a profile_image expectation pends is a
+    // wearer reference, never a catalogue piece. Completion falls
+    // through to selection + render below with render forced on.
+    var renderProfile = null;
+    if (imageDataUrl && pendingSatisfied && pendingSatisfied.expects === "profile_image") {
+      var intake = await handleProfileIntake({
+        catalog: catalog, skill: "propose_look", imageDataUrl: imageDataUrl, text: userText
+      });
+      toolSteps += 1;
+      if (!intake.complete) {
+        recordLookTurn(catalog, {
+          userText: userText, proposal: null, verdict: false,
+          reasons: [intake.reply && intake.reply.meta && intake.reply.meta.profileAction === "consent_asked"
+            ? "profile_consent_pending" : "profile_refs_pending"]
+        });
+        return intake.reply;
+      }
+      renderProfile = intake.profile;
+      renderIntent = true;
+    }
+    // Consent "yes" (routed back here by the pending yes_no): grant,
+    // persist, then ask for the headshot. An attached photo counts as
+    // the first upload — stored inline, never dropped.
+    // Only our own consent question counts: any other yes_no routed
+    // here (catalogue_piece / describe_wardrobe "want a look?") falls
+    // through to the normal look flow below.
+    if (!renderProfile && pendingSatisfied && pendingSatisfied.expects === "yes_no" &&
+        pendingSatisfied.text === PROFILE_CONSENT_TEXT) {
+      await ensureProfileLoaded(catalog);
+      var consentNow = safeGetProfile(catalog);
+      if (!consentNow.consent) {
+        try {
+          if (catalog && typeof catalog.setProfileConsent === "function") catalog.setProfileConsent(true);
+        } catch (e) { /* fall through to the consent question below */ }
+        var granted = safeGetProfile(catalog);
+        if (granted.consent) {
+          await saveProfileBestEffort(catalog);
+          toolSteps += 1;
+          if (imageDataUrl && /^data:image\//.test(imageDataUrl)) {
+            var grantIntake = await handleProfileIntake({
+              catalog: catalog, skill: "propose_look", imageDataUrl: imageDataUrl, text: userText
+            });
+            toolSteps += 1;
+            if (!grantIntake.complete) {
+              recordLookTurn(catalog, { userText: userText, proposal: null, verdict: false, reasons: ["profile_refs_pending"] });
+              return grantIntake.reply;
+            }
+            renderProfile = grantIntake.profile;
+            renderIntent = true;
+          } else {
+            var grantAsk = profileAskText(["headshot", "full_body"]);
+            recordProfileImageExpectation(catalog, "propose_look", grantAsk);
+            recordLookTurn(catalog, { userText: userText, proposal: null, verdict: false, reasons: ["profile_consent_granted"] });
+            return {
+              text: "Wonderful, darling \u2728 \u2014 your photos will stay encrypted and are only ever used to render your looks on you. " + grantAsk,
+              image: null,
+              persist: { summaryDelta: "Profile consent granted; asked for headshot.", preferencesDelta: "" },
+              skill: "propose_look",
+              meta: {
+                source: "profile_gate", selectedCount: 0, rejectedReason: "profile_consent_granted",
+                toolSteps: toolSteps,
+                imageDelivery: noPreviewDelivery("profile_refs_pending")
+              }
+            };
+          }
+        }
+      }
+    }
+
     var active = [];
     try {
       active = catalog ? catalog.getActivePieces() : [];
@@ -298,6 +798,52 @@
           imageDelivery: { requested: false, generated: false, delivered: false, reason: "empty_wardrobe" }
         }
       };
+    }
+
+    // Render gate: an explicit render-on-user request never reaches
+    // selection (or a Spark call) until consent + both references exist.
+    // Missing state returns early with no generated image and an
+    // explicit reason — never a silent flat-lay while claiming
+    // personalization. renderProfile is already set when this turn
+    // completed the two-photo intake above.
+    if (renderIntent && !renderProfile) {
+      await ensureProfileLoaded(catalog);
+      renderProfile = safeGetProfile(catalog);
+    }
+    if (renderIntent && renderProfile && !renderProfile.consent) {
+      recordConsentExpectation(catalog, "propose_look", PROFILE_CONSENT_TEXT);
+      recordLookTurn(catalog, { userText: userText, proposal: null, verdict: false, reasons: ["profile_consent_pending"] });
+      return {
+        text: PROFILE_CONSENT_TEXT,
+        image: null,
+        persist: { summaryDelta: "Asked for profile-photo consent.", preferencesDelta: "" },
+        skill: "propose_look",
+        meta: {
+          source: "profile_gate", selectedCount: 0, rejectedReason: "profile_consent_pending",
+          toolSteps: toolSteps,
+          imageDelivery: noPreviewDelivery("profile_consent_pending")
+        }
+      };
+    }
+    if (renderIntent && renderProfile && renderProfile.consent) {
+      var gateMissing = missingProfileTypes(renderProfile);
+      if (gateMissing.length > 0) {
+        var gateAsk = profileAskText(gateMissing);
+        recordProfileImageExpectation(catalog, "propose_look", gateAsk);
+        recordLookTurn(catalog, { userText: userText, proposal: null, verdict: false, reasons: ["profile_refs_pending:" + gateMissing.join(",")] });
+        return {
+          text: gateAsk,
+          image: null,
+          persist: { summaryDelta: "Asked for missing profile refs: " + gateMissing.join(", ") + ".", preferencesDelta: "" },
+          skill: "propose_look",
+          meta: {
+            source: "profile_gate", selectedCount: 0, rejectedReason: "profile_refs_pending",
+            toolSteps: toolSteps,
+            profileMissing: gateMissing,
+            imageDelivery: noPreviewDelivery("profile_refs_pending")
+          }
+        };
+      }
     }
 
     // 1. Ask Spark for a constrained choice: IDs + categories only, JSON only.
@@ -406,6 +952,30 @@
     }
     reply += " Want me to tweak anything?";
 
+    // 5. Preview only after a validated look. Render intent takes the
+    // on-user branch (profile refs + selected garments, never a
+    // flat-lay); every other request keeps the flat-lay path below
+    // byte-for-byte as before.
+    var didRenderOnUser = false;
+    var renderOnUserMeta = null;
+    if (renderIntent && renderProfile && renderProfile.consent &&
+        renderProfile.headshot && renderProfile.full_body) {
+      var garBuilt = buildGarmentRefUrls(active, chosen.items);
+      var onUser = await requestOnUserPreview({
+        metaClient: metaClient,
+        headshot: renderProfile.headshot, fullBody: renderProfile.full_body,
+        garmentRefs: garBuilt.urls, garmentTotal: chosen.items.length,
+        nouns: nouns, context: context, shareId: shareId, stageImage: stageImage,
+        toolSteps: toolSteps
+      });
+      toolSteps = onUser.toolSteps;
+      image = onUser.image;
+      imageDelivery = onUser.imageDelivery;
+      renderOnUserMeta = onUser.meta;
+      didRenderOnUser = true;
+      reply += " Rendered on you from your saved photos \u2728.";
+    }
+    if (!didRenderOnUser) {
     // 5. Preview only after a validated look; honour the real return shape.
     // Photo-reference (M25): for each SELECTED piece, build Muse reference at ~384px via
     // shared thumb pipeline (JPEG through existing ffmpeg path, same fail-soft):
@@ -533,6 +1103,7 @@
         imageDelivery.reason = "preview_failed";
       }
     }
+    } // end flat-lay-only preview (render intent takes the on-user branch above)
     if (imageDelivery.requested && !imageDelivery.delivered) {
       reply += " (I can\u2019t tuck preview pictures into chat just yet, so this word-picture will have to sparkle on its own. \u2728)";
     }
@@ -555,6 +1126,7 @@
     // later turn can see "Spark's first picks didn't validate".
     var turnReasons = sparkRejected.slice();
     if (source === "fallback" && fallbackRejected) turnReasons.push("fallback_rejected:" + fallbackRejected);
+    if (didRenderOnUser) turnReasons.push("render_on_user");
     var turnFinish = finishOf(chosen.items, chosen.card);
     recordLookTurn(catalog, {
       userText: userText,
@@ -564,28 +1136,61 @@
       },
       verdict: true, reasons: turnReasons
     });
+    var outMeta = {
+      source: source, selectedCount: chosen.items.length, rejectedReason: rejectedReason,
+      toolSteps: toolSteps, rationale: rationale, imageDelivery: imageDelivery,
+      renderOnUser: didRenderOnUser
+    };
+    if (didRenderOnUser && renderOnUserMeta) {
+      outMeta.referenceThumb = false;
+      outMeta.referencePieces = renderOnUserMeta.referencePieces;
+      outMeta.referenceGarmentTotal = renderOnUserMeta.referenceGarmentTotal;
+      outMeta.referenceDowngraded = renderOnUserMeta.referenceDowngraded;
+      outMeta.referencePayloadBytes = renderOnUserMeta.referencePayloadBytes;
+      outMeta.profileRefs = renderOnUserMeta.profileRefs;
+      // The exact on-user prompt travels in meta (never any image
+      // bytes) so tests and status-adjacent paths can audit the
+      // render wording without touching photo data.
+      outMeta.previewPrompt = renderOnUserMeta.previewPrompt;
+    } else {
+      outMeta.referenceThumb = refThumb ? true : false;
+      outMeta.referencePieces = refPieces;
+      outMeta.referenceDowngraded = anyDowngraded;
+      outMeta.referencePayloadBytes = payloadBytes;
+    }
     return {
       text: reply,
       image: image,
       persist: { summaryDelta: "Proposed look: " + nouns + ".", preferencesDelta: "" },
       skill: "propose_look",
-      meta: {
-        source: source, selectedCount: chosen.items.length, rejectedReason: rejectedReason,
-        toolSteps: toolSteps, rationale: rationale, imageDelivery: imageDelivery,
-        referenceThumb: refThumb ? true : false, referencePieces: refPieces,
-        referenceDowngraded: anyDowngraded, referencePayloadBytes: payloadBytes
-      }
+      meta: outMeta
     };
   }
 
   // Shared selection stack (Opus finding #7): revise_look reuses these
   // directly so the fit rules live in exactly one place. handle() above
   // is untouched — these are pure functions over caller-supplied sets.
+  // The render-on-user profile flow below is shared the same way, so
+  // the intent vocabulary, consent copy, and preview ordering never
+  // drift between propose_look and revise_look.
   var api = {
     handle: handle, skill: "propose_look",
     validateSelection: validateSelection, fallbackChoose: fallbackChoose,
     strictShape: strictShape, getAssembleLook: getAssembleLook,
-    plainWhy: plainWhy, plainNoun: plainNoun
+    plainWhy: plainWhy, plainNoun: plainNoun,
+    isRenderIntent: isRenderIntent, isDeletePhotos: isDeletePhotos,
+    labelProfileType: labelProfileType, missingProfileTypes: missingProfileTypes,
+    safeGetProfile: safeGetProfile, ensureProfileLoaded: ensureProfileLoaded,
+    saveProfileBestEffort: saveProfileBestEffort,
+    recordConsentExpectation: recordConsentExpectation,
+    recordProfileImageExpectation: recordProfileImageExpectation,
+    resolveOwnProfilePendings: resolveOwnProfilePendings,
+    handleDeletePhotos: handleDeletePhotos, handleProfileIntake: handleProfileIntake,
+    scaleProfileRef: scaleProfileRef, buildGarmentRefUrls: buildGarmentRefUrls,
+    requestOnUserPreview: requestOnUserPreview,
+    PROFILE_CONSENT_TEXT: PROFILE_CONSENT_TEXT,
+    profileAskText: profileAskText, profileStoredText: profileStoredText,
+    noPreviewDelivery: noPreviewDelivery
   };
   root.MetaStyles = root.MetaStyles || {};
   root.MetaStyles.skills = root.MetaStyles.skills || {};

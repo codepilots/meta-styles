@@ -356,8 +356,23 @@ function createService(opts) {
     } catch (err) {
       store = null;
     }
+    // Wearer profile references (render-on-user) persist through the
+    // same bot as pieces, via the separate /ig/profile contract
+    // (createProfileStore) — never the piece array. Memory holds the
+    // working copy; the service-level catalog owns load/save/delete.
+    var profileStore = null;
+    try {
+      if (typeof Wardrobe.createProfileStore === "function") {
+        profileStore = Wardrobe.createProfileStore({
+          base: botBase, token: catalogToken, userRef: userRef,
+        });
+      }
+    } catch (err) {
+      profileStore = null;
+    }
     var catalog = Wardrobe.createCatalog({
       userKey: isDemo ? demoUserKey : userRef, store: store,
+      profileStore: profileStore,
     });
     var loop = TurnLoop.createTurnLoop({
       userKey: isDemo ? demoUserKey : userRef,
@@ -1018,9 +1033,27 @@ function createService(opts) {
       } else if (skill === "off_topic") {
         say("Replied — gently steered back to your wardrobe.");
       } else if (skill === "propose_look") {
-        say("Replied to your message with a full look.");
+        var hrP = result && result.handlerResult ? result.handlerResult : result;
+        if (hrP && hrP.meta && hrP.meta.profileAction === "deleted") {
+          say("Cleared the saved profile photos.");
+        } else if (hrP && hrP.meta && hrP.meta.profileAction === "delete_noop") {
+          say("Answered a photo-deletion request (nothing was saved).");
+        } else if (hrP && hrP.meta && hrP.meta.renderOnUser) {
+          say("Rendered the look on you with a preview picture.");
+        } else {
+          say("Replied to your message with a full look.");
+        }
       } else if (skill === "revise_look") {
-        say("You asked for a change — re-wove your look and re-checked the fit.");
+        var hrR = result && result.handlerResult ? result.handlerResult : result;
+        if (hrR && hrR.meta && hrR.meta.profileAction === "deleted") {
+          say("Cleared the saved profile photos.");
+        } else if (hrR && hrR.meta && hrR.meta.profileAction === "delete_noop") {
+          say("Answered a photo-deletion request (nothing was saved).");
+        } else if (hrR && hrR.meta && hrR.meta.renderOnUser) {
+          say("Rendered the revised look on you with a preview picture.");
+        } else {
+          say("You asked for a change — re-wove your look and re-checked the fit.");
+        }
       } else if (skill === "describe_wardrobe") {
         say("Replied with your wardrobe summary.");
       } else if (skill === "explain_fit") {

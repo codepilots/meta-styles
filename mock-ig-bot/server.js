@@ -107,6 +107,63 @@ function catalogPath(dir, userRef) {
   return path.join(dir, name + ".bin");
 }
 
+// Wearer profile references (render-on-user only): a separate encrypted
+// record — headshot + full-body data URLs + consent flag — never the
+// piece array. Same AES-256-GCM convention as the catalog (Node
+// builtins only), with its own filename salt so profile files can never
+// collide with catalog files even for the same user_ref.
+function profilePath(dir, userRef) {
+  const name = crypto.createHash("sha256").update("mock-profile-v1:" + userRef).digest("hex");
+  return path.join(dir, name + ".profile.bin");
+}
+
+function encryptProfile(secret, userRef, record) {
+  const plaintext = Buffer.from(JSON.stringify(record), "utf8");
+  const iv = crypto.randomBytes(CATALOG_IV_BYTES);
+  const cipher = crypto.createCipheriv("aes-256-gcm", catalogKeyFor(secret, userRef), iv);
+  const ciphertext = Buffer.concat([cipher.update(plaintext), cipher.final()]);
+  const tag = cipher.getAuthTag();
+  return Buffer.concat([iv, tag, ciphertext]);
+}
+
+function decryptProfile(secret, userRef, blob) {
+  if (!Buffer.isBuffer(blob) || blob.length < CATALOG_IV_BYTES + CATALOG_TAG_BYTES + 1) {
+    throw new Error("profile blob too short");
+  }
+  const iv = blob.slice(0, CATALOG_IV_BYTES);
+  const tag = blob.slice(CATALOG_IV_BYTES, CATALOG_IV_BYTES + CATALOG_TAG_BYTES);
+  const ciphertext = blob.slice(CATALOG_IV_BYTES + CATALOG_TAG_BYTES);
+  const decipher = crypto.createDecipheriv("aes-256-gcm", catalogKeyFor(secret, userRef), iv);
+  decipher.setAuthTag(tag);
+  const plaintext = Buffer.concat([decipher.update(ciphertext), decipher.final()]);
+  const parsed = JSON.parse(plaintext.toString("utf8"));
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw new Error("profile payload is not a record object");
+  }
+  return parsed;
+}
+
+// Light shape check for an inbound profile record: a plain object with
+// only known keys. Photo values are opaque bytes (the catalog client
+// enforces the data-URL/size schema); the bot only refuses non-objects,
+// unknown keys, and non-image reference values.
+function checkProfileRecordShape(rec) {
+  if (!rec || typeof rec !== "object" || Array.isArray(rec)) return false;
+  const allowed = ["headshot", "full_body", "consent", "updated_at"];
+  for (const k of Object.keys(rec)) {
+    if (allowed.indexOf(k) === -1) return false;
+  }
+  for (const slot of ["headshot", "full_body"]) {
+    const v = rec[slot];
+    if (v !== undefined && v !== null &&
+        (typeof v !== "string" || v.indexOf("data:image/") !== 0)) {
+      return false;
+    }
+  }
+  if (rec.consent !== undefined && typeof rec.consent !== "boolean") return false;
+  return true;
+}
+
 function createStore() {
   return {
     shares: [], // {id, received_at, attachment, media_id, media_available}
@@ -422,6 +479,118 @@ function createHandler(store, config) {
           return;
         }
         sendJson(res, 200, pieces, corsOrigin);
+        return;
+      }
+      sendJson(res, 405, { error: "method_not_allowed" }, corsOrigin);
+      return;
+    }
+
+    // Wearer profile references (render-on-user only) — server-side
+    // companion to the catalog route above, same conventions: per-user
+    // AES-256-GCM at rest (Node builtins), USER_REF_RE-validated refs,
+    // hex-digest filenames under the same data dir. Whole-record
+    // replace on PUT (last-write-wins, opaque bytes); GET returns the
+    // stored record, or an empty record when nothing is stored yet
+    // (never 404 for "no data"); DELETE removes the file idempotently
+    // (204 whether or not a record existed). The PUT body cap is the
+    // media cap (two original-quality photos exceed the 1 MB send cap).
+    // GET returns the record to the authorized service (it needs the
+    // original image data for the image model); status/debug surfaces
+    // never include profile bytes.
+    if (url.pathname === "/ig/profile" || url.pathname.indexOf("/ig/profile/") === 0) {
+      const secret = catalogSecret(config);
+      const dir = catalogDir(config);
+      let userRef = null;
+      if (url.pathname.indexOf("/ig/profile/") === 0) {
+        const raw = url.pathname.slice("/ig/profile/".length);
+        if (raw && raw.indexOf("/") === -1) {
+          try {
+            userRef = decodeURIComponent(raw);
+          } catch (err) {
+            userRef = null;
+          }
+        }
+      }
+      if (typeof userRef !== "string" || !USER_REF_RE.test(userRef)) {
+        sendJson(res, 400, { error: "bad_user_ref" }, corsOrigin);
+        return;
+      }
+      if (req.method === "PUT") {
+        readBody(req, MAX_MEDIA_BODY).then((parsed) => {
+          if (parsed.tooLarge) {
+            sendJson(res, 413, { error: "body_too_large" }, corsOrigin);
+            return;
+          }
+          let record = null;
+          try {
+            record = JSON.parse((parsed.bytes || Buffer.alloc(0)).toString("utf8"));
+          } catch (err) {
+            record = null;
+          }
+          if (!checkProfileRecordShape(record)) {
+            sendJson(res, 400, { error: "bad_request" }, corsOrigin);
+            return;
+          }
+          let blob;
+          try {
+            blob = encryptProfile(secret, userRef, record);
+          } catch (err) {
+            sendJson(res, 500, { error: "profile_store_failed" }, corsOrigin);
+            return;
+          }
+          try {
+            fs.mkdirSync(dir, { recursive: true });
+            fs.writeFileSync(profilePath(dir, userRef), blob);
+          } catch (err) {
+            sendJson(res, 500, { error: "profile_store_failed" }, corsOrigin);
+            return;
+          }
+          res.writeHead(204, {
+            "Cache-Control": "no-store",
+            ...(corsOrigin ? { "Access-Control-Allow-Origin": corsOrigin } : {}),
+          });
+          res.end();
+        });
+        return;
+      }
+      if (req.method === "GET") {
+        let blob = null;
+        try {
+          blob = fs.readFileSync(profilePath(dir, userRef));
+        } catch (err) {
+          if (err && err.code !== "ENOENT") {
+            sendJson(res, 500, { error: "profile_unreadable" }, corsOrigin);
+            return;
+          }
+        }
+        if (blob === null) {
+          sendJson(res, 200, { headshot: null, full_body: null, consent: false, updated_at: null }, corsOrigin);
+          return;
+        }
+        let record;
+        try {
+          record = decryptProfile(secret, userRef, blob);
+        } catch (err) {
+          sendJson(res, 500, { error: "profile_unreadable" }, corsOrigin);
+          return;
+        }
+        sendJson(res, 200, record, corsOrigin);
+        return;
+      }
+      if (req.method === "DELETE") {
+        try {
+          fs.unlinkSync(profilePath(dir, userRef));
+        } catch (err) {
+          if (err && err.code !== "ENOENT") {
+            sendJson(res, 500, { error: "profile_store_failed" }, corsOrigin);
+            return;
+          }
+        }
+        res.writeHead(204, {
+          "Cache-Control": "no-store",
+          ...(corsOrigin ? { "Access-Control-Allow-Origin": corsOrigin } : {}),
+        });
+        res.end();
         return;
       }
       sendJson(res, 405, { error: "method_not_allowed" }, corsOrigin);

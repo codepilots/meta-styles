@@ -28,12 +28,66 @@
     "Evaluate_prospective_purchase",
   ];
 
+  // Explicit render-on-user intent: the wearer asks to see a look
+  // rendered ON THEM (using their saved headshot + full-body photo),
+  // not a flat-lay. Single source of truth — propose_look and
+  // revise_look reuse this (via require or the browser global) so the
+  // intent vocabulary never drifts between router and skills.
+  // Deliberately narrow: "make me a look" / "show me a look" (fresh
+  // flat-lay look requests) must NOT match — only on-the-wearer
+  // phrasing counts.
+  var RENDER_INTENT_RES = [
+    /show\s+me\s+wearing\b/,
+    /render\s+(this|that|it|the\s+look|this\s+look)?\s*on\s+me\b/,
+    /render\s+me\s+wearing\b/,
+    /\bput\s+(this|that|it|the\s+look|this\s+look)\s+on\s+me\b/,
+    /\bshow\s+(this|that|it|the\s+look)\s+on\s+me\b/,
+    /\btry\s+(this|that|it)\s+on\s+me\b/,
+    /what\s+(would\s+|does\s+)?(this|that|it)\s+look\s+like\s+on\s+me\b/,
+    /what\s+it\s+looks\s+like\s+on\s+me\b/,
+    /show\s+me\s+what\s+it\s+looks\s+like\s+on\s+me\b/,
+    /show\s+me\s+in\s+this\s+(look|outfit)\b/,
+    /\buse\s+my\s+headshot\b/,
+    /\buse\s+my\s+(profile\s+)?photos?\s+to\s+show\b/,
+    /\bwith\s+my\s+headshot\s+and\s+full[\s-]?body\b/
+  ];
+
+  function detectRenderIntent(text) {
+    if (typeof text !== "string" || !text) return false;
+    var t = text.toLowerCase();
+    for (var i = 0; i < RENDER_INTENT_RES.length; i++) {
+      if (RENDER_INTENT_RES[i].test(t)) return true;
+    }
+    return false;
+  }
+
+  // Saved profile-photo deletion ("delete my photos" / "forget my
+  // profile photos"): removes the stored headshot + full-body record,
+  // never wardrobe pieces. Kept separate from delete_wardrobe_item
+  // (which needs a garment category word) so the two can never collide.
+  var DELETE_PHOTOS_RE = /\b(delete|forget)\s+(all\s+)?my\s+(profile\s+)?(photos?|pictures?)\b/;
+
+  function matchDeletePhotos(text) {
+    if (typeof text !== "string" || !text) return false;
+    return DELETE_PHOTOS_RE.test(text.toLowerCase());
+  }
+
   // Heuristic routing rules — mirrors vault 06 trigger definitions.
   // Kept as explicit regex so behaviour is auditable without an LLM.
   function heuristicSkill(input) {
     var text = (input.text || "").toLowerCase();
     var hasImage = !!input.imagePresent;
     var lastTurns = (input.lastTurns || []).join(" ").toLowerCase();
+    var rawText = input.text || "";
+
+    // Saved profile-photo deletion — explicit data-removal request,
+    // highest priority: never wardrobe pieces, handled by propose_look's
+    // profile flow. Checked before everything (including the generic
+    // photo catch-all) so "delete my photos" can never catalogue, view,
+    // or revise anything.
+    if (matchDeletePhotos(rawText)) {
+      return { skill: "propose_look", confidence: 93, reason: "saved profile-photo delete request" };
+    }
 
     // Photo + inspiration language → Match_look
     if (hasImage && /\b(inspiration|do this look|recreate|like this|model|magazine|pinterest)\b/.test(text)) {
@@ -83,6 +137,17 @@
     // Propose look — include natural variants like "cook up a look", "make me a look", "create a look"
     if (/\b(show me a look|propose.*look|what goes together|suggest.*look|put.*look together|style me|outfit idea|cook.*look|make.*look|create.*look|find.*bag|can you find)\b/.test(text)) {
       return { skill: "propose_look", confidence: 91, reason: "propose-look trigger" };
+    }
+    // Render-on-user follow-up ("show me wearing this", "render this
+    // on me", "put this look on me") with NO fresh-look request words:
+    // render the EXISTING look on the wearer, so it goes to revise_look's
+    // render-follow-up path — never a new-look proposal. Placed AFTER
+    // the propose block so a combined turn ("make me a look and show me
+    // wearing it") still proposes first. revise_look's own revise
+    // triggers already matched above, so this only catches pure
+    // render follow-ups.
+    if (detectRenderIntent(rawText)) {
+      return { skill: "revise_look", confidence: 90, reason: "render-on-user follow-up; render existing look on wearer" };
     }
     // Delete one wardrobe piece, with a yes/no confirm (delete_wardrobe_item).
     // Checked before the view trigger below: the verb sets differ ("delete/
@@ -179,6 +244,8 @@
   var api = {
     SKILL_NAMES: SKILL_NAMES,
     heuristicSkill: heuristicSkill,
+    detectRenderIntent: detectRenderIntent,
+    matchDeletePhotos: matchDeletePhotos,
     classifySync: classifySync,
     classify: classify,
     clarificationFor: clarificationFor,

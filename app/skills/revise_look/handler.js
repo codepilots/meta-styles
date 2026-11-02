@@ -110,12 +110,146 @@
     if(stack && typeof stack.plainWhy==="function") return stack.plainWhy(reason);
     return "it didn't pass the fit rules";
   }
+  // Most recent valid proposal on record (the look a bare "show me
+  // wearing it" refers to). verdict is stored boolean; proposal.pieces
+  // are piece ids in selection order.
+  function lastValidProposal(catalog){
+    try{
+      var turns=catalog&&typeof catalog.getTurns==="function"?catalog.getTurns():[];
+      for(var i=turns.length-1;i>=0;i--){
+        var t=turns[i];
+        if(t&&t.verdict===true&&t.proposal&&Array.isArray(t.proposal.pieces)&&t.proposal.pieces.length>0){
+          return t.proposal.pieces.slice();
+        }
+      }
+    }catch(e){}
+    return null;
+  }
+
+  // Render-on-user follow-up: render the most recent valid proposal on
+  // the wearer. The look re-validates through propose_look's own stack
+  // (categories are immutable per piece, so a once-valid look stays
+  // valid); profile consent + both references gate the preview exactly
+  // like propose_look's fresh-render path. Never a flat-lay here.
+  async function handleRenderFollowup(o){
+    var catalog=o.catalog, stack=o.stack, text=o.text||"";
+    var metaClient=o.metaClient||null;
+    var shareId=o.shareId||null, stageImage=o.stageImage||null;
+    var assembleLook=o.assembleLook||null;
+    var pieceIds=lastValidProposal(catalog);
+    if(!pieceIds){
+      recordReviseTurn(catalog, { userText: typeof text==="string"?text:"", proposal: null, verdict: false, reasons: ["no_prior_look"] });
+      return { text: "No saved look to render just yet, loveling \u2728 \u2014 ask me to put a look together first, then say \u201Cshow me wearing it\u201D and I\u2019ll picture it on you.", image: null, persist:{ summaryDelta: "Render follow-up with no prior look.", preferencesDelta: "" }, skill:"revise_look", meta:{ imageDelivery: { requested:false, generated:false, delivered:false, reason:"no_prior_look" }, renderOnUser: false } };
+    }
+    var active=[];
+    try{ active=catalog?catalog.getActivePieces():[]; }catch(e){ active=[]; }
+    if(!Array.isArray(active)) active=[];
+    var checked=null;
+    try{
+      if(stack&&typeof stack.validateSelection==="function") checked=stack.validateSelection(active, pieceIds, assembleLook);
+    }catch(e){ checked=null; }
+    if(!checked||!checked.ok){
+      recordReviseTurn(catalog, { userText: typeof text==="string"?text:"", proposal: null, verdict: false, reasons: ["prior_look_changed"] });
+      return { text: "That saved look\u2019s pieces have changed since I wove it, loveling \u2728 \u2014 ask me to put a fresh look together and I\u2019ll render that one on you instead.", image: null, persist:{ summaryDelta: "Saved look no longer valid; offered a fresh one.", preferencesDelta: "" }, skill:"revise_look", meta:{ imageDelivery: { requested:false, generated:false, delivered:false, reason:"prior_look_changed" }, renderOnUser: false } };
+    }
+    try{ await stack.ensureProfileLoaded(catalog); }catch(e){}
+    var prof=stack.safeGetProfile(catalog);
+    if(!prof.consent){
+      try{ stack.recordConsentExpectation(catalog, "revise_look", stack.PROFILE_CONSENT_TEXT); }catch(e){}
+      recordReviseTurn(catalog, { userText: typeof text==="string"?text:"", proposal: null, verdict: false, reasons: ["profile_consent_pending"] });
+      return { text: stack.PROFILE_CONSENT_TEXT, image: null, persist:{ summaryDelta: "Asked for profile-photo consent.", preferencesDelta: "" }, skill:"revise_look", meta:{ imageDelivery: stack.noPreviewDelivery("profile_consent_pending"), renderOnUser: false } };
+    }
+    var missing=stack.missingProfileTypes(prof);
+    if(missing.length>0){
+      var ask=stack.profileAskText(missing);
+      try{ stack.recordProfileImageExpectation(catalog, "revise_look", ask); }catch(e){}
+      recordReviseTurn(catalog, { userText: typeof text==="string"?text:"", proposal: null, verdict: false, reasons: ["profile_refs_pending:"+missing.join(",")] });
+      return { text: ask, image: null, persist:{ summaryDelta: "Asked for missing profile refs: "+missing.join(", ")+".", preferencesDelta: "" }, skill:"revise_look", meta:{ profileMissing: missing, imageDelivery: stack.noPreviewDelivery("profile_refs_pending"), renderOnUser: false } };
+    }
+    var gar=stack.buildGarmentRefUrls(active, checked.items);
+    var nouns=checked.items.map(function(it){ return plainNoun(it.category); }).join(" + ");
+    var prefsText=typeof o.preferences==="string"?o.preferences:"";
+    var rctx=(text+(prefsText?". "+prefsText:"")).slice(0,300);
+    if(!rctx.trim()) rctx="";
+    var onUser=await stack.requestOnUserPreview({
+      metaClient: metaClient, headshot: prof.headshot, fullBody: prof.full_body,
+      garmentRefs: gar.urls, garmentTotal: checked.items.length,
+      nouns: nouns, context: rctx, shareId: shareId, stageImage: stageImage, toolSteps: 0
+    });
+    var reply="Oh, here you are wearing it, darling \u2728 \u2014 your "+nouns+" together. Fit check: valid \u2714 Rendered on you from your saved photos \u2728.";
+    if(onUser.imageDelivery.requested&&!onUser.imageDelivery.delivered) reply+=CAVEAT;
+    recordReviseTurn(catalog, {
+      userText: typeof text==="string"?text:"",
+      proposal: { pieces: checked.items.map(function(it){ return it.id; }), title: null, note: "render_on_user" },
+      verdict: true, reasons: ["render_on_user"]
+    });
+    return { text: reply, image: onUser.image, persist:{ summaryDelta: "Rendered saved look on wearer: "+nouns+".", preferencesDelta: "" }, skill:"revise_look", meta:{ imageDelivery: onUser.imageDelivery, renderOnUser: true, profileRefs: onUser.meta.profileRefs, referencePieces: onUser.meta.referencePieces, referenceGarmentTotal: onUser.meta.referenceGarmentTotal, referenceDowngraded: onUser.meta.referenceDowngraded, referencePayloadBytes: onUser.meta.referencePayloadBytes, previewPrompt: onUser.meta.previewPrompt } };
+  }
+
   async function handle(opts){
     var o=opts||{}, catalog=o.catalog, text=o.text||"";
     var metaClient=o.metaClient||null;
     var shareId=typeof o.shareId==="string"&&o.shareId?o.shareId:null;
     var stageImage=typeof o.stageImage==="function"?o.stageImage:null;
     var imageDelivery={ requested:false, generated:false, delivered:false, reason:"no_preview_client" };
+    // Shared profile flow (selection stack + render-on-user helpers live
+    // in propose_look; fail-closed when unavailable — no render, no
+    // intake, ordinary revise behaviour only).
+    var stackForProfile=proposeStack();
+    var hasProfileStack=!!(stackForProfile&&typeof stackForProfile.isRenderIntent==="function");
+    var renderIntent=hasProfileStack?stackForProfile.isRenderIntent(o,text)===true:false;
+    var imageDataUrl=typeof o.imageDataUrl==="string"?o.imageDataUrl:null;
+    var pendingSatisfied=o.pendingSatisfied&&typeof o.pendingSatisfied==="object"?o.pendingSatisfied:null;
+    if(hasProfileStack&&stackForProfile.isDeletePhotos(o,text)===true){
+      return await stackForProfile.handleDeletePhotos({ catalog: catalog, skill: "revise_look" });
+    }
+    // A photo arriving while a profile_image expectation pends is a
+    // wearer reference, never a wardrobe piece. Completion renders the
+    // most recent valid proposal in the same turn.
+    if(hasProfileStack&&imageDataUrl&&pendingSatisfied&&pendingSatisfied.expects==="profile_image"){
+      var intake=await stackForProfile.handleProfileIntake({ catalog: catalog, skill: "revise_look", imageDataUrl: imageDataUrl, text: text });
+      if(!intake.complete){
+        recordReviseTurn(catalog, { userText: typeof text==="string"?text:"", proposal: null, verdict: false, reasons: [intake.reply&&intake.reply.meta&&intake.reply.meta.profileAction==="consent_asked"?"profile_consent_pending":"profile_refs_pending"] });
+        return intake.reply;
+      }
+      var followAsm=null;
+      try{ followAsm=stackForProfile.getAssembleLook(o); }catch(e){ followAsm=null; }
+      if(!followAsm){
+        try{ if(root.MetaStyles&&typeof root.MetaStyles.assembleLook==="function") followAsm=root.MetaStyles.assembleLook; }catch(e2){}
+      }
+      return await handleRenderFollowup({ catalog: catalog, stack: stackForProfile, text: text, metaClient: metaClient, shareId: shareId, stageImage: stageImage, assembleLook: followAsm, preferences: o.preferences });
+    }
+    // Consent "yes" routed back here: grant, persist, ask for headshot.
+    // An attached photo counts as the first upload — stored inline and,
+    // when it completes the set, rendered in the same turn.
+    if(hasProfileStack&&!renderIntent&&pendingSatisfied&&pendingSatisfied.expects==="yes_no"&&pendingSatisfied.text===stackForProfile.PROFILE_CONSENT_TEXT){
+      try{ await stackForProfile.ensureProfileLoaded(catalog); }catch(e){}
+      var consentNow=stackForProfile.safeGetProfile(catalog);
+      if(!consentNow.consent){
+        try{ if(catalog&&typeof catalog.setProfileConsent==="function") catalog.setProfileConsent(true); }catch(e2){}
+        var granted2=stackForProfile.safeGetProfile(catalog);
+        if(granted2.consent){
+          try{ await stackForProfile.saveProfileBestEffort(catalog); }catch(e3){}
+          if(imageDataUrl&&/^data:image\//.test(imageDataUrl)){
+            var grantIntake2=await stackForProfile.handleProfileIntake({ catalog: catalog, skill: "revise_look", imageDataUrl: imageDataUrl, text: text });
+            if(!grantIntake2.complete){
+              recordReviseTurn(catalog, { userText: typeof text==="string"?text:"", proposal: null, verdict: false, reasons: ["profile_refs_pending"] });
+              return grantIntake2.reply;
+            }
+            var grantAsm=null;
+            try{ grantAsm=stackForProfile.getAssembleLook(o); }catch(e5){ grantAsm=null; }
+            if(!grantAsm){
+              try{ if(root.MetaStyles&&typeof root.MetaStyles.assembleLook==="function") grantAsm=root.MetaStyles.assembleLook; }catch(e6){}
+            }
+            return await handleRenderFollowup({ catalog: catalog, stack: stackForProfile, text: text, metaClient: metaClient, shareId: shareId, stageImage: stageImage, assembleLook: grantAsm, preferences: o.preferences });
+          }
+          var grantAsk2=stackForProfile.profileAskText(["headshot","full_body"]);
+          try{ stackForProfile.recordProfileImageExpectation(catalog, "revise_look", grantAsk2); }catch(e4){}
+          recordReviseTurn(catalog, { userText: typeof text==="string"?text:"", proposal: null, verdict: false, reasons: ["profile_consent_granted"] });
+          return { text: "Wonderful, darling \u2728 \u2014 your photos will stay encrypted and are only ever used to render your looks on you. "+grantAsk2, image: null, persist:{ summaryDelta: "Profile consent granted; asked for headshot.", preferencesDelta: "" }, skill:"revise_look", meta:{ imageDelivery: stackForProfile.noPreviewDelivery("profile_refs_pending"), renderOnUser: false } };
+        }
+      }
+    }
     var cat=matchRevise(text);
     var required=matchAdd(text);
     // Both-match collision: matchRevise scans REVISE_WORDS order (not
@@ -132,6 +266,21 @@
       }
       if(otherCat) cat=otherCat;
     }
+
+    // Pure render follow-up ("show me wearing this"): render the most
+    // recent valid proposal on the wearer — never a clarification, never
+    // a new look.
+    if(renderIntent && hasProfileStack && !cat && !required){
+      var followAsm0=null;
+      try{ followAsm0=stackForProfile.getAssembleLook(o); }catch(e9){ followAsm0=null; }
+      if(!followAsm0){
+        try{ if(root.MetaStyles&&typeof root.MetaStyles.assembleLook==="function") followAsm0=root.MetaStyles.assembleLook; }catch(e10){}
+      }
+      return await handleRenderFollowup({ catalog: catalog, stack: stackForProfile, text: text, metaClient: metaClient, shareId: shareId, stageImage: stageImage, assembleLook: followAsm0, preferences: o.preferences });
+    }
+    // Render intent WITH a revise target ("no bag, show me wearing it"):
+    // revise first, then render the revised look below (never a flat-lay).
+    var renderOnRevised = renderIntent && hasProfileStack && (!!cat || !!required);
 
     // Ambiguous / no revision target: clarification path (unchanged).
     if(!cat && !required){
@@ -203,6 +352,44 @@
       else reply="No "+plainNoun(cat)+" in the mix right now, darling \u2014 but I\u2019ll re-check the fit with what we\u2019ve got \u2728";
       reply+=" Your "+nouns+" are looking darling together.";
       if(card && card.valid===true) reply+=" Fit check: valid \u2714";
+      // Render intent: the revised look renders on the wearer (profile
+      // refs + revised garments, never a flat-lay). The profile gate
+      // returns early with consent/missing copy when the record is not
+      // ready — no preview call, no image delivery, explicit reason.
+      var didRenderOnUser=false;
+      var renderOnUserMeta=null;
+      if(renderOnRevised){
+        var gateProf=null, gateMissing=null;
+        try{ await stackForProfile.ensureProfileLoaded(catalog); gateProf=stackForProfile.safeGetProfile(catalog); }catch(e){ gateProf=null; }
+        if(!gateProf) gateProf={ headshot:null, full_body:null, consent:false, updated_at:null };
+        if(!gateProf.consent){
+          var gateAskC=stackForProfile.PROFILE_CONSENT_TEXT;
+          try{ stackForProfile.recordConsentExpectation(catalog, "revise_look", gateAskC); }catch(e2){}
+          recordReviseTurn(catalog, { userText: typeof text==="string"?text:"", proposal: null, verdict: false, reasons: ["profile_consent_pending"] });
+          return { text: gateAskC, image: null, persist:{ summaryDelta: "Asked for profile-photo consent.", preferencesDelta: "" }, skill:"revise_look", meta:{ imageDelivery: stackForProfile.noPreviewDelivery("profile_consent_pending"), renderOnUser: false } };
+        }
+        gateMissing=stackForProfile.missingProfileTypes(gateProf);
+        if(gateMissing.length>0){
+          var gateAskR=stackForProfile.profileAskText(gateMissing);
+          try{ stackForProfile.recordProfileImageExpectation(catalog, "revise_look", gateAskR); }catch(e3){}
+          recordReviseTurn(catalog, { userText: typeof text==="string"?text:"", proposal: null, verdict: false, reasons: ["profile_refs_pending:"+gateMissing.join(",")] });
+          return { text: gateAskR, image: null, persist:{ summaryDelta: "Asked for missing profile refs: "+gateMissing.join(", ")+".", preferencesDelta: "" }, skill:"revise_look", meta:{ profileMissing: gateMissing, imageDelivery: stackForProfile.noPreviewDelivery("profile_refs_pending"), renderOnUser: false } };
+        }
+        var byIdRender={};
+        candidates.forEach(function(p){ byIdRender[p.piece_id]=p; });
+        var garRender=stackForProfile.buildGarmentRefUrls(candidates, chosen);
+        var onUserRevised=await stackForProfile.requestOnUserPreview({
+          metaClient: metaClient, headshot: gateProf.headshot, fullBody: gateProf.full_body,
+          garmentRefs: garRender.urls, garmentTotal: chosen.length,
+          nouns: nouns, context: text, shareId: shareId, stageImage: stageImage, toolSteps: 0
+        });
+        img=onUserRevised.image;
+        imageDelivery=onUserRevised.imageDelivery;
+        renderOnUserMeta=onUserRevised.meta;
+        didRenderOnUser=true;
+        reply+=" Rendered on you from your saved photos \u2728.";
+      }
+      if(!didRenderOnUser){
       // Preview prompt names the actual chosen look only.
       var byId={};
       candidates.forEach(function(p){ byId[p.piece_id]=p; });
@@ -227,6 +414,7 @@
           } else imageDelivery.reason="preview_unparseable";
         }catch(e){ imageDelivery.reason="preview_failed"; }
       }
+      } // end flat-lay-only preview (render intent takes the on-user branch above)
       if(imageDelivery.requested&&!imageDelivery.delivered) reply+=CAVEAT;
     } else {
       // Honest no-valid-look: name the reason, never a fabricated look.
@@ -250,6 +438,7 @@
     if(requiredPresent) revisedReasons.push("required:"+required);
     if(requiredMissing) revisedReasons.push("required_not_present");
     if(!revisedVerdict) revisedReasons.push(rejected ? ("fallback_rejected:"+rejected) : "no_valid_look");
+    if(didRenderOnUser) revisedReasons.push("render_on_user");
     recordReviseTurn(catalog, {
       userText: typeof text==="string" ? text : "",
       proposal: (revisedVerdict && (revisedFinish==="layer"||revisedFinish==="scarf+bag")) ? {
@@ -265,7 +454,17 @@
     else if(chosen && cat){ sumDelta="Revised look, removed "+plainNoun(cat)+"."; prefDelta="Prefers without "+plainNoun(cat)+"."; }
     else if(cat){ sumDelta="Tried revising without "+plainNoun(cat)+"; no valid look yet."; prefDelta="Prefers without "+plainNoun(cat)+"."; }
     else { sumDelta="Asked for revise clarification."; prefDelta=""; }
-    return { text: reply, image: img, persist:{ summaryDelta: sumDelta, preferencesDelta: prefDelta }, skill:"revise_look", meta:{ imageDelivery: imageDelivery } };
+    if(didRenderOnUser){ sumDelta+=" Rendered on wearer."; }
+    var outMeta={ imageDelivery: imageDelivery, renderOnUser: didRenderOnUser };
+    if(didRenderOnUser && renderOnUserMeta){
+      outMeta.profileRefs=renderOnUserMeta.profileRefs;
+      outMeta.referencePieces=renderOnUserMeta.referencePieces;
+      outMeta.referenceGarmentTotal=renderOnUserMeta.referenceGarmentTotal;
+      outMeta.referenceDowngraded=renderOnUserMeta.referenceDowngraded;
+      outMeta.referencePayloadBytes=renderOnUserMeta.referencePayloadBytes;
+      outMeta.previewPrompt=renderOnUserMeta.previewPrompt;
+    }
+    return { text: reply, image: img, persist:{ summaryDelta: sumDelta, preferencesDelta: prefDelta }, skill:"revise_look", meta: outMeta };
   }
 
   var api = { handle: handle, skill: "revise_look", matchRevise: matchRevise, matchAdd: matchAdd };

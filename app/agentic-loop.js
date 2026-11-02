@@ -85,7 +85,9 @@
         "rejectPiece", "activatePiece", "markSuperseded", "recordTurn", "getTurns", "historyForPrompt",
         "askQuestion", "resolveQuestion", "getPendingQuestions", "setListContext", "getListContext",
         "clearListContext", "recordSentTurn",
-        "getSentTurns", "toJSON", "save", "load", "noteInboundShare", "replyWindowStatus"
+        "getSentTurns", "toJSON", "save", "load", "noteInboundShare", "replyWindowStatus",
+        "setProfileReference", "getProfileReferences", "setProfileConsent",
+        "clearProfileReferences", "saveProfile", "loadProfile", "deleteProfile"
       ].forEach(function (k) {
         if (typeof catalog[k] === "function") proxy[k] = counted(k, catalog[k]);
       });
@@ -105,12 +107,15 @@
       // image-only first fix): a skill that just asked a follow-up
       // (e.g. What_suits consent awaiting a photo reply, revise_look
       // awaiting a piece name, a "want me to put a look together?"
-      // yes/no) recorded it via catalog.askQuestion({ skill, expects }).
-      // Check BEFORE the router: a satisfied expectation routes straight
-      // back to that skill deterministically and the router is never
-      // consulted for that turn. An unsatisfied or expired expectation is
-      // cleared and the turn falls through to normal routing — never stuck.
+      // yes/no, or a render-on-user headshot/full-body upload awaiting
+      // a profile photo) recorded it via catalog.askQuestion({ skill,
+      // expects }). Check BEFORE the router: a satisfied expectation
+      // routes straight back to that skill deterministically and the
+      // router is never consulted for that turn. An unsatisfied or
+      // expired expectation is cleared and the turn falls through to
+      // normal routing — never stuck.
       var pendingDecision = null;
+      var pendingSatisfied = null;
       if (catalog && typeof catalog.getPendingQuestions === "function") {
         try {
           var pendings = catalog.getPendingQuestions() || [];
@@ -120,7 +125,7 @@
             // Unknown vocabulary (cannot happen via askQuestion's
             // fail-closed check, but a hand-built entry could): leave
             // alone, route normally.
-            if (pq.expects !== "image" && pq.expects !== "text" && pq.expects !== "yes_no") continue;
+            if (pq.expects !== "image" && pq.expects !== "text" && pq.expects !== "yes_no" && pq.expects !== "profile_image") continue;
             var expired = pq.expires_at ? (Date.parse(pq.expires_at) <= Date.now()) : false;
             try { if (typeof catalog.resolveQuestion === "function") catalog.resolveQuestion(pq.id); } catch (re) {}
             var satisfied = false;
@@ -135,10 +140,24 @@
               } else if (pq.expects === "yes_no") {
                 satisfied = isAffirmativeReply(message);
                 satisfiedKind = "affirmative reply";
+              } else if (pq.expects === "profile_image") {
+                // Wearer-profile upload: satisfied ONLY by a photo reply.
+                // The receiving skill files it as a headshot/full-body
+                // reference (never a wardrobe piece) and only while this
+                // expectation pends — ordinary garment photos outside this
+                // expectation still route to catalogue_piece as before.
+                satisfied = hasImage;
+                satisfiedKind = "profile photo reply";
               }
             }
             if (satisfied) {
               pendingDecision = { skill: pq.skill, confidence: 96, reason: "pending expectation satisfied (" + satisfiedKind + " to just-asked question)" };
+              // The skill that asked needs to know WHAT was satisfied:
+              // a profile photo (pendingSatisfied.expects profile_image)
+              // is filed as a wearer reference, an image as a garment
+              // photo, a yes_no as consent/confirmation. Passed straight
+              // through to handler opts below.
+              pendingSatisfied = { expects: pq.expects, text: pq.text || "" };
             }
             break; // one expectation at a time: oldest first, never stacked
           }
@@ -227,7 +246,8 @@
           wardrobeSummary: wardrobeSummary, preferences: preferences, lastTurns: lastTurns,
           metaClient: o.metaClient || null, sendClient: o.sendClient || null, assembler: assembler,
           shareId: inp.shareId || null, stageImage: o.stageImage || null,
-          pendingBag: inp.pendingBag || null
+          pendingBag: inp.pendingBag || null,
+          pendingSatisfied: pendingSatisfied
         });
       }catch(e){
         handlerError = e;
