@@ -1,0 +1,420 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>meta-styles · Chat</title>
+<style>
+  html, body { height: 100%; }
+  body { margin: 0; font-family: system-ui, -apple-system, "Segoe UI", sans-serif; display: flex; flex-direction: column; height: 100vh; }
+  .sr-only { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
+  .thread { flex: 1; display: flex; flex-direction: column; gap: 0.5rem; margin: 0; padding: 1rem; overflow-y: auto; min-height: 4rem; }
+  .bubble { max-width: 70%; padding: 0.5rem 0.75rem; border-radius: 0.75rem; }
+  .bubble.incoming { align-self: flex-start; background: #f0eef6; }
+  .bubble.outgoing { align-self: flex-end; background: #dfe9d8; }
+  .bubble img { max-width: 100%; display: block; border-radius: 0.5rem; }
+  .bubble .when { display: block; font-size: 0.75rem; color: #666; margin-top: 0.25rem; }
+  .bubble .look-text { text-align: left; }
+  .bubble .look-title { font-weight: 700; margin: 0 0 0.25rem; }
+  .bubble .look-meta { font-size: 0.8rem; color: #3c4a3e; margin: 0 0 0.25rem; }
+  .bubble .look-pieces { margin: 0.25rem 0 0.25rem 1rem; padding: 0; }
+  .bubble .look-pieces li { margin: 0 0 0.2rem; }
+  .bubble .look-fit { font-size: 0.85rem; margin: 0.25rem 0; }
+  .bubble .look-note { font-size: 0.75rem; color: #555; margin: 0.25rem 0 0; }
+  .bubble .staged-wrap { margin-top: 0.4rem; }
+  .bubble .staged-cap { display: block; font-size: 0.75rem; color: #555; margin-top: 0.2rem; }
+  .empty-note { color: #666; }
+  .thread.dragover { outline: 2px dashed #666; }
+  .composer { border-top: 1px solid #ddd; padding: 0.75rem 1rem; background: #fff; }
+  .composer .row { display: flex; gap: 0.5rem; margin-bottom: 0.5rem; }
+  .composer .row:last-child { margin-bottom: 0; }
+  .composer input[type="text"] { flex: 1; min-width: 0; }
+</style>
+</head>
+<body>
+<h1 class="sr-only">meta-styles chat</h1>
+<div id="thread" class="thread" aria-live="polite">
+  <p class="empty-note" id="emptyNote">Empty — share a photo or send a message to start the thread.</p>
+</div>
+<footer class="composer" aria-label="Message composer">
+  <div class="row">
+    <input id="chatText" type="text" size="48" placeholder="Type a message…" aria-label="Message text">
+    <button type="button" id="sendTextBtn">Send</button>
+  </div>
+  <div class="row">
+    <input id="photoInput" type="file" accept="image/*" aria-label="Photo to share">
+    <input id="photoCaption" type="text" size="28" placeholder="Caption (optional)…" aria-label="Photo caption">
+    <button type="button" id="sharePhotoBtn">Share</button>
+  </div>
+</footer>
+
+<script src="ig-runtime-config.js" onerror="/* mock default — no live config */"></script>
+<script src="poll-scheduler.js"></script>
+<script src="inbox-bridge.js"></script>
+<script src="wardrobe-catalog.js"></script>
+<script src="classifier.js"></script>
+<script src="assembler.js"></script>
+<script src="spark.js"></script>
+<script src="send-client.js"></script>
+<script src="meta-client.js"></script>
+<script src="turn-loop.js"></script>
+<script>
+(function(){
+  // Internal connection values (not editable fields): same synthetic mock
+  // defaults as mock-dm.html, with the same live-runtime override.
+  window.__CHAT_CONN__ = { base: "http://127.0.0.1:8904", token: "SYNTH_mock_token" };
+  try {
+    var RT = (typeof globalThis !== "undefined" && globalThis.__IG_RUNTIME__) || {};
+    if (RT.botBase) {
+      window.__CHAT_CONN__.base = RT.botBase;
+    }
+    // No token override: the generated config carries no tokens — the
+    // SYNTH_mock_token default above is a non-secret demo value.
+  } catch(e) {}
+})();
+</script>
+<script>
+(function () {
+"use strict";
+
+var threadEl = document.getElementById("thread");
+var mediaCache = {}; // media_id -> object URL
+var outboundPreview = {}; // share_id -> object URL of a staged image (unused here; kept for renderOutgoing)
+var lookStore = {}; // message_id -> {title, fit, pieces[]} text part of a full-look bubble (this browser)
+var lookByShareText = {}; // share_id + "\n" + text -> look parts fallback (server log carries text only)
+var pollTimer = null;
+// Same designed polling cadence as mock-dm.html (Milestone 19f §4 Gap 3)
+// driven by the shared poll-scheduler module — 5s active, 30s after
+// 10 min idle, stopped after 30 min idle or while the tab is hidden.
+var pollModule = (window.MetaStyles && window.MetaStyles.pollScheduler) || null;
+var scheduler = pollModule ? pollModule.createPollScheduler({}) : null;
+var lastSharesById = {}; // share id -> received_at
+var lastShareTotal = 0;
+var lastOutboundTotal = 0;
+
+// In live mode the bot has no /mock/outbound read route (mock-only
+// operator log), so outbound is read as empty there — same as mock-dm.html.
+var RT0 = (typeof globalThis !== "undefined" && globalThis.__IG_RUNTIME__) || {};
+var IS_LIVE = !!(RT0.botBase);
+
+function base() {
+  return String(window.__CHAT_CONN__.base).replace(/\/+$/, "");
+}
+
+// Same-origin join: with the LIVE relative base ("/ig") the "/ig/..."
+// paths below must not double the prefix; absolute bases (mock default,
+// older configs) concatenate as before. Mirrors joinBase in
+// inbox-bridge.js / send-client.js.
+function joinBase(base, path) {
+  var b = String(base == null ? "" : base);
+  if (b.length > 1) b = b.replace(/\/+$/, "");
+  else if (b === "/") b = "";
+  if (b && path.indexOf(b + "/") === 0) return path;
+  return b + path;
+}
+
+function token() {
+  return String(window.__CHAT_CONN__.token);
+}
+
+function authed(path, opts) {
+  var o = opts || {};
+  o.headers = o.headers || {};
+  o.headers.Authorization = "Bearer " + token();
+  return fetch(joinBase(base(), path), o);
+}
+
+function esc(text) {
+  return String(text).replace(/[&<>"]/g, function (c) {
+    return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c];
+  });
+}
+
+function bubbleClass(outgoing) {
+  return "bubble " + (outgoing ? "outgoing" : "incoming");
+}
+
+function whenLine(iso) {
+  var d = new Date(iso);
+  return isNaN(d) ? "" : d.toLocaleString();
+}
+
+function renderIncoming(item) {
+  var div = document.createElement("div");
+  div.className = bubbleClass(false);
+  var att = item.attachment || {};
+  if (att.type === "text") {
+    div.innerHTML = esc((att.payload && att.payload.text) || "") +
+      '<span class="when">' + esc(item.id + " · " + whenLine(item.received_at)) + "</span>";
+    return div;
+  }
+  if (item.media_available === false || !item.media_id) {
+    div.innerHTML = esc("Photo not yet ready — the mock is still downloading it.") +
+      '<span class="when">' + esc(item.id + " · " + whenLine(item.received_at)) + "</span>";
+    return div;
+  }
+  var title = (att.payload && att.payload.title) || item.id;
+  div.innerHTML = '<span class="hint">Loading photo…</span>' +
+    '<span class="when">' + esc(title + " · " + item.id) + "</span>";
+  var url = mediaCache[item.media_id];
+  function show(src) {
+    div.innerHTML = "";
+    var img = document.createElement("img");
+    img.src = src;
+    img.alt = title;
+    div.appendChild(img);
+    var when = document.createElement("span");
+    when.className = "when";
+    when.textContent = title + " · " + item.id + " · " + whenLine(item.received_at);
+    div.appendChild(when);
+  }
+  if (url) {
+    show(url);
+  } else {
+    authed("/ig/media/" + encodeURIComponent(item.media_id)).then(function (res) {
+      if (!res.ok) throw new Error("media HTTP " + res.status);
+      return res.blob();
+    }).then(function (blob) {
+      var objectURL = URL.createObjectURL(blob);
+      mediaCache[item.media_id] = objectURL;
+      show(objectURL);
+    }).catch(function () {
+      div.innerHTML = esc("Photo fetch failed for " + item.id);
+    });
+  }
+  return div;
+}
+
+function lookPartsFor(entry) {
+  return lookStore[entry.message_id] ||
+    lookByShareText[entry.share_id + "\n" + entry.text] || null;
+}
+
+function renderLookText(container, look, fallbackText) {
+  var wrap = document.createElement("div");
+  wrap.className = "look-text";
+  if (look && (look.title || look.fit || (look.pieces && look.pieces.length))) {
+    var title = document.createElement("p");
+    title.className = "look-title";
+    title.textContent = look.title || fallbackText;
+    wrap.appendChild(title);
+    var meta = document.createElement("p");
+    meta.className = "look-meta";
+    meta.textContent = "Full-look proposal from your wardrobe · " + (look.fit || "fit-rule verdict pending");
+    wrap.appendChild(meta);
+    if (look.pieces && look.pieces.length) {
+      var ul = document.createElement("ul");
+      ul.className = "look-pieces";
+      look.pieces.forEach(function (line) {
+        var li = document.createElement("li");
+        li.textContent = line;
+        ul.appendChild(li);
+      });
+      wrap.appendChild(ul);
+    }
+    var fit = document.createElement("p");
+    fit.className = "look-fit";
+    fit.textContent = look.fit || "";
+    wrap.appendChild(fit);
+    var note = document.createElement("p");
+    note.className = "look-note";
+    note.textContent = "Assembled and validated by the fit-rule engine · title + pieces + fit note share a 300-word budget.";
+    wrap.appendChild(note);
+  } else {
+    var text = document.createElement("div");
+    text.textContent = fallbackText;
+    wrap.appendChild(text);
+  }
+  container.appendChild(wrap);
+}
+
+function renderOutgoing(entry) {
+  var div = document.createElement("div");
+  div.className = bubbleClass(true);
+  div.innerHTML = "";
+  var look = lookPartsFor(entry);
+  var fallbackText = entry.text + (entry.image_message_id && !outboundPreview[entry.share_id] ? " (+ photo)" : "");
+  renderLookText(div, look, fallbackText);
+  var preview = outboundPreview[entry.share_id];
+  if (preview) {
+    var staged = document.createElement("div");
+    staged.className = "staged-wrap";
+    var img = document.createElement("img");
+    img.src = preview;
+    img.alt = "Staged look preview image";
+    staged.appendChild(img);
+    var cap = document.createElement("span");
+    cap.className = "staged-cap";
+    cap.textContent = "Staged look image via POST /mock/stage-outbound-image/" + entry.share_id;
+    staged.appendChild(cap);
+    div.appendChild(staged);
+  }
+  var when = document.createElement("span");
+  when.className = "when";
+  when.textContent = "sent by app · " + entry.message_id + " · " + whenLine(entry.sent_at);
+  div.appendChild(when);
+  return div;
+}
+
+function refreshThread() {
+  return Promise.all([
+    authed("/ig/shares?limit=50").then(function (res) {
+      if (!res.ok) throw new Error("shares HTTP " + res.status);
+      return res.json();
+    }),
+    IS_LIVE
+      ? Promise.resolve({ outbound: [] })
+      : authed("/mock/outbound").then(function (res) {
+        if (!res.ok) throw new Error("outbound HTTP " + res.status);
+        return res.json();
+      }),
+  ]).then(function (parts) {
+    var items = (parts[0].items || []).map(function (item) {
+      return { at: item.received_at, el: renderIncoming(item) };
+    });
+    var outs = ((parts[1] && parts[1].outbound) || []).map(function (entry) {
+      return { at: entry.sent_at, el: renderOutgoing(entry) };
+    });
+    var all = items.concat(outs);
+    all.sort(function (a, b) { return String(a.at) < String(b.at) ? -1 : 1; });
+    threadEl.innerHTML = "";
+    if (all.length === 0) {
+      var empty = document.createElement("p");
+      empty.className = "empty-note";
+      empty.textContent = "Empty — share a photo or send a message to start the thread.";
+      threadEl.appendChild(empty);
+    } else {
+      all.forEach(function (row) { threadEl.appendChild(row.el); });
+    }
+    notePolledItems(parts[0].items || [], (parts[1] && parts[1].outbound) || []);
+  }).catch(function (err) {
+    if (window.console && typeof window.console.warn === "function") {
+      window.console.warn("chat refresh failed: " + (err && err.message ? err.message : err));
+    }
+  });
+}
+
+function notePolledItems(items, outbound) {
+  lastSharesById = {};
+  items.forEach(function (item) {
+    if (item && item.id) lastSharesById[item.id] = item.received_at;
+  });
+  if (!scheduler) {
+    lastShareTotal = items.length;
+    lastOutboundTotal = outbound.length;
+    return;
+  }
+  var fresh = Math.max(0, items.length - lastShareTotal) +
+    Math.max(0, outbound.length - lastOutboundTotal);
+  lastShareTotal = items.length;
+  lastOutboundTotal = outbound.length;
+  scheduler.noteInboundPoll(fresh);
+}
+
+function scheduleNextPoll() {
+  if (pollTimer) {
+    clearTimeout(pollTimer);
+    pollTimer = null;
+  }
+  if (!scheduler) {
+    pollTimer = setTimeout(function () {
+      refreshThread().then(scheduleNextPoll, scheduleNextPoll);
+    }, 5000);
+    return;
+  }
+  var delay = scheduler.intervalAt(Date.now(), document.hidden);
+  if (delay === null) {
+    return;
+  }
+  pollTimer = setTimeout(function () {
+    refreshThread().then(scheduleNextPoll, scheduleNextPoll);
+  }, delay);
+}
+
+// Any user action resumes the 5s cadence from stopped/backoff.
+function pokeScheduler() {
+  if (scheduler) scheduler.noteOperatorAction(Date.now());
+  scheduleNextPoll();
+}
+
+function shareTextAsUser() {
+  var input = document.getElementById("chatText");
+  var text = input.value.trim();
+  if (!text) return;
+  pokeScheduler();
+  authed("/mock/incoming-text", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ text: text }),
+  }).then(function (res) {
+    if (!res.ok) throw new Error("incoming-text HTTP " + res.status);
+    input.value = "";
+    return refreshThread();
+  }).catch(function (err) {
+    if (window.console && typeof window.console.warn === "function") {
+      window.console.warn("share text failed: " + (err && err.message ? err.message : err));
+    }
+  });
+}
+
+function sharePhotoFile(file) {
+  if (!file) return;
+  pokeScheduler();
+  // Shared photos are always treated as ready — no pending/staged path.
+  var caption = document.getElementById("photoCaption").value;
+  var path = "/mock/incoming-photo";
+  if (caption) path += "?caption=" + encodeURIComponent(caption);
+  authed(path, {
+    method: "POST",
+    headers: { "Content-Type": file.type || "application/octet-stream" },
+    body: file,
+  }).then(function (res) {
+    if (!res.ok) throw new Error("incoming-photo HTTP " + res.status);
+    document.getElementById("photoInput").value = "";
+    return refreshThread();
+  }).catch(function (err) {
+    if (window.console && typeof window.console.warn === "function") {
+      window.console.warn("share photo failed: " + (err && err.message ? err.message : err));
+    }
+  });
+}
+
+document.getElementById("sendTextBtn").addEventListener("click", shareTextAsUser);
+document.getElementById("chatText").addEventListener("keydown", function (ev) {
+  if (ev.key === "Enter") shareTextAsUser();
+});
+document.getElementById("sharePhotoBtn").addEventListener("click", function () {
+  sharePhotoFile(document.getElementById("photoInput").files[0] || null);
+});
+threadEl.addEventListener("dragover", function (ev) {
+  ev.preventDefault();
+  threadEl.classList.add("dragover");
+});
+threadEl.addEventListener("dragleave", function () {
+  threadEl.classList.remove("dragover");
+});
+threadEl.addEventListener("drop", function (ev) {
+  ev.preventDefault();
+  threadEl.classList.remove("dragover");
+  var file = ev.dataTransfer && ev.dataTransfer.files && ev.dataTransfer.files[0];
+  if (file) sharePhotoFile(file);
+});
+// Resume the 5s cadence on visibility/focus; while hidden the scheduler
+// stops polling entirely (intervalAt -> null).
+document.addEventListener("visibilitychange", function () {
+  if (!document.hidden) {
+    pokeScheduler();
+    refreshThread().then(scheduleNextPoll, scheduleNextPoll);
+  } else {
+    scheduleNextPoll();
+  }
+});
+window.addEventListener("focus", function () {
+  pokeScheduler();
+});
+
+refreshThread().then(scheduleNextPoll, scheduleNextPoll);
+})();
+</script>
+</body>
+</html>
