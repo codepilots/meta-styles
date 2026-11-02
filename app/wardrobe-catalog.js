@@ -310,6 +310,13 @@
     var turns = [];            // turn records {turn, userText, proposal, verdict, reasons[]}
     var sentTurns = [];        // own-sent-turn log (Gap 4)
     var pendingQuestions = []; // clarifying questions awaiting a user answer
+    // View-wardrobe list cursor (view_wardrobe_item Step A/B): which
+    // category page is currently shown (piece ids of that page in order,
+    // numeric offset of the page start, ISO expiry). Hidden runtime state
+    // only — never serialized, never a piece field (mirrors the held_until
+    // short-lived-state pattern: small, expiring, outside the piece
+    // schema). A get past expiry clears and reads as no context.
+    var listContext = null;
     var latestInboundMs = null;
     var latestInboundAt = null;
     var pieceCounter = 0;
@@ -743,6 +750,74 @@
         .map(function (q) { return Object.assign({}, q); });
     }
 
+    // View-wardrobe list context (view_wardrobe_item Step A/B): the
+    // currently-shown category page. Fail-closed like every other setter
+    // here — unknown keys rejected, category pinned to the fixed taxonomy,
+    // piece_ids an array of non-empty strings, offset a non-negative
+    // integer, expires_at an ISO-8601 timestamp (callers pass ~24h out,
+    // the same window the pending-expectation TTL uses).
+    var LIST_CONTEXT_KEYS = ["skill", "category", "piece_ids", "offset", "expires_at"];
+
+    function checkListContext(v, label) {
+      if (!isPlainObject(v)) {
+        throw new Error("wardrobe-catalog: " + label + " must be an object");
+      }
+      rejectUnknownKeys(v, LIST_CONTEXT_KEYS, label);
+      if (typeof v.skill !== "string" || v.skill.length === 0) {
+        throw new Error("wardrobe-catalog: " + label + " skill must be a non-empty skill name");
+      }
+      if (typeof v.category !== "string" || TAXONOMY.indexOf(v.category) === -1) {
+        throw new Error(
+          "wardrobe-catalog: " + label + " category must be a fixed taxonomy term (" +
+          TAXONOMY.join(", ") + ")"
+        );
+      }
+      if (!Array.isArray(v.piece_ids)) {
+        throw new Error("wardrobe-catalog: " + label + " piece_ids must be an array");
+      }
+      v.piece_ids.forEach(function (id) {
+        if (typeof id !== "string" || id.length === 0) {
+          throw new Error("wardrobe-catalog: " + label + " piece_ids must hold non-empty strings");
+        }
+      });
+      if (typeof v.offset !== "number" || Math.floor(v.offset) !== v.offset || v.offset < 0) {
+        throw new Error("wardrobe-catalog: " + label + " offset must be a non-negative integer");
+      }
+      isoOrThrow(v.expires_at, label + " expires_at");
+      return {
+        skill: v.skill,
+        category: v.category,
+        piece_ids: v.piece_ids.slice(),
+        offset: v.offset,
+        expires_at: v.expires_at,
+      };
+    }
+
+    function setListContext(input) {
+      listContext = checkListContext(input, "list context");
+      return getListContext();
+    }
+
+    function getListContext() {
+      if (!listContext) return null;
+      if (Date.parse(listContext.expires_at) <= Date.now()) {
+        listContext = null;
+        return null;
+      }
+      return {
+        skill: listContext.skill,
+        category: listContext.category,
+        piece_ids: listContext.piece_ids.slice(),
+        offset: listContext.offset,
+        expires_at: listContext.expires_at,
+      };
+    }
+
+    function clearListContext() {
+      listContext = null;
+      return null;
+    }
+
     // Gap 4: the live side has no outbound-log route, so the app
     // records its own sent turns locally (text + opaque share linkage
     // only — never a recipient identifier).
@@ -854,6 +929,9 @@
       askQuestion: askQuestion,
       resolveQuestion: resolveQuestion,
       getPendingQuestions: getPendingQuestions,
+      setListContext: setListContext,
+      getListContext: getListContext,
+      clearListContext: clearListContext,
       recordSentTurn: recordSentTurn,
       getSentTurns: getSentTurns,
       toJSON: toJSON,

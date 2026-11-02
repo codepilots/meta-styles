@@ -83,7 +83,8 @@
       [
         "addPiece", "getPiece", "getPieces", "getActivePieces", "setCopyPreviewKeys",
         "rejectPiece", "activatePiece", "markSuperseded", "recordTurn", "getTurns", "historyForPrompt",
-        "askQuestion", "resolveQuestion", "getPendingQuestions", "recordSentTurn",
+        "askQuestion", "resolveQuestion", "getPendingQuestions", "setListContext", "getListContext",
+        "clearListContext", "recordSentTurn",
         "getSentTurns", "toJSON", "save", "load", "noteInboundShare", "replyWindowStatus"
       ].forEach(function (k) {
         if (typeof catalog[k] === "function") proxy[k] = counted(k, catalog[k]);
