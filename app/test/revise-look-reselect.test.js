@@ -93,7 +93,7 @@ async function run() {
     const cat2 = Wardrobe.createCatalog({ userKey: "SYNTH_r7_b2" });
     seed(cat2, ["dress", "layer/cardigan"], "b2");
     const r2 = await ReviseLook.handle({ catalog: cat2, text: "hmm, maybe change something", metaClient: null });
-    assert.ok(/which piece would you like to swap or skip/.test(r2.text), "clarification copy kept");
+    assert.ok(/which piece would you like to swap, skip, or add back/.test(r2.text), "clarification copy kept");
     const pend = cat2.getPendingQuestions();
     assert.strictEqual(pend.length, 1, "one pending question");
     assert.strictEqual(pend[0].skill, "revise_look", "pending skill kept");

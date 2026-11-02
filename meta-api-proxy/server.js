@@ -451,11 +451,19 @@ function createHandler(config) {
         const pieces = Array.isArray(payload.pieces) ? payload.pieces.slice(0, 16) : [];
         if (pieces.length < 2) { sendJson(res, 400, { error: "pieces_required" }, corsOrigin); return; }
         const desc = pieces.map((p) => `${p.id}: ${p.category}`).join("\n");
+        // Soft-preference context (occasion/style wording): same risk
+        // profile as other free-text fields here — bounded string folded
+        // into the prompt as a tie-break among VALID combos only.
+        const context = typeof payload.context === "string" && payload.context.trim()
+          ? payload.context.slice(0, 300) : "";
+        const softPref = context
+          ? ` The user also said: "${context}" — if more than one combination above is valid, prefer whichever best matches that styling/occasion request; never pick an invalid combination just to match it.` : "";
         const { parsed, cached } = await sparkJson(
           "You propose complete outfits. A valid look needs a base (dress, or base/top and/or base/bottom) plus exactly one finish: either exactly one layer (layer/cardigan or layer/blazer) OR a scarf plus a bag. Never include shoes. Never use two layers. " +
-          'Reply with JSON only: {"looks":[{"pieceIds":["..."],"rationale":"..."}]} with up to 3 looks, best first.',
+          'Reply with JSON only: {"looks":[{"pieceIds":["..."],"rationale":"..."}]} with up to 3 looks, best first.' +
+          softPref,
           `Available pieces:\n${desc}`,
-          "assemble|" + desc
+          "assemble|" + desc + "|" + context
         );
         if (!parsed || !Array.isArray(parsed.looks)) { sendJson(res, 502, { error: "unparseable_assembly" }, corsOrigin); return; }
         sendJson(res, 200, { looks: parsed.looks, cached: !!cached, source: SPARK_MODEL, placeholder: false }, corsOrigin);
@@ -530,7 +538,7 @@ function createHandler(config) {
         var triggers = [
           "catalogue_piece: Photo(s) shared (image present, no other trigger — but FIRST check Recent turns: if the assistant just asked the user to share a photo, route to that skill instead)",
           "propose_look: user wants a look suggested — e.g. \"show me a look\", \"what goes together\", \"style me\", \"outfit idea\", \"cook up a look\", \"make me a look\", \"can you find …\"",
-          "revise_look: user wants to change last look — e.g. \"no bag\", \"without blazer\", \"swap scarf\", \"drop the bag\"",
+          "revise_look: user wants to change last look — e.g. \"no bag\", \"without blazer\", \"swap scarf\", \"drop the bag\", \"add the cardigan back\", \"swap the cardigan for the blazer\"",
           // Opus finding #13: "find the bag" lives under describe_wardrobe only
           // (locating a wardrobe item), not under propose_look.
           "describe_wardrobe: user wants to see/list wardrobe — e.g. \"what do I have\", \"show my wardrobe\", \"find the bag\"",

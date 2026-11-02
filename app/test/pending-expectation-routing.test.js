@@ -223,7 +223,7 @@ async function run() {
     // Handler records the expectation on its fallback question.
     const catH = Wardrobe.createCatalog({ userKey: "SYNTH_m24_f_h" });
     const hr = await ReviseLook.handle({ catalog: catH, text: "hmm" });
-    assert.ok(/which piece would you like to swap or skip/.test(hr.text), "fallback question unchanged");
+    assert.ok(/which piece would you like to swap, skip, or add back/.test(hr.text), "fallback question unchanged");
     const hpend = catH.getPendingQuestions();
     assert.strictEqual(hpend.length, 1, "fallback records one pending question");
     assert.strictEqual(hpend[0].skill, "revise_look", "pending skill recorded");
@@ -231,7 +231,7 @@ async function run() {
 
     // Catalog-free (existing image-honesty call shape) -> same reply, no crash.
     const hr2 = await ReviseLook.handle({ text: "hmm" });
-    assert.ok(/which piece would you like to swap or skip/.test(hr2.text), "catalog-free fallback unchanged");
+    assert.ok(/which piece would you like to swap, skip, or add back/.test(hr2.text), "catalog-free fallback unchanged");
 
     // (a) satisfying reply routes back to revise_look. The skill cannot
     // parse a bare noun, so it re-asks its fallback question — which

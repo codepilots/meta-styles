@@ -131,10 +131,17 @@
     });
   }
 
-  function assemble(pieces) {
-    return post("/api/assemble", {
+  // Optional soft-preference context (occasion/style wording): folded into
+  // the Spark prompt server-side as a tie-break among valid combos only.
+  // Bounded like other free-text fields before sending. Never relaxes fit rules.
+  function assemble(pieces, context) {
+    var body = {
       pieces: (pieces || []).map(function (p) { return { id: p.id, category: p.category }; }),
-    }, 60000);
+    };
+    if (typeof context === "string" && context.trim()) {
+      body.context = context.slice(0, 300);
+    }
+    return post("/api/assemble", body, 60000);
   }
 
   // Opus finding #14: no client-side preview cache. Keying on prompt plus

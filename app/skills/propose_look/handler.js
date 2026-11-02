@@ -301,20 +301,21 @@
     }
 
     // 1. Ask Spark for a constrained choice: IDs + categories only, JSON only.
-    // Known limitation (Opus finding #10d): the rolling `preferences`
-    // string (e.g. revise_look's "Prefers without bag.") currently reaches
-    // the router as context only — it is NOT applied to Spark selection or
-    // the deterministic fallback here. Wiring it in would change the
-    // assemble prompt contract, so it stays a documented gap: a stated
-    // preference does not yet change the proposed look. Nothing in the
-    // reply claims otherwise.
+    // Occasion/style context (Opus finding #10d, now wired): the current
+    // turn's own text plus the rolling `preferences` string (e.g.
+    // revise_look's "Prefers without bag.") travel as a soft-preference
+    // tie-break among ALREADY-VALID combos — never relaxing the fit-rule
+    // validity check below (strictShape + assembleLook stay absolute).
+    var prefsText = typeof o.preferences === "string" ? o.preferences : "";
+    var context = (userText + (prefsText ? ". " + prefsText : "")).slice(0, 300);
+    if (!context.trim()) context = "";
     var sparkLooks = null;
     var sparkError = null;
     if (metaClient && typeof metaClient.assemble === "function") {
       toolSteps += 1;
       var promptPieces = active.map(function (p) { return { id: p.piece_id, category: p.category }; });
       try {
-        var res = await metaClient.assemble(promptPieces);
+        var res = await metaClient.assemble(promptPieces, context);
         if (res && Array.isArray(res.looks) && res.looks.length > 0) {
           sparkLooks = res.looks;
         } else {
@@ -481,6 +482,11 @@
     var previewPrompt =
       "Y2K fairycore flat-lay look card, soft pastel background, garments laid out neatly: " +
       nouns + ". No people, no worn try-on, no readable text.";
+    // The wearer's own occasion/style wording augments (never replaces)
+    // the Y2K/fairycore base framing above, so the image reflects it too.
+    if (context) {
+      previewPrompt += " Styling brief from the wearer: " + context + ".";
+    }
     if (refThumbs.length > 0) {
       previewPrompt += " Use the attached reference garment photo for the true colors and silhouette.";
       previewPrompt += " Each attached image is a distinct wardrobe garment; preserve the colour, print, silhouette, and details of every attached reference as a separate flat-lay item; do not substitute generic garments; do not add unreferenced garments; no person/try-on/readable text.";
