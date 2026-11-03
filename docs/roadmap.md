@@ -492,3 +492,10 @@ After propose_look's no-valid-look reply ("share one more piece…"), the user's
 **Status: LANDED 2026-11-03; meta-api-proxy + wardrobe-service restarted on it.** Muse Code (run detached at the end; output verified on host instead of trusting the self-report): full suite 88/88 (new `photo-routing-guard`, `photo-media-retention`); live Spark replay of the failing turn now routes to catalogue_piece.
 
 Open: the photo lost before this fix must be re-sent (mock-ig-bot deliberately not restarted — unchanged, and its share history is in-memory).
+
+## Milestone 33 — lone scarf / lone bag finishes (Autumn, 2026-11-03)
+
+Per `docs/decisions.md` row 18. Updated in lockstep: `app/assembler.js` (rule, finish detection, scarf-only / bag-only fit notes), propose_look `strictShape` + finish wording + fallback preference (fuller finish first), Spark `/api/assemble` prompt, `explain_fit`, `Complete_the_look`, `Evaluate_prospective_purchase`, `revise_look`, catalogue/turn-loop copy, README; no-valid-look replies now say "(a layer, a scarf or a bag)".
+
+**Status: LANDED 2026-11-03; meta-api-proxy + wardrobe-service restarted on it.** Muse Code; verified on host: full suite 89/89 (new `propose-look-lone-finish.test.js`). 12 existing test files changed — reviewed each: lone scarf/bag cases flipped to valid, and every scenario that tested a still-invalid shape was re-seeded with one (e.g. lone scarf → scarf + bag with no base; "skip the only finish" kept its nothing-destroyed assertion). Spot check: dress+cardigan+scarf+bag wardrobe still yields dress+cardigan; "no bag" on dress+scarf+bag now leaves a valid dress+scarf.
+
