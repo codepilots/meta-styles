@@ -164,7 +164,26 @@ function checkProfileRecordShape(rec) {
   return true;
 }
 
-function createStore() {
+// Per-process boot tag: every id this store mints carries a short random
+// tag generated once here, so ids stay unique across restarts (real
+// Instagram mids are globally unique). Without it, the counters above
+// reset to 0 on every restart while the per-user wardrobe catalog persists
+// on disk, and new shares reuse ids of earlier pieces — which the
+// catalogue_piece per-share-id idempotency guard then (correctly) treats
+// as already-processed messages. Opt-in `opts.bootTag` fixes the tag for
+// deterministic tests; `bootTag: ""` keeps the exact legacy bare format
+// (e.g. "SYNTH_mid_op_001").
+function mintBootTag() {
+  const alphabet = "0123456789abcdefghijklmnopqrstuvwxyz";
+  const bytes = crypto.randomBytes(6);
+  let tag = "";
+  for (let i = 0; i < bytes.length; i++) tag += alphabet[bytes[i] % 36];
+  return tag;
+}
+
+function createStore(opts) {
+  const options = opts || {};
+  const bootTag = typeof options.bootTag === "string" ? options.bootTag : mintBootTag();
   return {
     shares: [], // {id, received_at, attachment, media_id, media_available}
     media: new Map(), // media_id -> {bytes: Buffer, contentType: string}
@@ -174,7 +193,16 @@ function createStore() {
     outboundTokens: new Map(), // token -> {share_id, expiresAt, used}
     idempotency: new Map(), // key -> {payloadHash, result, at}
     counters: { share: 0, message: 0, token: 0 },
+    bootTag, // "" -> legacy bare ids; otherwise "<tag>_" infix in minted ids
   };
+}
+
+// Infix for a minted id: "" under the legacy opt-in, else "<tag>_".
+// The tag is lowercase base36 (no "/" so route parsers keep working, no
+// ":" so the <mid>:<media_id> per-attachment identity keeps exactly one
+// colon, URL-safe for the raw-concatenated staging paths).
+function tagInfix(store) {
+  return store && typeof store.bootTag === "string" && store.bootTag ? store.bootTag + "_" : "";
 }
 
 function sendJson(res, status, obj, corsOrigin) {
@@ -327,18 +355,19 @@ function doSend(store, payload) {
     }
   }
   store.counters.message += 1;
+  const infix = tagInfix(store);
   const result = {
-    message_id: "SYNTH_msg_" + String(store.counters.message).padStart(3, "0"),
+    message_id: "SYNTH_msg_" + infix + String(store.counters.message).padStart(3, "0"),
     recipient_ref: share_id,
   };
   const logEntry = { message_id: result.message_id, share_id, text, sent_at: new Date(now).toISOString() };
   if (image === true) {
     store.counters.message += 1;
-    result.image_message_id = "SYNTH_imgmsg_" + String(store.counters.message).padStart(3, "0");
+    result.image_message_id = "SYNTH_imgmsg_" + infix + String(store.counters.message).padStart(3, "0");
     logEntry.image_message_id = result.image_message_id;
     const staged = store.outboundStaged.get(share_id);
     store.counters.token += 1;
-    const token = "SYNTH_outbound_" + String(store.counters.token).padStart(3, "0");
+    const token = "SYNTH_outbound_" + infix + String(store.counters.token).padStart(3, "0");
     store.outboundTokens.set(token, {
       share_id,
       bytes: staged.bytes,
@@ -689,7 +718,7 @@ function createHandler(store, config) {
         }
         store.counters.share += 1;
         const share = {
-          id: "SYNTH_mid_op_" + String(store.counters.share).padStart(3, "0"),
+          id: "SYNTH_mid_op_" + tagInfix(store) + String(store.counters.share).padStart(3, "0"),
           received_at: resolveReceivedAt(url, payload),
           attachment: { type: "text", payload: { text } },
           media_id: null,
@@ -710,13 +739,14 @@ function createHandler(store, config) {
         const caption = url.searchParams.get("caption") || "";
         const kind = url.searchParams.get("kind") === "post" ? "post" : "image";
         store.counters.share += 1;
+        const infix = tagInfix(store);
         const n = String(store.counters.share).padStart(3, "0");
-        const mediaId = "SYNTH_media_op_" + n;
+        const mediaId = "SYNTH_media_op_" + infix + n;
         const attachment = kind === "post"
-          ? { type: "ig_post", payload: { ig_post_media_id: "SYNTH_post_op_" + n, title: caption || "SYNTH untitled share", url: "mock-local:incoming-photo" } }
+          ? { type: "ig_post", payload: { ig_post_media_id: "SYNTH_post_op_" + infix + n, title: caption || "SYNTH untitled share", url: "mock-local:incoming-photo" } }
           : { type: "image", payload: { url: "mock-local:incoming-photo" } };
         const share = {
-          id: "SYNTH_mid_op_" + n,
+          id: "SYNTH_mid_op_" + infix + n,
           received_at: resolveReceivedAt(url, null),
           attachment,
           media_id: mediaId,
@@ -820,7 +850,9 @@ function createHandler(store, config) {
 function startServer(opts) {
   const options = opts || {};
   const port = options.port !== undefined ? options.port : DEFAULT_PORT;
-  const store = options.store || createStore();
+  // An explicitly passed store already carries its own boot tag; otherwise
+  // the options-level bootTag (if any) fixes the new store's tag.
+  const store = options.store || createStore({ bootTag: options.bootTag });
   const server = http.createServer(createHandler(store, {
     token: options.token,
     allowOrigin: options.allowOrigin,
