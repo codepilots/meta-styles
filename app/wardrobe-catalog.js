@@ -745,6 +745,17 @@
     // asked_at + PENDING_EXPECTATION_TTL_MS for expectations, null for
     // plain questions; callers may pass an explicit ISO expires_at the
     // same way addPiece accepts an explicit added_at.
+    //
+    // Only the latest question is live (2026-11-03 stale-hijack fix):
+    // recording a new question resolves every older unresolved one as
+    // superseded — the bot has asked something newer, so an older
+    // question (e.g. revise_look's "which piece?" text follow-up) must
+    // never consume a later turn's reply. Superseded entries stay in
+    // history as resolved (visible in toJSON) but vanish from
+    // getPendingQuestions. This is question-routing state only: durable
+    // mid-flow state with its own store and TTL — held purchase pieces,
+    // pending-deletion/clear-all snapshots, detect bags, list-context
+    // cursors, the wearer profile record — is untouched.
     function askQuestion(input) {
       var v;
       if (typeof input === "string") {
@@ -785,6 +796,9 @@
         expects: expects,
         expires_at: expiresAt,
       };
+      for (var si = 0; si < pendingQuestions.length; si++) {
+        if (!pendingQuestions[si].resolved) pendingQuestions[si].resolved = true;
+      }
       pendingQuestions.push(q);
       return Object.assign({}, q);
     }

@@ -129,12 +129,20 @@
       // router is never consulted for that turn. An unsatisfied or
       // expired expectation is cleared and the turn falls through to
       // normal routing — never stuck.
+      //
+      // Only the latest question is live (2026-11-03 stale-hijack
+      // fix): the scan runs NEWEST-first and handles exactly one
+      // question — the bot's latest reply. Older unresolved entries
+      // (superseded when the newer question was recorded — see
+      // catalog.askQuestion) are never consulted, so a stale
+      // revise_look "which piece?" text question cannot swallow a
+      // later turn's "yes" meant for a newer consent question.
       var pendingDecision = null;
       var pendingSatisfied = null;
       if (catalog && typeof catalog.getPendingQuestions === "function") {
         try {
           var pendings = catalog.getPendingQuestions() || [];
-          for (var pi = 0; pi < pendings.length; pi++) {
+          for (var pi = pendings.length - 1; pi >= 0; pi--) {
             var pq = pendings[pi];
             if (!pq || !pq.expects) continue;
             // Unknown vocabulary (cannot happen via askQuestion's
@@ -207,7 +215,7 @@
                 pendingSatisfied.sparkAffirmative = true;
               }
             }
-            break; // one expectation at a time: oldest first, never stacked
+            break; // one expectation at a time: newest live first, never stacked
           }
         } catch (e) { pendingDecision = null; }
       }
@@ -231,8 +239,21 @@
         }
       }
 
+
+
       if (decision.confidence < 70) {
         var q = decision.clarification || (router && router.clarificationFor ? router.clarificationFor({ text: message }) : "Just to make sure I help the right way, loveling \u2728 — did you mean to share a piece, see a look, or tweak one?");
+        // Only-the-latest-question-is-live: this clarification
+        // reply asks no recorded question, so any still-unresolved
+        // question is stale (it was not "just asked") — resolve it.
+        try {
+          if (catalog && typeof catalog.getPendingQuestions === "function") {
+            var staleCl = catalog.getPendingQuestions() || [];
+            for (var ci = 0; ci < staleCl.length; ci++) {
+              try { if (typeof catalog.resolveQuestion === "function" && staleCl[ci] && staleCl[ci].id) catalog.resolveQuestion(staleCl[ci].id); } catch (reCl) {}
+            }
+          }
+        } catch (eCl) {}
         var sumCl = { summary: wardrobeSummary, preferences: preferences };
         if (summariser && typeof summariser.buildSummary === "function") {
           try {
@@ -286,6 +307,20 @@
       // shareId + stageImage pass straight through to skills that can use
       // them (propose_look stages its preview for an image send); skills
       // that ignore unknown opts are unaffected.
+      //
+      // Only-the-latest-question-is-live: snapshot the unresolved
+      // question ids BEFORE the skill runs, so the post-turn check
+      // below can tell whether this turn's reply asked a NEW
+      // question (a recorded id not in this set).
+      var pendingIdsBefore = {};
+      try {
+        if (catalog && typeof catalog.getPendingQuestions === "function") {
+          var pbs = catalog.getPendingQuestions() || [];
+          for (var pbi = 0; pbi < pbs.length; pbi++) {
+            if (pbs[pbi] && pbs[pbi].id) pendingIdsBefore[pbs[pbi].id] = true;
+          }
+        }
+      } catch (ePb) {}
       var result;
       var handlerError = null;
       try{
@@ -313,6 +348,28 @@
         if(!result.trace) result.trace = partialTrace.slice(0,40);
       }
 
+      // Only-the-latest-question-is-live: when this turn's reply
+      // goes out WITHOUT asking a new question, any still-unresolved
+      // question is stale (it was not "just asked" any more) — resolve
+      // it. When the skill DID record a new question, keep it:
+      // catalog.askQuestion already superseded every older one at
+      // record time. Durable mid-flow state (held pieces,
+      // pending-deletion snapshots, detect bags, list cursors, the
+      // profile record) is separate state and is untouched here.
+      try {
+        if (catalog && typeof catalog.getPendingQuestions === "function") {
+          var pAs = catalog.getPendingQuestions() || [];
+          var askedNew = false;
+          for (var pAi = 0; pAi < pAs.length; pAi++) {
+            if (pAs[pAi] && pAs[pAi].id && !pendingIdsBefore[pAs[pAi].id]) { askedNew = true; break; }
+          }
+          if (!askedNew) {
+            for (var pAj = 0; pAj < pAs.length; pAj++) {
+              try { if (typeof catalog.resolveQuestion === "function" && pAs[pAj] && pAs[pAj].id) catalog.resolveQuestion(pAs[pAj].id); } catch (rePa) {}
+            }
+          }
+        }
+      } catch (ePa) {}
       var outText = (result && result.text) || "";
       var sum = { summary: wardrobeSummary, preferences: preferences };
       // Honest persistence flag (Opus finding #10): the rolling summary is
