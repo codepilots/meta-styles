@@ -484,3 +484,11 @@ A 2-garment photo sent as the first message after a wardrobe-service restart was
 
 **Status: LANDED 2026-11-03; wardrobe-service restarted on it 20:55** (mock bot deliberately not restarted, so its in-memory share history kept the stuck photo). Muse Code; verified: full suite 86/86 on host (new `wardrobe-service/test/first-tick-combined-ask.test.js`, failed pre-fix); live: the replayed photo produced the combined ask (`sent: 1`, no errors).
 
+
+## Milestone 32 — photo after "share one more piece" was ignored and deleted (live bug, 2026-11-03)
+
+After propose_look's no-valid-look reply ("share one more piece…"), the user's photo was routed by live Spark to `propose_look` (reproduced: confidence 90, "bare photo fulfills assistant's pending request"), which can't catalogue; the service then acked (deleted) the unused media, so it was unrecoverable. The activity line also claimed "with a full look". Fixes: `app/router.js` `guardPhotoSkill` — a photo turn landing on a skill outside `IMAGE_SKILLS` (catalogue_piece, What_suits, Match_look, Evaluate_prospective_purchase — each verified to read the photo) is overridden to `catalogue_piece`; pre-router pending expectations (profile photos, What_suits consent) unaffected; route prompt tightened. `wardrobe-service/server.js` acks media only on catalogue success or `meta.imageConsumed === true`, else keeps it ("Kept your photo — I didn't use it this time.", `counts.media_kept`). Activity line derived from the verified outcome.
+
+**Status: LANDED 2026-11-03; meta-api-proxy + wardrobe-service restarted on it.** Muse Code (run detached at the end; output verified on host instead of trusting the self-report): full suite 88/88 (new `photo-routing-guard`, `photo-media-retention`); live Spark replay of the failing turn now routes to catalogue_piece.
+
+Open: the photo lost before this fix must be re-sent (mock-ig-bot deliberately not restarted — unchanged, and its share history is in-memory).
