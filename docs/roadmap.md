@@ -452,3 +452,12 @@ Per `docs/decisions.md` row 16. `app/photo-thumb.js` `composeSheetSync` + `propo
 
 Open:
 - Live check: re-share garment photos (incl. a shoe photo), then confirm via `/wardrobe/status` `last_previews` and eyeball a composite render — the sheet approach is untested against the real Muse Image model.
+
+## Milestone 28 — clear the whole wardrobe from chat (Autumn, 2026-11-03)
+
+Chat command (chosen over an operator script): "clear / empty / reset my wardrobe", "start my wardrobe fresh", "delete everything in my wardrobe", "delete all my clothes" → `delete_wardrobe_item` clear-all path: count + category breakdown, states saved profile photos are untouched, one yes/no confirm, then soft-deletes the snapshotted pieces (pieces added after the ask survive) with one catalog save. Bare "DELETE" / "forget me" (bot-side account deletion) and "delete my photos" (profile-photo deletion) route exactly as before. Also: catalogue `crop_hash` dedupe ignores deleted pieces so the same photo re-shared after a clear catalogues again, while the per-share-id guard still matches deleted pieces so a restart's share replay can't resurrect them; "delete/show my shoes" now route.
+
+**Status: LANDED 2026-11-03; services restarted on it.** Muse Code (two delegations; the first narrowed the per-share guard, which made a replayed share resurrect a cleared piece — caught in review and reverted). Verified independently: full suite 82/82; synthetic run share → clear → replay same share stays cleared → new share of the same photo adds 1; router phrase table checked.
+
+Open:
+- Pre-existing, not addressed: the single-piece catalogue path has no photo-hash dedupe, so the same photo sent in two separate messages adds two pieces.
