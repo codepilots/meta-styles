@@ -448,8 +448,7 @@ Open:
 
 Per `docs/decisions.md` row 16. `app/photo-thumb.js` `composeSheetSync` + `propose_look` `buildGarmentImages` (individual refs when they fit the free slots, else one grid sheet; nouns/cells follow what was actually drawn); `revise_look` add-on-top extras; shoes in every category list (catalog, classifier, proxy coercion + classify/detect prompts) but excluded from automatic looks.
 
-**Status: IMPLEMENTED, UNCOMMITTED 2026-11-03.** Implemented by Muse Code (four delegations); verified independently: full suite → 81/81 pass; synthetic end-to-end run: dress+cardigan look + "add my shoes" + "add my bag" keeps the core, records two real-piece extras, and the on-user render sends headshot + full-body + one 4-garment sheet (audit `mode: composite`); with no shoes piece the reply says so and records nothing.
+**Status: LANDED 2026-11-03 (commit `5ac6f2f`, docs `55d64e7`); meta-api-proxy, mock-ig-bot and wardrobe-service restarted 18:48 on the new code.** Implemented by Muse Code (four delegations); verified independently: full suite → 81/81 pass; synthetic end-to-end run: dress+cardigan look + "add my shoes" + "add my bag" keeps the core, records two real-piece extras, and the on-user render sends headshot + full-body + one 4-garment sheet (audit `mode: composite`); with no shoes piece the reply says so and records nothing.
 
 Open:
-- Commit (app code as `muse-code`), restart `mock-ig-bot`, `wardrobe-service` and `meta-api-proxy` (proxy prompts/coercion changed) — running processes predate this.
 - Live check: re-share garment photos (incl. a shoe photo), then confirm via `/wardrobe/status` `last_previews` and eyeball a composite render — the sheet approach is untested against the real Muse Image model.
