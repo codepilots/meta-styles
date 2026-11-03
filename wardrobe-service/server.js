@@ -1017,17 +1017,18 @@ function piecesCount() {
         // Merge into ctx.detectBag instead of replacing (append by crop_hash, oldest at, record sources)
         var before = ctx.detectBag;
         ctx.detectBag = mergeDetectBag(ctx.detectBag, hrPending);
-        // Track per-tick state for combined-ask post-processing
-        if(ctx._tickLastShare !== undefined){
-          ctx._tickLastShare = { item: item, id: id };
-        }
-        if(ctx._tickHadAnyDetect !== undefined){
-          ctx._tickHadAnyDetect = true;
-          // hasMulti if any bag (before or incoming) had >1 regions
-          var incomingIsMulti = hrPending.regions.length > 1;
-          var existingIsMulti = before && before.regions && before.regions.length > 1;
-          if(incomingIsMulti || existingIsMulti) ctx._tickHadMulti = true;
-        }
+        // Track per-tick state for combined-ask post-processing.
+        // Unconditional: the ctx may have been created mid-tick (e.g. the
+        // first share after a restart, after the tick-start flag init ran),
+        // so the flags cannot be assumed present. Post-processing deletes
+        // them after the tick.
+        ctx._tickLastShare = { item: item, id: id };
+        ctx._tickHadAnyDetect = true;
+        // hasMulti if any bag (before or incoming) had >1 regions
+        var incomingIsMulti = hrPending.regions.length > 1;
+        var existingIsMulti = before && before.regions && before.regions.length > 1;
+        if (ctx._tickHadMulti === undefined) ctx._tickHadMulti = false;
+        if (incomingIsMulti || existingIsMulti) ctx._tickHadMulti = true;
         if(!ctx._tickPendingBags) ctx._tickPendingBags = [];
         ctx._tickPendingBags.push({ id: id, item: item, bag: hrPending });
         // Suppress send, mark handled with internal outcome pending_ask (no idempotency consumption)
@@ -1345,6 +1346,7 @@ function piecesCount() {
       users.forEach(function(ctx, ref){ tickBagBefore.set(ref, ctx.detectBag ? { at: ctx.detectBag.at, regions: (ctx.detectBag.regions||[]).slice(), source_share_id: ctx.detectBag.source_share_id, source_share_ids: (ctx.detectBag.source_share_ids||[]).slice() } : null); ctx._tickMerging = true; ctx._tickLastShare = null; ctx._tickHadAnyDetect = false; ctx._tickHadMulti = false; ctx._tickPendingBags = []; });
       var chain = Promise.resolve();
       var outcomes = [];
+      var outcomeIdxById = {};
       items.forEach(function (item) {
         chain = chain.then(function () {
           // Ensure new ctx created during tick also gets tick flags
@@ -1357,6 +1359,7 @@ function piecesCount() {
             }
           }
           return processOne(item).then(function (outcome) {
+            outcomeIdxById[item.id] = outcomes.length;
             outcomes.push(outcome);
             return null;
           });
@@ -1382,7 +1385,30 @@ function piecesCount() {
           if(changed && after && after.regions && after.regions.length){
             var lastShare = ctx._tickLastShare;
             if(!lastShare || !lastShare.id || !lastShare.item){
-              // Fallback: no last share recorded (should not happen), skip
+              // Loud failure, never silent: a detect bag landed but its send
+              // anchor is missing (should not happen). Record it, count it,
+              // drop the unsent bag, and re-queue the affected pending_ask
+              // shares for retry instead of leaving them terminal — the next
+              // tick re-detects and re-asks under the same idempotency keys.
+              say("Couldn't send the follow-up question — will try again on the next check.");
+              lastError = "combined ask skipped: no last share recorded for the tick";
+              var retryIds = (ctx._tickPendingBags || []).map(function (e) { return e && e.id; });
+              var retried = 0;
+              for (var rii = 0; rii < retryIds.length; rii++) {
+                var rid = retryIds[rii];
+                if (!rid) continue;
+                var oii = outcomeIdxById[rid];
+                if (oii !== undefined && outcomes[oii] === "terminal:pending_ask") {
+                  outcomes[oii] = "retry";
+                  retried += 1;
+                }
+                handled.delete(rid);
+                attempts.set(rid, (attempts.get(rid) || 0) + 1);
+              }
+              counts.errors += retried > 0 ? retried : 1;
+              ctx.detectBag = null;
+              resolveAllCatalogueYesNo(ctx.catalog);
+              try{ delete ctx._tickLastShare; delete ctx._tickHadAnyDetect; delete ctx._tickHadMulti; delete ctx._tickPendingBags; }catch(e){}
               return;
             }
             // Batch uniformity: if EVERY detected photo in tick was single-region, do instant auto-add instead of ask
