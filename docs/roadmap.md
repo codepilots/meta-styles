@@ -499,3 +499,13 @@ Per `docs/decisions.md` row 18. Updated in lockstep: `app/assembler.js` (rule, f
 
 **Status: LANDED 2026-11-03; meta-api-proxy + wardrobe-service restarted on it.** Muse Code; verified on host: full suite 89/89 (new `propose-look-lone-finish.test.js`). 12 existing test files changed — reviewed each: lone scarf/bag cases flipped to valid, and every scenario that tested a still-invalid shape was re-seeded with one (e.g. lone scarf → scarf + bag with no base; "skip the only finish" kept its nothing-destroyed assertion). Spot check: dress+cardigan+scarf+bag wardrobe still yields dress+cardigan; "no bag" on dress+scarf+bag now leaves a valid dress+scarf.
 
+
+## Milestone 34 — consent "yes" answered a stale question (live bug, 2026-11-03)
+
+"can you show it on me?" → consent question → "yes" got revise_look's "which piece…?" reply; consent never recorded, headshot never requested. Cause: an older unresolved `revise_look` text question (left by a restart replay) stayed live; the loop satisfied the OLDEST pending question and a text expectation accepts any message. Fix: only the question in the bot's latest reply is live — `catalog.askQuestion` supersedes all older questions; the loop scans newest-first and resolves leftovers when a reply asks nothing new. Long-lived state (purchase hold, pending deletion / clear-all, catalogue pending bag, list cursors, profile record) is separate state and unchanged.
+
+**Status: LANDED 2026-11-03; wardrobe-service restarted on it.** Muse Code; verified on host: suite 90/90 (new `latest-question-live.test.js`, failed pre-fix; no existing tests changed); synthetic replay: look → "show it on me" → "yes" records consent and asks for the photos.
+
+Open:
+- When the latest bot question really is revise's "which piece…?", a clear new request ("make me a look") is still taken as its answer — consider letting a confident different intent break out of a pending text question.
+- Restart replay re-runs agentic turns for already-answered shares (sends are deduped, but questions/turns/pieces still mutate; a retrying photo kept replays going ~3 min). Needs a durable "already answered" signal — options to bring to Autumn.
