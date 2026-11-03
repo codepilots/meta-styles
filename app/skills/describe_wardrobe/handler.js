@@ -4,7 +4,7 @@
  */
 (function (root) {
 
-  function plainNoun(c){ var m={"base/top":"top","base/bottom":"bottom","dress":"dress","layer/cardigan":"cardigan","layer/blazer":"blazer","scarf":"scarf","bag":"bag"}; return m[c]||c; }
+  function plainNoun(c){ var m={"base/top":"top","base/bottom":"bottom","dress":"dress","layer/cardigan":"cardigan","layer/blazer":"blazer","scarf":"scarf","bag":"bag","shoes":"shoes"}; return m[c]||c; }
 
   // Pending expectation (Milestone 24): the "Want me to put a look
   // together from these beauties?" closer below is a yes/no moment — a

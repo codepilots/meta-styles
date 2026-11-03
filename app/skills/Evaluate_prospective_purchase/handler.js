@@ -69,7 +69,7 @@
     }catch(e){}
   }
 
-  function plainNoun(c){ var m={"base/top":"top","base/bottom":"bottom","dress":"dress","layer/cardigan":"cardigan","layer/blazer":"blazer","scarf":"scarf","bag":"bag"}; return m[c]||c; }
+  function plainNoun(c){ var m={"base/top":"top","base/bottom":"bottom","dress":"dress","layer/cardigan":"cardigan","layer/blazer":"blazer","scarf":"scarf","bag":"bag","shoes":"shoes"}; return m[c]||c; }
 
   var BASE_CATS = ["base/top", "base/bottom", "dress"];
   var LAYER_CATS = ["layer/cardigan", "layer/blazer"];
@@ -251,7 +251,8 @@
     try{ if(o.metaClient && o.metaClient.classify){ var cr = await o.metaClient.classify(imageDataUrl, ""); if(cr && cr.category) cat = cr.category; } }catch(e){}
     if(cat === "dress"){
       var h = (text || "").toLowerCase();
-      if(/scarf/.test(h)) cat = "scarf";
+      if(/shoe|sneaker|trainer|heel|boot|sandal|loafer/.test(h)) cat = "shoes";
+      else if(/scarf/.test(h)) cat = "scarf";
       else if(/bag|purse/.test(h)) cat = "bag";
       else if(/blazer|jacket/.test(h)) cat = "layer/blazer";
       else if(/cardigan|shrug/.test(h)) cat = "layer/cardigan";

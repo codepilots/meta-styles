@@ -9,7 +9,7 @@
  */
 (function (root) {
 
-  function plainNoun(c){ var m={"base/top":"top","base/bottom":"bottom","dress":"dress","layer/cardigan":"cardigan","layer/blazer":"blazer","scarf":"scarf","bag":"bag"}; return m[c]||c; }
+  function plainNoun(c){ var m={"base/top":"top","base/bottom":"bottom","dress":"dress","layer/cardigan":"cardigan","layer/blazer":"blazer","scarf":"scarf","bag":"bag","shoes":"shoes"}; return m[c]||c; }
   var CAVEAT=" (I can\u2019t tuck preview pictures into chat just yet, so this word-picture will have to sparkle on its own. \u2728)";
   async function handle(opts){
     var o=opts||{}, catalog=o.catalog, imageDataUrl=o.imageDataUrl||null;

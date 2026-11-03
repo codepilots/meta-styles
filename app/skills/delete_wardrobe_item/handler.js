@@ -64,16 +64,26 @@
     "cardigans": "layer/cardigan",
     "blazers": "layer/blazer",
     "scarves": "scarf",
-    "bags": "bag"
+    "bags": "bag",
+    "shoes": "shoes"
   };
 
   function plainNoun(c) {
     var m = {
       "base/top": "top", "base/bottom": "bottom", "dress": "dress",
       "layer/cardigan": "cardigan", "layer/blazer": "blazer",
-      "scarf": "scarf", "bag": "bag"
+      "scarf": "scarf", "bag": "bag", "shoes": "shoes"
     };
     return m[c] || "piece";
+  }
+
+  // "shoes" is already plural — never "shoess".
+  function pluralOf(c) {
+    var noun = plainNoun(c);
+    if (noun === "shoes") return "shoes";
+    if (noun === "dress") return "dresses";
+    if (noun === "scarf") return "scarves";
+    return noun + "s";
   }
 
   // Short description used in the numbered list, the confirm question, and
@@ -165,9 +175,7 @@
   }
 
   function listReply(category, pagePieces, total, offset) {
-    var noun = plainNoun(category);
-    var plural = noun === "dress" ? "dresses" :
-      (noun === "scarf" ? "scarves" : noun + "s");
+    var plural = pluralOf(category);
     var head = "Which one shall we let go, darling \u2728 Here are your " + plural + " — reply with its number:";
     var lines = [head].concat(pageLines(pagePieces));
     if (offset + pagePieces.length < total) {
@@ -237,7 +245,7 @@
     var inCategory = activeByCategory(catalog, category);
     if (inCategory.length === 0) {
       return textOnlyResult(
-        "No " + plainNoun(category) + "s tucked in your wardrobe just now, darling \u2728 " +
+        "No " + pluralOf(category) + " tucked in your wardrobe just now, darling \u2728 " +
         "Nothing to delete!",
         "empty_category",
         "Delete request on an empty category."
@@ -250,7 +258,7 @@
     return {
       text: reply,
       image: null,
-      persist: { summaryDelta: "Listed " + plainNoun(category) + "s for deletion (" + inCategory.length + ").", preferencesDelta: "" },
+      persist: { summaryDelta: "Listed " + pluralOf(category) + " for deletion (" + inCategory.length + ").", preferencesDelta: "" },
       skill: SKILL,
       meta: {
         imageDelivery: { requested: false, generated: false, delivered: false, reason: "list_no_image" }
@@ -284,7 +292,7 @@
       holdPage(catalog, reply, ctx.category,
         nextPage.map(function (p) { return p.piece_id; }), nextOffset);
       return textOnlyResult(reply, "list_no_image",
-        "Listed next " + plainNoun(ctx.category) + "s for deletion.");
+        "Listed next " + pluralOf(ctx.category) + " for deletion.");
     }
 
     // (a) a number picks one piece off the LAST shown list — and moves to

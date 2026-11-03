@@ -27,7 +27,7 @@
     }catch(e){}
     return raw.trim();
   }
-  function plainNoun(c){ var m={"base/top":"top","base/bottom":"bottom","dress":"dress","layer/cardigan":"cardigan","layer/blazer":"blazer","scarf":"scarf","bag":"bag"}; return m[c]||c; }
+  function plainNoun(c){ var m={"base/top":"top","base/bottom":"bottom","dress":"dress","layer/cardigan":"cardigan","layer/blazer":"blazer","scarf":"scarf","bag":"bag","shoes":"shoes"}; return m[c]||c; }
 
   function pushTrace(trace, entry){
     try{
@@ -522,7 +522,7 @@
       } else {
         pushTrace(trace, "single:classify:ok:"+cat);
       }
-      if(cat==="dress"){ var h=(text||"").toLowerCase(); if(/scarf/.test(h)) cat="scarf"; else if(/bag|purse/.test(h)) cat="bag"; else if(/blazer|jacket/.test(h)) cat="layer/blazer"; else if(/cardigan|shrug/.test(h)) cat="layer/cardigan"; else if(/top|cami/.test(h)) cat="base/top"; else if(/trouser|jean|skirt|bottom/.test(h)) cat="base/bottom"; }
+      if(cat==="dress"){ var h=(text||"").toLowerCase(); if(/shoe|sneaker|trainer|heel|boot|sandal|loafer/.test(h)) cat="shoes"; else if(/scarf/.test(h)) cat="scarf"; else if(/bag|purse/.test(h)) cat="bag"; else if(/blazer|jacket/.test(h)) cat="layer/blazer"; else if(/cardigan|shrug/.test(h)) cat="layer/cardigan"; else if(/top|cami/.test(h)) cat="base/top"; else if(/trouser|jean|skirt|bottom/.test(h)) cat="base/bottom"; }
       var phrase=plainNoun(cat)||"garment";
       if(typeof phrase!=="string"||!phrase) phrase="garment";
       var rect=await segmentRect(imageDataUrl,o.metaClient,phrase);

@@ -124,15 +124,21 @@
       return { skill: "Complete_the_look", confidence: 90, reason: "complete-the-look phrasing" };
     }
     // Revise
-    if (/\b(no |without |drop |remove |lose |ditch |swap |skip ).*\b(bag|scarf|blazer|cardigan|dress|top|bottom|purse|coat|jacket|shrug)\b/.test(text)) {
+    if (/\b(no |without |drop |remove |lose |ditch |swap |skip ).*\b(bag|scarf|blazer|cardigan|dress|top|bottom|purse|coat|jacket|shrug|shoes?|boots?|heels?|trainers?|sneakers?|sandals?)\b/.test(text)) {
       return { skill: "revise_look", confidence: 89, reason: "revise phrasing matched" };
     }
     // Revise (add/include phrasing with no exclude word, e.g. "add the
-    // cardigan back", "can you add my blazer") — same verb/category
-    // vocabulary as revise_look's matchAdd, so a fresh add request
-    // reaches revise_look even outside a pending-expectation follow-up.
-    if (/\b(add|include|bring back|put back|with the|with my|plus|for the|for my)\b.*\b(bag|scarf|blazer|cardigan|dress|top|bottom|purse|coat|jacket|shrug)\b/.test(text)) {
+    // cardigan back", "can you add my blazer", "add my shoes") — same
+    // verb/category vocabulary as revise_look's matchAdd, so a fresh add
+    // request reaches revise_look even outside a pending-expectation
+    // follow-up. Shoes ride on top as the user's own extra (revise_look
+    // handles them pieceless); "wear X too" mirrors matchAdd's
+    // wear-too phrasing ("I'll wear my boots too").
+    if (/\b(add|include|bring back|put back|with the|with my|plus|for the|for my)\b.*\b(bag|scarf|blazer|cardigan|dress|top|bottom|purse|coat|jacket|shrug|shoes?|boots?|heels?|trainers?|sneakers?|sandals?)\b/.test(text)) {
       return { skill: "revise_look", confidence: 89, reason: "revise add phrasing matched" };
+    }
+    if (/\bwear\b.*\btoo\b/.test(text) && /\b(bag|scarf|blazer|cardigan|dress|top|bottom|purse|coat|jacket|shrug|shoes?|boots?|heels?|trainers?|sneakers?|sandals?)\b/.test(text)) {
+      return { skill: "revise_look", confidence: 89, reason: "revise wear-too phrasing matched" };
     }
     // Propose look — include natural variants like "cook up a look", "make me a look", "create a look"
     if (/\b(show me a look|propose.*look|what goes together|suggest.*look|put.*look together|style me|outfit idea|cook.*look|make.*look|create.*look|find.*bag|can you find)\b/.test(text)) {

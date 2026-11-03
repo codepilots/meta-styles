@@ -57,7 +57,8 @@ assert(
 );
 assert(proxy.parseJsonText("no json") === null, "spark: parseJsonText null on junk");
 assert(proxy.normalizeCategory("Tie-Blouse") === "layer/cardigan", "spark: tie-blouse maps to layer");
-assert(proxy.normalizeCategory("shoes") === null, "spark: shoes off-taxonomy -> null");
+assert(proxy.normalizeCategory("shoes") === "shoes", "spark: shoes is a storable taxonomy term");
+assert(proxy.normalizeCategory("hat") === null, "spark: hat off-taxonomy -> null");
 assert(proxy.normalizeCategory("dress") === "dress", "spark: dress kept");
 
 // --- Classifier validation (Spark proposes, taxonomy disposes) ----------------
@@ -66,7 +67,10 @@ assert(c1 && c1.category === "base/top" && c1.placeholder === false && c1.method
   "classify: live result keeps contract, placeholder false");
 const c2 = MS.classifyFromSpark({ labelHint: "shrug" }, { category: "base/top", confidence: 0.5 });
 assert(c2 && c2.category === "layer/cardigan", "classify: shrug hint forces layer over base");
-assert(MS.classifyFromSpark({}, { category: "shoes" }) === null, "classify: off-taxonomy -> null (fallback)");
+assert(MS.classifyFromSpark({}, { category: "hat" }) === null, "classify: off-taxonomy -> null (fallback)");
+assert(MS.classifyFromSpark({}, { category: "shoes" }) !== null &&
+  MS.classifyFromSpark({}, { category: "shoes" }).category === "shoes",
+  "classify: shoes is storable (placeholder false)");
 assert(MS.classifyFromSpark({}, null) === null, "classify: null result -> null");
 
 // --- Model copy mapping -------------------------------------------------------

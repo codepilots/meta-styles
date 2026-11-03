@@ -56,7 +56,7 @@ async function main(){
       }
       if(allImages.indexOf("invalid")!==-1){
         const payload={ output:[{ content:[{ type:"output_text", text: JSON.stringify({ pieces:[
-          { category:"shoes", attributes:{}, bbox:[0.1,0.1,0.2,0.2] },
+          { category:"socks", attributes:{}, bbox:[0.1,0.1,0.2,0.2] },
           { category:"hat", attributes:{}, bbox:[0.3,0.3,0.2,0.2] }
         ]}) }] }] };
         return Promise.resolve({ ok:true, status:200, text:()=>Promise.resolve(JSON.stringify(payload)) });

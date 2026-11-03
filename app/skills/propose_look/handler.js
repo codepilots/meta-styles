@@ -32,7 +32,7 @@
     var m = {
       "base/top": "top", "base/bottom": "bottom", "dress": "dress",
       "layer/cardigan": "cardigan", "layer/blazer": "blazer",
-      "scarf": "scarf", "bag": "bag"
+      "scarf": "scarf", "bag": "bag", "shoes": "shoes"
     };
     return m[c] || "piece";
   }
@@ -570,25 +570,167 @@
     return { urls: urls, refs: refs, total: items.length, downgraded: downgraded, payloadBytes: payloadBytes };
   }
 
+  function getPhotoThumbSvc() {
+    try {
+      if (typeof require !== "undefined") return require("../../photo-thumb.js");
+    } catch (e) { /* fall through to global */ }
+    try {
+      if (root.MetaStyles && root.MetaStyles.photoThumb) return root.MetaStyles.photoThumb;
+    } catch (e2) { /* none available */ }
+    return null;
+  }
+
+  // Garment images for a preview with a fixed image-slot budget: one ref
+  // per chosen piece for ALL chosen pieces (no 4 cap), with the same
+  // per-piece preference as buildGarmentRefUrls (image_original -> 384px,
+  // else photo_thumb, downgraded flags, pieces with no bytes skipped).
+  // The <=2MB defensive payload rule still applies while accumulating
+  // (first ref kept, over-cap extras skipped as downgraded). When the
+  // refs fit `slots` they ride individually (today's behaviour);
+  // otherwise ALL refs pre-combine into ONE composite reference sheet
+  // (composeSheetSync over all refs in selection order) that counts as
+  // one ref. Composition failure (or an over-cap sheet) falls back to
+  // the first `slots` individual refs, downgraded. Returns { images,
+  // mode ("individual"|"composite"), refs (per-piece audit rows, each
+  // with piece_id, category, ref_source, ref_bytes, downgraded, plus a
+  // cell index when in the sheet), orderedNouns (plain nouns of the
+  // pieces actually represented, in sheet/attachment order), total,
+  // represented, downgraded, payloadBytes }. Never throws.
+  function buildGarmentImages(activePieces, chosenItems, slots) {
+    try {
+      var map = {};
+      (Array.isArray(activePieces) ? activePieces : []).forEach(function (p) {
+        if (p && p.piece_id) map[p.piece_id] = p;
+      });
+      var items = Array.isArray(chosenItems) ? chosenItems : [];
+      var cap = (typeof slots === "number" && isFinite(slots)) ? Math.floor(slots) : 4;
+      if (!(cap >= 1)) cap = 1;
+      var built = [];
+      var downgraded = false;
+      var payloadBytes = 0;
+      for (var i = 0; i < items.length; i++) {
+        var piece = map[items[i] && items[i].id];
+        if (!piece) { downgraded = true; continue; }
+        var u = null, down = false, src = null;
+        if (typeof piece.image_original === "string" && /^data:image\//.test(piece.image_original)) {
+          var s = scaleProfileRef(piece.image_original);
+          if (s) { u = s.url; down = !s.scaled; src = "image_original"; }
+          else if (typeof piece.photo_thumb === "string" && /^data:image\//.test(piece.photo_thumb)) { u = piece.photo_thumb; down = true; src = "photo_thumb"; }
+          else { downgraded = true; continue; }
+        } else if (typeof piece.photo_thumb === "string" && /^data:image\//.test(piece.photo_thumb)) {
+          u = piece.photo_thumb; down = true; src = "photo_thumb";
+        } else { downgraded = true; continue; }
+        var len = refBytesLen(u);
+        if (built.length === 0 || payloadBytes + len <= ONUSER_PAYLOAD_CAP) {
+          built.push({ url: u, piece_id: items[i].id, category: items[i].category, source: src, bytes: len, downgraded: !!down });
+          payloadBytes += len;
+          if (down) downgraded = true;
+        } else {
+          downgraded = true;
+        }
+      }
+      var total = items.length;
+      function rowOf(b, cell) {
+        var r = {
+          piece_id: b.piece_id, category: b.category,
+          ref_source: b.source, ref_bytes: b.bytes, downgraded: b.downgraded
+        };
+        if (typeof cell === "number" && cell >= 0) r.cell = cell;
+        return r;
+      }
+      function nounsOf(list) {
+        return list.map(function (b) { return plainNoun(b.category); });
+      }
+      if (built.length <= cap) {
+        return {
+          images: built.map(function (b) { return b.url; }),
+          mode: "individual",
+          refs: built.map(function (b) { return rowOf(b); }),
+          orderedNouns: nounsOf(built),
+          total: total, represented: built.length,
+          downgraded: downgraded, payloadBytes: payloadBytes
+        };
+      }
+      var sheet = null;
+      try {
+        var pt = getPhotoThumbSvc();
+        if (pt && typeof pt.composeSheetSync === "function") {
+          sheet = pt.composeSheetSync(built.map(function (b) { return b.url; }), { maxSide: 1024 });
+        }
+      } catch (e) { sheet = null; }
+      if (sheet && typeof sheet.url === "string" && /^data:image\//.test(sheet.url)) {
+        var sheetLen = refBytesLen(sheet.url);
+        if (sheetLen <= ONUSER_PAYLOAD_CAP) {
+          var order = Array.isArray(sheet.included) ? sheet.included : [];
+          // The sheet's `included` indexes are authoritative: only placed
+          // inputs are represented (grid order = placement order). Skipped
+          // inputs get no cell and count as missing, so the honest
+          // "Only N of M" shortfall line applies to them like any other
+          // missing ref — the prompt must never name a garment that is
+          // not on the sheet.
+          var placed = [];
+          for (var oi = 0; oi < order.length; oi++) {
+            var bi = order[oi];
+            if (typeof bi === "number" && isFinite(bi) && Math.floor(bi) === bi &&
+                bi >= 0 && bi < built.length && placed.indexOf(bi) === -1) {
+              placed.push(bi);
+            }
+          }
+          if (placed.length > 0) {
+            return {
+              images: [sheet.url],
+              mode: "composite",
+              refs: placed.map(function (bi2, gridPos) { return rowOf(built[bi2], gridPos); }),
+              orderedNouns: placed.map(function (bi3) { return plainNoun(built[bi3].category); }),
+              total: total, represented: placed.length,
+              downgraded: downgraded || placed.length < built.length, payloadBytes: sheetLen
+            };
+          }
+        }
+      }
+      var fb = built.slice(0, cap);
+      var fbBytes = 0;
+      fb.forEach(function (b) { fbBytes += b.bytes; });
+      return {
+        images: fb.map(function (b) { return b.url; }),
+        mode: "individual",
+        refs: fb.map(function (b) { return rowOf(b); }),
+        orderedNouns: nounsOf(fb),
+        total: total, represented: fb.length,
+        downgraded: true, payloadBytes: fbBytes
+      };
+    } catch (e) {
+      return {
+        images: [], mode: "individual", refs: [], orderedNouns: [],
+        total: Array.isArray(chosenItems) ? chosenItems.length : 0,
+        represented: 0, downgraded: true, payloadBytes: 0
+      };
+    }
+  }
+
   // The on-user preview request: profile refs FIRST (headshot,
-  // full_body), then garment refs — order documented in the prompt and
-  // in meta. Max 4 images total (proxy cap): both profile refs plus up
-  // to 2 garment refs; truncation is reported honestly in the prompt
-  // and in meta. o: { metaClient, headshot, fullBody, garmentRefs[],
-  // garmentTotal, nouns, context, shareId, stageImage, toolSteps }.
+  // full_body), then garment images — order documented in the prompt and
+  // in meta. Max 4 images total (proxy cap): both profile refs plus the
+  // garment images from buildGarmentImages(activePieces, chosenItems,
+  // slots), slots = 2 by default. When garments outnumber the free slots
+  // they ride as ONE composite reference sheet (mode "composite");
+  // otherwise they ride individually. The "Only N of M" sentence appears
+  // only when pieces are genuinely missing (no bytes / composition
+  // failure), never just because of slot count. o: { metaClient,
+  // headshot, fullBody, activePieces, chosenItems, slots, nouns,
+  // context, shareId, stageImage, toolSteps }. The legacy { garmentRefs,
+  // garments, garmentTotal } shape still rides the same individual path.
+  // meta.referencePieces reports pieces represented (not image count);
+  // meta.referenceMode names the garment path ("individual"|"composite").
   async function requestOnUserPreview(o) {
     var auditSkill = (o && typeof o.skill === "string" && o.skill) ? o.skill : "propose_look";
-    // Per-garment audit detail, parallel to o.garmentRefs (built by
-    // buildGarmentRefUrls above): {piece_id, category, ref_source,
-    // ref_bytes, downgraded}. Callers pass garBuilt.refs; when absent the
-    // entry still records counts and prompt text, never bytes.
-    var garmentNotes = (o && Array.isArray(o.garments)) ? o.garments : [];
     var toolSteps = typeof o.toolSteps === "number" ? o.toolSteps : 0;
     var imageDelivery = { requested: true, generated: false, delivered: false, reason: "preview_failed" };
     var meta = {
       renderOnUser: true, profileRefs: 0, referencePieces: 0,
-      referenceGarmentTotal: typeof o.garmentTotal === "number" ? o.garmentTotal : 0,
-      referenceDowngraded: false, referencePayloadBytes: 0, previewPrompt: ""
+      referenceGarmentTotal: 0,
+      referenceDowngraded: false, referencePayloadBytes: 0, previewPrompt: "",
+      referenceMode: "individual"
     };
     var hs = scaleProfileRef(o.headshot);
     var fb = scaleProfileRef(o.fullBody);
@@ -597,38 +739,82 @@
       return { image: null, imageDelivery: imageDelivery, meta: meta, toolSteps: toolSteps };
     }
     meta.profileRefs = 2;
-    var garmentRefs = Array.isArray(o.garmentRefs) ? o.garmentRefs : [];
+    var built = null;
+    if (o && Array.isArray(o.chosenItems)) {
+      built = buildGarmentImages(o.activePieces, o.chosenItems,
+        (o && typeof o.slots === "number") ? o.slots : 2);
+    } else {
+      // Legacy callers pass prebuilt refs; they always ride individually.
+      var legacyRefs = (o && Array.isArray(o.garmentRefs)) ? o.garmentRefs : [];
+      var legacyNotes = (o && Array.isArray(o.garments)) ? o.garments : [];
+      built = {
+        images: legacyRefs.slice(), mode: "individual",
+        refs: legacyNotes.slice(), orderedNouns: [],
+        total: (o && typeof o.garmentTotal === "number") ? o.garmentTotal : legacyRefs.length,
+        represented: 0, downgraded: false, payloadBytes: 0
+      };
+    }
+    meta.referenceGarmentTotal = built.total;
     var images = [hs.url, fb.url];
     var payloadBytes = refBytesLen(hs.url) + refBytesLen(fb.url);
     var downgraded = !(hs.scaled && fb.scaled);
-    var passed = 0;
+    if (built.downgraded) downgraded = true;
     var passedGarments = [];
-    // Proxy cap: 4 images max, so at most 2 garment refs ride along.
-    for (var i = 0; i < garmentRefs.length && images.length < 4; i++) {
-      var len = refBytesLen(garmentRefs[i]);
-      if (payloadBytes + len <= ONUSER_PAYLOAD_CAP) {
-        images.push(garmentRefs[i]);
-        payloadBytes += len;
-        passed += 1;
-        if (garmentNotes[i]) passedGarments.push(garmentNotes[i]);
+    var compositeAttached = false;
+    if (built.mode === "composite" && built.images.length === 1) {
+      // One sheet carries every represented garment; it counts as one ref.
+      var sheetLen = refBytesLen(built.images[0]);
+      if (payloadBytes + sheetLen <= ONUSER_PAYLOAD_CAP) {
+        images.push(built.images[0]);
+        payloadBytes += sheetLen;
+        passedGarments = built.refs.slice();
+        compositeAttached = true;
       } else {
         downgraded = true;
       }
+    } else {
+      // Proxy cap: 4 images max.
+      for (var i = 0; i < built.images.length && images.length < 4; i++) {
+        var len = refBytesLen(built.images[i]);
+        if (payloadBytes + len <= ONUSER_PAYLOAD_CAP) {
+          images.push(built.images[i]);
+          payloadBytes += len;
+          if (built.refs[i]) passedGarments.push(built.refs[i]);
+        } else {
+          downgraded = true;
+        }
+      }
     }
-    if (meta.referenceGarmentTotal > passed) downgraded = true;
-    meta.referencePieces = passed;
+    var represented = compositeAttached ? built.represented : passedGarments.length;
+    if (built.total > represented) downgraded = true;
+    meta.referencePieces = represented;
     meta.referenceDowngraded = downgraded;
     meta.referencePayloadBytes = payloadBytes;
-    var previewPrompt =
-      "Render the selected look worn by the same user shown in the reference photos, preserving identity and garment details \u2014 not a flat-lay. " +
-      "Image 1 is the wearer's headshot and image 2 is their full-body reference: keep this person's face, identity, and proportions exactly. " +
-      "The remaining attached images are the selected wardrobe garments (" + o.nouns + "): dress the person in exactly this look, preserving each garment's colour, print, silhouette, and details; do not substitute generic garments; do not add unreferenced garments. " +
-      "Full-body portrait of the person wearing the complete look, soft pastel backdrop. No unworn garments laid out, no floating clothes, no readable text.";
+    meta.referenceMode = compositeAttached ? "composite" : "individual";
+    var previewPrompt;
+    if (compositeAttached) {
+      previewPrompt =
+        "Render the selected look worn by the same user shown in the reference photos, preserving identity and garment details \u2014 not a flat-lay. " +
+        "Image 1 is the wearer's headshot and image 2 is their full-body reference: keep this person's face, identity, and proportions exactly. " +
+        "Image 3 is a reference sheet of the " + built.represented + " selected garments arranged in a grid, read left-to-right, top-to-bottom: " + built.orderedNouns.join(", ") + ". " +
+        "Every cell is a separate garment; dress the person in ALL of them, preserving each garment's colour, print, silhouette, and details; do not render the grid, white background, or sheet layout itself; do not substitute generic garments; do not add unreferenced garments. " +
+        "Full-body portrait of the person wearing the complete look, soft pastel backdrop. No unworn garments laid out, no floating clothes, no readable text.";
+    } else {
+      previewPrompt =
+        "Render the selected look worn by the same user shown in the reference photos, preserving identity and garment details \u2014 not a flat-lay. " +
+        "Image 1 is the wearer's headshot and image 2 is their full-body reference: keep this person's face, identity, and proportions exactly. " +
+        "The remaining attached images are the selected wardrobe garments (" + o.nouns + "): dress the person in exactly this look, preserving each garment's colour, print, silhouette, and details; do not substitute generic garments; do not add unreferenced garments. " +
+        "Full-body portrait of the person wearing the complete look, soft pastel backdrop. No unworn garments laid out, no floating clothes, no readable text.";
+    }
     if (o.context) {
       previewPrompt += " Styling brief from the wearer: " + o.context + ".";
     }
-    if (meta.referenceGarmentTotal > passed) {
-      previewPrompt += " Only " + passed + " of " + meta.referenceGarmentTotal + " selected pieces have attached references; render those faithfully and complete the look consistently.";
+    if (built.total > represented) {
+      // Name the full look (core then extras) so a piece with no attached
+      // reference — e.g. a pieceless shoes extra — is still styled in.
+      var fullLookBit = (typeof o.nouns === "string" && o.nouns)
+        ? " (the full look is " + o.nouns + ")" : "";
+      previewPrompt += " Only " + represented + " of " + built.total + " selected pieces have attached references" + fullLookBit + "; render those faithfully and complete the look consistently.";
     }
     meta.previewPrompt = previewPrompt;
     var image = null;
@@ -639,7 +825,8 @@
       recordPreviewAudit({
         skill: auditSkill, renderOnUser: true, profileRefs: meta.profileRefs,
         refs: passedGarments, previewPromptPreview: previewPrompt,
-        totalRefs: images.length, totalPayloadBytes: payloadBytes
+        totalRefs: images.length, totalPayloadBytes: payloadBytes,
+        mode: meta.referenceMode
       });
       toolSteps += 1;
       try {
@@ -701,13 +888,19 @@
       if (Array.isArray(o.refs)) {
         for (var i = 0; i < o.refs.length; i++) {
           var r = o.refs[i] || {};
-          refs.push({
+          var row = {
             piece_id: typeof r.piece_id === "string" ? r.piece_id : null,
             category: typeof r.category === "string" ? r.category : null,
             ref_source: r.ref_source === "image_original" ? "image_original" : "photo_thumb",
             ref_bytes: typeof r.ref_bytes === "number" ? r.ref_bytes : 0,
             downgraded: r.downgraded === true
-          });
+          };
+          // Composite-sheet cell index (integer >= 0 when this ref rides
+          // in the sheet, null otherwise). Bytes can never smuggle in:
+          // only this numeric key is kept.
+          row.cell = (typeof r.cell === "number" && isFinite(r.cell) &&
+            Math.floor(r.cell) === r.cell && r.cell >= 0) ? r.cell : null;
+          refs.push(row);
         }
       }
       previewAudit.push({
@@ -718,7 +911,8 @@
         refs: refs,
         previewPromptPreview: previewPromptPreviewText(o.previewPromptPreview || o.previewPrompt),
         totalRefs: typeof o.totalRefs === "number" ? o.totalRefs : refs.length,
-        totalPayloadBytes: typeof o.totalPayloadBytes === "number" ? o.totalPayloadBytes : 0
+        totalPayloadBytes: typeof o.totalPayloadBytes === "number" ? o.totalPayloadBytes : 0,
+        mode: o.mode === "composite" ? "composite" : "individual"
       });
       if (previewAudit.length > PREVIEW_AUDIT_CAP) previewAudit = previewAudit.slice(-PREVIEW_AUDIT_CAP);
       return previewAudit[previewAudit.length - 1];
@@ -935,11 +1129,16 @@
     var prefsText = typeof o.preferences === "string" ? o.preferences : "";
     var context = (userText + (prefsText ? ". " + prefsText : "")).slice(0, 300);
     if (!context.trim()) context = "";
+    // Shoes are storable wardrobe pieces but NEVER enter an automatic
+    // look: the Spark prompt pool and the local fallback pool both skip
+    // them, so an automatic look never fails just because shoes exist.
+    // (validateSelection/strictShape still reject them as a backstop.)
+    var pool = active.filter(function (p) { return p && p.category !== "shoes"; });
     var sparkLooks = null;
     var sparkError = null;
     if (metaClient && typeof metaClient.assemble === "function") {
       toolSteps += 1;
-      var promptPieces = active.map(function (p) { return { id: p.piece_id, category: p.category }; });
+      var promptPieces = pool.map(function (p) { return { id: p.piece_id, category: p.category }; });
       try {
         var res = await metaClient.assemble(promptPieces, context);
         if (res && Array.isArray(res.looks) && res.looks.length > 0) {
@@ -962,7 +1161,7 @@
     if (sparkLooks) {
       for (var li = 0; li < sparkLooks.length; li++) {
         var cand = sparkLooks[li] || {};
-        var checked = validateSelection(active, cand.pieceIds, assembleLook);
+        var checked = validateSelection(pool, cand.pieceIds, assembleLook);
         if (checked.ok) {
           chosen = checked;
           chosenRationale = cleanRationale(cand.rationale);
@@ -978,7 +1177,7 @@
     var source = chosen ? "spark" : "fallback";
     var fallbackRejected = null;
     if (!chosen) {
-      var fb = fallbackChoose(active, assembleLook);
+      var fb = fallbackChoose(pool, assembleLook);
       if (fb.items) {
         chosen = { items: fb.items, card: fb.card };
         chosenRationale = localRationale(fb.items, fb.card);
@@ -1040,11 +1239,10 @@
     var renderOnUserMeta = null;
     if (renderIntent && renderProfile && renderProfile.consent &&
         renderProfile.headshot && renderProfile.full_body) {
-      var garBuilt = buildGarmentRefUrls(active, chosen.items);
       var onUser = await requestOnUserPreview({
         skill: "propose_look", metaClient: metaClient,
         headshot: renderProfile.headshot, fullBody: renderProfile.full_body,
-        garmentRefs: garBuilt.urls, garments: garBuilt.refs, garmentTotal: chosen.items.length,
+        activePieces: active, chosenItems: chosen.items,
         nouns: nouns, context: context, shareId: shareId, stageImage: stageImage,
         toolSteps: toolSteps
       });
@@ -1057,86 +1255,19 @@
     }
     if (!didRenderOnUser) {
     // 5. Preview only after a validated look; honour the real return shape.
-    // Photo-reference (M25): for each SELECTED piece, build Muse reference at ~384px via
-    // shared thumb pipeline (JPEG through existing ffmpeg path, same fail-soft):
-    // prefer image_original-derived 384px, fallback to photo_thumb. Payload
-    // defensively capped at ~2 MB total (skip extras beyond cap, still >=1 ref).
-    var REF_DIM_PX = 384;
-    var REF_PAYLOAD_CAP = 2 * 1024 * 1024;
-    function refBytesLen(dataUrl){
-      try{
-        var b64=dataUrl.slice(dataUrl.indexOf(",")+1);
-        if(typeof Buffer!=="undefined") return Buffer.from(b64,"base64").length;
-        return Math.ceil(b64.length*3/4);
-      }catch(e){ return dataUrl.length; }
-    }
-    function buildRefForPiece(piece){
-      // Prefer image_original-derived 384px via shared pipeline. The
-      // source label below feeds the preview audit ring only (additive).
-      if(piece && typeof piece.image_original==="string" && /^data:image\//.test(piece.image_original)){
-        try{
-          var pt=null;
-          try{ if(typeof require!=="undefined") pt=require("../../photo-thumb.js"); }catch(e){ pt=null; }
-          if((!pt||typeof pt.makeSync!=="function")&&root.MetaStyles&&root.MetaStyles.photoThumb) pt=root.MetaStyles.photoThumb;
-          if(pt&&typeof pt.makeSync==="function"){
-            var r=pt.makeSync(piece.image_original, null, REF_DIM_PX);
-            if(typeof r==="string"&&r) return { url:r, downgraded:false, source:"image_original" };
-          }
-        }catch(e){}
-        // Original existed but 384 failed -> fallback to thumb counts as downgraded.
-        if(piece && typeof piece.photo_thumb==="string" && /^data:image\//.test(piece.photo_thumb)){
-          return { url:piece.photo_thumb, downgraded:true, source:"photo_thumb" };
-        }
-        return null;
-      }
-      if(piece && typeof piece.photo_thumb==="string" && /^data:image\//.test(piece.photo_thumb)){
-        return { url:piece.photo_thumb, downgraded:true, source:"photo_thumb" };
-      }
-      return null;
-    }
-    var byId = byIdMap(active);
-    var refCandidates = [];
-    var anyDowngraded=false;
-    for (var ti = 0; ti < chosen.items.length; ti++) {
-      var lp = byId[chosen.items[ti].id];
-      if(!lp) continue;
-      var built=buildRefForPiece(lp);
-      if(built){
-        // Carry the piece identity alongside the built ref so the audit
-        // ring can name exactly what was sent, in selection order.
-        built.piece_id = chosen.items[ti].id;
-        built.category = chosen.items[ti].category;
-        refCandidates.push(built);
-        if(built.downgraded) anyDowngraded=true;
-      }
-    }
-    // Defensive total payload cap ~2 MB: keep at least 1 ref, skip extras that would exceed cap.
-    // Ordering preserved; we accumulate in selection order and skip any that push over cap.
-    var refThumbs = [];
-    var auditRefs = [];
-    var payloadBytes=0;
-    for(var ri=0; ri<refCandidates.length; ri++){
-      var cand=refCandidates[ri];
-      var len=refBytesLen(cand.url);
-      if(refThumbs.length===0){
-        // Always keep first ref even if over cap alone (still >=1 ref)
-        refThumbs.push(cand.url);
-        auditRefs.push({ piece_id: cand.piece_id, category: cand.category, ref_source: cand.source, ref_bytes: len, downgraded: !!cand.downgraded });
-        payloadBytes+=len;
-      } else if(payloadBytes+len <= REF_PAYLOAD_CAP){
-        refThumbs.push(cand.url);
-        auditRefs.push({ piece_id: cand.piece_id, category: cand.category, ref_source: cand.source, ref_bytes: len, downgraded: !!cand.downgraded });
-        payloadBytes+=len;
-      } else {
-        // Skip extra beyond cap — honest meta via downgraded flag.
-        anyDowngraded=true;
-      }
-    }
-    // Legacy cap <=4 already enforced via strictShape (max 4 pieces), but ensure.
-    if(refThumbs.length>4){ refThumbs=refThumbs.slice(0,4); auditRefs=auditRefs.slice(0,4); anyDowngraded=true; }
-    var refPieces = refThumbs.length;
+    // Photo-reference (M25+M27): one ref per SELECTED piece via the
+    // shared buildGarmentImages helper (slots = 4, the proxy cap). More
+    // refs than slots pre-combine into ONE composite reference sheet
+    // that counts as one ref; the "Only N of M" sentence appears only
+    // when pieces are genuinely missing, never for slot count.
+    var garFlatLay = buildGarmentImages(active, chosen.items, 4);
+    var refThumbs = garFlatLay.images;
+    var auditRefs = garFlatLay.refs;
+    var payloadBytes = garFlatLay.payloadBytes;
+    var anyDowngraded = garFlatLay.downgraded;
+    var refPieces = garFlatLay.represented;
     var refThumb = refThumbs[0] || null;
-    var missingRefs = chosen.items.length - refThumbs.length;
+    var missingRefs = garFlatLay.total - garFlatLay.represented;
     var previewPrompt =
       "Y2K fairycore flat-lay look card, soft pastel background, garments laid out neatly: " +
       nouns + ". No people, no worn try-on, no readable text.";
@@ -1146,10 +1277,15 @@
       previewPrompt += " Styling brief from the wearer: " + context + ".";
     }
     if (refThumbs.length > 0) {
-      previewPrompt += " Use the attached reference garment photo for the true colors and silhouette.";
-      previewPrompt += " Each attached image is a distinct wardrobe garment; preserve the colour, print, silhouette, and details of every attached reference as a separate flat-lay item; do not substitute generic garments; do not add unreferenced garments; no person/try-on/readable text.";
+      if (garFlatLay.mode === "composite") {
+        previewPrompt += " The attached image is a reference sheet of the " + garFlatLay.represented + " selected garments arranged in a grid, read left-to-right, top-to-bottom: " + garFlatLay.orderedNouns.join(", ") + ".";
+        previewPrompt += " Lay each garment from the sheet out as a separate flat-lay item, preserving each garment's colour, print, silhouette, and details; do not reproduce the grid, white background, or sheet layout itself; do not substitute generic garments; do not add unreferenced garments; no person/try-on/readable text.";
+      } else {
+        previewPrompt += " Use the attached reference garment photo for the true colors and silhouette.";
+        previewPrompt += " Each attached image is a distinct wardrobe garment; preserve the colour, print, silhouette, and details of every attached reference as a separate flat-lay item; do not substitute generic garments; do not add unreferenced garments; no person/try-on/readable text.";
+      }
       if (missingRefs > 0) {
-        previewPrompt += " Only " + refThumbs.length + " of " + chosen.items.length + " selected pieces have reference photos; the remaining piece(s) are not represented in references.";
+        previewPrompt += " Only " + garFlatLay.represented + " of " + chosen.items.length + " selected pieces have reference photos; the remaining piece(s) are not represented in references.";
       }
     }
     var imageDelivery = { requested: false, generated: false, delivered: false, reason: "no_preview_client" };
@@ -1163,7 +1299,8 @@
       recordPreviewAudit({
         skill: "propose_look", renderOnUser: false,
         refs: auditRefs, previewPromptPreview: previewPrompt,
-        totalRefs: refThumbs.length, totalPayloadBytes: payloadBytes
+        totalRefs: refThumbs.length, totalPayloadBytes: payloadBytes,
+        mode: garFlatLay.mode
       });
       toolSteps += 1;
       try {
@@ -1243,6 +1380,7 @@
       outMeta.referenceGarmentTotal = renderOnUserMeta.referenceGarmentTotal;
       outMeta.referenceDowngraded = renderOnUserMeta.referenceDowngraded;
       outMeta.referencePayloadBytes = renderOnUserMeta.referencePayloadBytes;
+      outMeta.referenceMode = renderOnUserMeta.referenceMode;
       outMeta.profileRefs = renderOnUserMeta.profileRefs;
       // The exact on-user prompt travels in meta (never any image
       // bytes) so tests and status-adjacent paths can audit the
@@ -1253,6 +1391,7 @@
       outMeta.referencePieces = refPieces;
       outMeta.referenceDowngraded = anyDowngraded;
       outMeta.referencePayloadBytes = payloadBytes;
+      outMeta.referenceMode = garFlatLay.mode;
     }
     return {
       text: reply,
@@ -1283,6 +1422,7 @@
     resolveOwnProfilePendings: resolveOwnProfilePendings,
     handleDeletePhotos: handleDeletePhotos, handleProfileIntake: handleProfileIntake,
     scaleProfileRef: scaleProfileRef, buildGarmentRefUrls: buildGarmentRefUrls,
+    buildGarmentImages: buildGarmentImages,
     requestOnUserPreview: requestOnUserPreview,
     refBytesLen: refBytesLen, previewPromptPreviewText: previewPromptPreviewText,
     recordPreviewAudit: recordPreviewAudit, getPreviewAudit: getPreviewAudit,

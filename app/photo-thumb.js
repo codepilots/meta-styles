@@ -56,6 +56,11 @@
   var REF_BYTE_BUDGET = 500 * 1024; // 384px PNG typically 20-200KB, allow 500KB max
   var REF_MAX_CHARS = 800 * 1024; // ~500KB raw -> ~700KB base64
   var REF_JPEG_BUDGET = 120 * 1024; // per-piece JPEG ref target (cropped <=384px, raw bytes)
+  var SHEET_MAX_SIDE = 1024;        // composite reference sheet longest side, px
+  var SHEET_CELL_MAX = 384;         // composite sheet cell side cap, px
+  var SHEET_GUTTER = 16;            // composite sheet gutter + outer margin, px
+  var SHEET_MARGIN = 16;
+  var SHEET_JPEG_BUDGET = 400 * 1024; // composite sheet JPEG target (raw bytes)
   var MAX_INPUT_BYTES = 20 * 1024 * 1024; // decode guard (CPU/DoS bound)
   var MAX_PIXELS = 12 * 1000 * 1000;      // decoded-pixel guard
 
@@ -624,6 +629,86 @@
     }
   }
 
+  // Composite reference sheet (Node stdlib + optional ffmpeg for JPEG
+  // output). Pre-combines N per-piece refs into ONE image so a look with
+  // more garments than free preview slots still carries every garment:
+  // grid cols = ceil(sqrt(n)), rows = ceil(n/cols); square cells with
+  // side = min(384, floor((maxSide - gutters) / max(cols, rows)));
+  // 16px gutter and outer margin; plain white background; each ref
+  // aspect-fit (resampleFit, downscale-only) and centred in its cell.
+  // No text, numbers, or borders are drawn. Each input decodes through
+  // the existing decode path (decodePixels, ffmpeg for JPEG) fail-soft —
+  // undecodable inputs are skipped, never fatal. Output prefers JPEG via
+  // ffmpeg (pngToJpegBytes, quality stepped down to fit ~400KB raw),
+  // falls back to PNG (encodePng), else null. Returns
+  // { url, included, cols, rows } (included = input indexes placed, in
+  // grid order) or null when nothing decodes. Never throws. Bounded:
+  // inputs capped by MAX_INPUT_BYTES each, sheet pixels by MAX_PIXELS.
+  function composeSheetSync(dataUrls, opts) {
+    try {
+      if (!Array.isArray(dataUrls) || dataUrls.length === 0) return null;
+      var maxSide = (opts && typeof opts.maxSide === "number" && isFinite(opts.maxSide))
+        ? Math.floor(opts.maxSide) : SHEET_MAX_SIDE;
+      if (maxSide < 64) maxSide = 64;
+      if (maxSide > SHEET_MAX_SIDE) maxSide = SHEET_MAX_SIDE;
+      var decoded = [];
+      for (var i = 0; i < dataUrls.length; i++) {
+        try {
+          var parsed = parseDataUrl(dataUrls[i]);
+          if (!parsed) continue;
+          var kind = sniffKind(parsed.bytes);
+          if (kind !== "png" && kind !== "jpeg") continue;
+          var img = decodePixels(parsed.bytes, SHEET_CELL_MAX);
+          if (!img || !img.rgb || !(img.w > 0) || !(img.h > 0)) continue;
+          decoded.push({ img: img, index: i });
+        } catch (e) { /* skip this input */ }
+      }
+      if (decoded.length === 0) return null;
+      var n = decoded.length;
+      var cols = Math.ceil(Math.sqrt(n));
+      var rows = Math.ceil(n / cols);
+      var m = Math.max(cols, rows);
+      var cell = Math.floor((maxSide - SHEET_GUTTER * (m + 1)) / m);
+      if (cell > SHEET_CELL_MAX) cell = SHEET_CELL_MAX;
+      if (cell < 1) cell = 1;
+      var sheetW = SHEET_MARGIN * 2 + cols * cell + (cols - 1) * SHEET_GUTTER;
+      var sheetH = SHEET_MARGIN * 2 + rows * cell + (rows - 1) * SHEET_GUTTER;
+      if (sheetW * sheetH > MAX_PIXELS) return null;
+      var sheet = new Uint8Array(sheetW * sheetH * 3);
+      sheet.fill(255);
+      for (var k = 0; k < decoded.length; k++) {
+        var fit = resampleFit(decoded[k].img, cell);
+        var row = Math.floor(k / cols), col = k % cols;
+        var ox = SHEET_MARGIN + col * (cell + SHEET_GUTTER) + Math.floor((cell - fit.w) / 2);
+        var oy = SHEET_MARGIN + row * (cell + SHEET_GUTTER) + Math.floor((cell - fit.h) / 2);
+        for (var y = 0; y < fit.h; y++) {
+          for (var x = 0; x < fit.w; x++) {
+            var s = (y * fit.w + x) * 3, d = ((oy + y) * sheetW + (ox + x)) * 3;
+            sheet[d] = fit.rgb[s]; sheet[d + 1] = fit.rgb[s + 1]; sheet[d + 2] = fit.rgb[s + 2];
+          }
+        }
+      }
+      var pngBytes = encodePng(sheetW, sheetH, sheet);
+      var included = decoded.map(function (e) { return e.index; });
+      var quals = [6, 10, 16, 24, 31], qi;
+      for (qi = 0; qi < quals.length; qi++) {
+        var jbytes = pngToJpegBytes(pngBytes, quals[qi]);
+        if (jbytes && jbytes.length <= SHEET_JPEG_BUDGET) {
+          return {
+            url: "data:image/jpeg;base64," + bytesToB64(jbytes),
+            included: included, cols: cols, rows: rows
+          };
+        }
+      }
+      return {
+        url: "data:image/png;base64," + bytesToB64(pngBytes),
+        included: included, cols: cols, rows: rows
+      };
+    } catch (e) {
+      return null;
+    }
+  }
+
   // Browser path: real downscale via canvas (any format the browser
   // decodes, including WebP/GIF the pure-JS path rejects). Async.
   // Resolves null on any failure. Unused in Node (no document).
@@ -675,6 +760,12 @@
     REF_BYTE_BUDGET: REF_BYTE_BUDGET,
     REF_MAX_CHARS: REF_MAX_CHARS,
     REF_JPEG_BUDGET: REF_JPEG_BUDGET,
+    SHEET_MAX_SIDE: SHEET_MAX_SIDE,
+    SHEET_CELL_MAX: SHEET_CELL_MAX,
+    SHEET_GUTTER: SHEET_GUTTER,
+    SHEET_MARGIN: SHEET_MARGIN,
+    SHEET_JPEG_BUDGET: SHEET_JPEG_BUDGET,
+    composeSheetSync: composeSheetSync,
     sniffKind: sniffKind,
     parseDataUrl: parseDataUrl,
     decodePng: decodePng,

@@ -258,7 +258,7 @@ async function run() {
       expires_at: new Date(Date.now() + 3600 * 1000).toISOString(), bogus: 1,
     }), /rejected key/, "unknown key rejected");
     assert.throws(() => cat.setListContext({
-      skill: "view_wardrobe_item", category: "shoes",
+      skill: "view_wardrobe_item", category: "hat",
       piece_ids: [], offset: 0,
       expires_at: new Date(Date.now() + 3600 * 1000).toISOString(),
     }), /category/, "non-taxonomy category rejected");

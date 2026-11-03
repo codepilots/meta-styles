@@ -4,6 +4,7 @@
  * Stdlib only, SYNTH_ fixtures, no network.
  * Covers opencode-category-coerce.md step 3 handler side:
  *  - classify placeholder:true + no text hint -> default dress path (auto-add, honest)
+ *  - text hint "sneakers" -> catalogued as shoes (storable category)
  *  - text-only turn with pendingBag null -> "Nothing pending" reply shape
  */
 const assert = require("assert");
@@ -56,6 +57,24 @@ async function run() {
     assert.strictEqual(cat.getActivePieces().length, 1, "one piece added");
     assert.strictEqual(cat.getActivePieces()[0].category, "scarf", "text hint scarf wins, got " + cat.getActivePieces()[0].category);
     console.log("  pass: placeholder + scarf hint -> scarf");
+  }
+
+  console.log("\n[placeholder classify + text hint sneakers -> shoes]");
+  {
+    const cat = Wardrobe.createCatalog({ userKey: "SYNTH_coerce_hint_shoes_" + Date.now() });
+    const placeholderClient = {
+      classify: async function () { return { category: "dress", confidence: 0, placeholder: true }; },
+      segment: async function () { return { boxes: [] }; },
+      detectGarments: async function () { throw new Error("SYNTH detect unavailable"); }
+    };
+    const r = await Handler.handle({
+      catalog: cat, text: "SYNTH my sneakers", imageDataUrl: tinyPngDataUrl(),
+      shareId: "SYNTH_share_coerce_hint_shoes_1", metaClient: placeholderClient
+    });
+    assert.strictEqual(cat.getActivePieces().length, 1, "one piece added");
+    assert.strictEqual(cat.getActivePieces()[0].category, "shoes", "text hint sneakers wins, got " + cat.getActivePieces()[0].category);
+    assert.ok(/shoes/i.test(r.text), "reply names shoes, got: " + r.text.slice(0, 120));
+    console.log("  pass: placeholder + sneakers hint -> shoes");
   }
 
   // (b) text-only turn with pendingBag null -> "Nothing pending" reply shape

@@ -4,8 +4,8 @@
  * Stdlib only, fake upstream, SYNTH_ fixtures, no network.
  * Covers opencode-category-coerce.md step 3 proxy side:
  *  - classify upstream "jacket" -> coerced layer/blazer, placeholder false
- *  - classify upstream "heels" -> placeholder true contract shape
- *  - detect with "jumper" + "heels" -> jumper keeps layer/cardigan, heels dropped
+ *  - classify upstream "heels" -> coerced shoes, placeholder false
+ *  - detect with "jumper" + "heels" -> jumper keeps layer/cardigan, heels kept as shoes
  *  - cache stores coerced values on repeat
  */
 process.env.NO_PROXY = "127.0.0.1,localhost";
@@ -92,7 +92,7 @@ async function main() {
     } finally { server.close(); }
   }
 
-  // 2. classify upstream "heels" -> placeholder true contract
+  // 2. classify upstream "heels" -> coerced shoes, placeholder false
   {
     const { server } = await proxy.startServer({ port: 0, apiKey: "test-key", fetchImpl: fakeUpstream });
     const base = "http://127.0.0.1:" + server.address().port;
@@ -100,16 +100,18 @@ async function main() {
       const r = await fetch(base + "/api/classify", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ image: synthDataUrl("heels_1") }) });
       const j = await r.json();
       ok(r.status === 200, "classify heels 200");
-      ok(j.placeholder === true, "heels -> placeholder true");
-      ok(j.category === "dress", "fallback category dress, got " + j.category);
-      ok(j.confidence === 0, "fallback confidence 0, got " + j.confidence);
-      ok(j.method === "spark-vision", "fallback method spark-vision");
-      ok(proxy.coerceCategory("heels") === null, "coerceCategory heels null");
-      ok(proxy.coerceCategory("shoe") === null, "coerceCategory shoe null");
+      ok(j.category === "shoes", "heels coerced to shoes, got " + j.category);
+      ok(j.placeholder === false, "not placeholder on coerced heels");
+      ok(j.method === "spark-vision", "method spark-vision");
+      ok(proxy.coerceCategory("heels") === "shoes", "coerceCategory heels direct");
+      ok(proxy.coerceCategory("sneakers") === "shoes", "coerceCategory sneakers direct");
+      ok(proxy.coerceCategory("ankle boots") === "shoes", "coerceCategory ankle boots direct");
+      ok(proxy.coerceCategory("shoe") === "shoes", "coerceCategory shoe direct");
+      ok(proxy.coerceCategory("hat") === null, "coerceCategory hat still null");
     } finally { server.close(); }
   }
 
-  // 3. detect with one region "jumper" + one "heels" -> jumper keeps layer/cardigan, heels dropped
+  // 3. detect with one region "jumper" + one "heels" -> jumper keeps layer/cardigan, heels kept as shoes
   {
     const { server } = await proxy.startServer({ port: 0, apiKey: "test-key", fetchImpl: fakeUpstream });
     const base = "http://127.0.0.1:" + server.address().port;
@@ -117,9 +119,10 @@ async function main() {
       const r = await fetch(base + "/api/detect", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ image: synthDataUrl("jumper_mix_1") }) });
       const j = await r.json();
       ok(r.status === 200, "detect jumper+heels 200");
-      ok(j.placeholder === false, "detect not placeholder when one valid piece remains");
-      ok(Array.isArray(j.pieces) && j.pieces.length === 1, "heels dropped, 1 piece left, got " + (j.pieces && j.pieces.length));
+      ok(j.placeholder === false, "detect not placeholder when valid pieces remain");
+      ok(Array.isArray(j.pieces) && j.pieces.length === 2, "heels kept as shoes, 2 pieces, got " + (j.pieces && j.pieces.length));
       ok(j.pieces[0].category === "layer/cardigan", "jumper coerced to layer/cardigan, got " + j.pieces[0].category);
+      ok(j.pieces[1].category === "shoes", "heels coerced to shoes, got " + (j.pieces[1] && j.pieces[1].category));
       ok(proxy.coerceCategory("jumper") === "layer/cardigan", "coerceCategory jumper direct");
     } finally { server.close(); }
   }
@@ -154,12 +157,12 @@ async function main() {
       const img2 = synthDataUrl("jumper_mix_cache_1");
       const d1 = await fetch(base + "/api/detect", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ image: img2 }) });
       const dj1 = await d1.json();
-      ok(dj1.pieces.length === 1 && dj1.pieces[0].category === "layer/cardigan", "first detect coerced");
+      ok(dj1.pieces.length === 2 && dj1.pieces[0].category === "layer/cardigan" && dj1.pieces[1].category === "shoes", "first detect coerced");
       const dc1 = detectCalls;
       const d2 = await fetch(base + "/api/detect", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ image: img2 }) });
       const dj2 = await d2.json();
       ok(dj2.cached === true, "second detect cached");
-      ok(dj2.pieces[0].category === "layer/cardigan", "cached detect still coerced layer/cardigan");
+      ok(dj2.pieces[0].category === "layer/cardigan" && dj2.pieces[1].category === "shoes", "cached detect still coerced");
       ok(detectCalls === dc1, "no extra upstream on detect cache hit, got " + detectCalls + " vs " + dc1);
     } finally { server.close(); }
   }

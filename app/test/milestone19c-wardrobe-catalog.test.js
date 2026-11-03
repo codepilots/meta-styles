@@ -242,9 +242,15 @@ function main() {
     throwsWith(() => wardrobe.addPiece({
       category: "bag", attributes: { vendor: "SYNTH shop" }, source_share_id: "SYNTH_x",
     }), /rejected key 'vendor'/));
-  check("19c: addPiece enforces the fixed classifier taxonomy (shoes rejected)",
+  check("19c: addPiece accepts a shoes piece; unknown categories still rejected",
+    (() => {
+      const p = wardrobe.addPiece({
+        category: "shoes", attributes: {}, source_share_id: "SYNTH_shoes_1",
+      });
+      return p && p.category === "shoes";
+    })() &&
     throwsWith(() => wardrobe.addPiece({
-      category: "shoes", attributes: {}, source_share_id: "SYNTH_x",
+      category: "hat", attributes: {}, source_share_id: "SYNTH_x",
     }), /fixed taxonomy term/) &&
     throwsWith(() => wardrobe.recordTurn({
       userText: "SYNTH x", proposal: null, verdict: true,

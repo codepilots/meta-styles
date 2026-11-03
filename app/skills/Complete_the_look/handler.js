@@ -25,7 +25,7 @@
 
   var VINTED="https://www.vinted.co.uk/search?q=";
   function vintedUrl(t){ return VINTED+encodeURIComponent(t); }
-  function plainNoun(c){ var m={"base/top":"top","base/bottom":"bottom","dress":"dress","layer/cardigan":"cardigan","layer/blazer":"blazer","scarf":"scarf","bag":"bag"}; return m[c]||c; }
+  function plainNoun(c){ var m={"base/top":"top","base/bottom":"bottom","dress":"dress","layer/cardigan":"cardigan","layer/blazer":"blazer","scarf":"scarf","bag":"bag","shoes":"shoes"}; return m[c]||c; }
   var CAVEAT=" (I can\u2019t tuck preview pictures into chat just yet, loveling, so picture this little treasure sparkling beside your other pieces for now. \u2728)";
 
   // Server-side assembler, in preference order: injected opt -> Node

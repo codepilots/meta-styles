@@ -2,9 +2,10 @@
 /* meta-styles Milestone 2 — garment classifier stub.
  *
  * Fixed taxonomy: base/top, base/bottom, dress, layer/cardigan,
- * layer/blazer, scarf, bag. "shoes" is deliberately NOT in the taxonomy:
- * shoes are explicitly excluded from look cards (too hard to size), and the
- * assembler rejects them — see assembler.js.
+ * layer/blazer, scarf, bag, shoes. "shoes" is a storable wardrobe
+ * category (catalogued like any other piece) but NEVER enters a look
+ * card: the assembler and strictShape reject them, so they ride only
+ * as user-chosen extras — see assembler.js.
  *
  * Fitting conventions baked in here: tie-blouses and shrugs are LAYERS worn
  * over a cami/base, so hint labels like "tie-blouse" or "shrug" map to
@@ -24,6 +25,7 @@
     "layer/blazer",
     "scarf",
     "bag",
+    "shoes",
   ];
 
   // Mask-label hints from Milestone 1's stub segmenter (or a future SAM 3.1
@@ -49,6 +51,20 @@
     scarf: "scarf",
     bag: "bag",
     purse: "bag",
+    shoes: "shoes",
+    shoe: "shoes",
+    sneakers: "shoes",
+    sneaker: "shoes",
+    trainers: "shoes",
+    trainer: "shoes",
+    heels: "shoes",
+    heel: "shoes",
+    boots: "shoes",
+    boot: "shoes",
+    sandals: "shoes",
+    sandal: "shoes",
+    loafers: "shoes",
+    loafer: "shoes",
   };
 
   function fnv1a(str) {

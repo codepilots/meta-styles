@@ -55,7 +55,7 @@ const ROUTE_UPSTREAM_TIMEOUT_MS = 20000; // < 30s client
 
 const TAXONOMY = [
   "base/top", "base/bottom", "dress",
-  "layer/cardigan", "layer/blazer", "scarf", "bag",
+  "layer/cardigan", "layer/blazer", "scarf", "bag", "shoes",
 ];
 
 // SAM concept phrase -> overlay label used by app.js MASK_COLORS / hints.
@@ -160,10 +160,16 @@ function coerceCategory(raw) {
     "frock": "dress", "gown": "dress", "pinafore": "dress", "dress": "dress",
     "pashmina": "scarf", "wrap": "scarf", "shawl": "scarf", "scarf": "scarf",
     "handbag": "bag", "purse": "bag", "tote": "bag", "clutch": "bag", "bag": "bag",
+    "shoe": "shoes", "shoes": "shoes", "sneaker": "shoes", "sneakers": "shoes",
+    "trainer": "shoes", "trainers": "shoes", "heel": "shoes", "heels": "shoes",
+    "boot": "shoes", "boots": "shoes", "ankle boot": "shoes", "ankle boots": "shoes",
+    "sandal": "shoes", "sandals": "shoes", "loafer": "shoes", "loafers": "shoes",
   };
   if (map[c]) return map[c];
-  // shoes are deliberately not catalogueable -> null
-  if (c.includes("shoe") || c.includes("sneaker") || c.includes("heel") || c.includes("boot")) return null;
+  // Shoes are a storable wardrobe category ("shoes"); anything
+  // shoe-shaped that is not in the map above still coerces to it.
+  if (c.includes("shoe") || c.includes("sneaker") || c.includes("heel") || c.includes("boot") ||
+      c.includes("sandal") || c.includes("loafer") || c.includes("trainer")) return "shoes";
   return null;
 }
 
@@ -380,7 +386,7 @@ function createHandler(config) {
           "You classify one garment region for a tall/curvy styling app. " +
           `Reply with JSON only: {"category":"...","confidence":0.0}. ` +
           `Category must be exactly one of: ${TAXONOMY.join(", ")}. ` +
-          "Tie-blouses and shrugs are layer/cardigan, never a base. Never return shoes.",
+          "Tie-blouses and shrugs are layer/cardigan, never a base. Shoes are a valid category when the garment is footwear.",
           [{ type: "input_image", image_url: image }],
           null
         );
@@ -538,7 +544,7 @@ function createHandler(config) {
         var triggers = [
           "catalogue_piece: Photo(s) shared (image present, no other trigger — but FIRST check Recent turns: if the assistant just asked the user to share a photo, route to that skill instead)",
           "propose_look: user wants a look suggested — e.g. \"show me a look\", \"what goes together\", \"style me\", \"outfit idea\", \"cook up a look\", \"make me a look\", \"can you find …\"; also \"make me a look and show me wearing it\" (render-on-user: still propose_look — the skill checks saved profile photos); also \"delete my photos\" / \"forget my profile photos\" (saved headshot+full-body removal — never wardrobe pieces, also propose_look)",
-          "revise_look: user wants to change last look — e.g. \"no bag\", \"without blazer\", \"swap scarf\", \"drop the bag\", \"add the cardigan back\", \"swap the cardigan for the blazer\"; also a follow-up \"show me wearing this\" / \"render this on me\" / \"put this look on me\" (render the EXISTING look on the wearer — still revise_look)",
+          "revise_look: user wants to change last look — e.g. \"no bag\", \"without blazer\", \"swap scarf\", \"drop the bag\", \"add the cardigan back\", \"swap the cardigan for the blazer\", \"add my shoes\" (shoes ride on top as the user's own extra, never in the core look); also a follow-up \"show me wearing this\" / \"render this on me\" / \"put this look on me\" (render the EXISTING look on the wearer — still revise_look)",
           // Opus finding #13: "find the bag" lives under describe_wardrobe only
           // (locating a wardrobe item), not under propose_look.
           "describe_wardrobe: user wants to see/list wardrobe — e.g. \"what do I have\", \"show my wardrobe\", \"find the bag\"",
@@ -599,7 +605,7 @@ function createHandler(config) {
             "You classify one garment region for a tall/curvy styling app. " +
             `Reply with JSON only: {"category":"...","confidence":0.0}. ` +
             `Category must be exactly one of: ${TAXONOMY.join(", ")}. ` +
-            "Tie-blouses and shrugs are layer/cardigan, never a base. Never return shoes.",
+            "Tie-blouses and shrugs are layer/cardigan, never a base. Shoes are a valid category when the garment is footwear.",
             [{ type: "input_image", image_url: image }],
             null
           );
@@ -612,7 +618,7 @@ function createHandler(config) {
             `Categories must be exactly one of: ${TAXONOMY.join(", ")}. ` +
             'Reply with STRICT JSON only: {"pieces":[{"category":"...","layer_role":null or word,"attributes":{"color":null or word},"bbox":[x,y,w,h]}]} ' +
             "where bbox is fractional [x,y,w,h] in [0,1] for the garment bounding box. " +
-            "List every distinct garment visible. Category must be exactly one of the 7 listed. Never return shoes. " +
+            "List every distinct garment visible. Category must be exactly one of the 8 listed, including shoes for footwear. " +
             "If only one garment is visible, return a single-element pieces array.",
             [{ type: "input_image", image_url: image }],
             null

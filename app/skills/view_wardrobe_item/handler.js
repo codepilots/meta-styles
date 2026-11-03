@@ -49,16 +49,26 @@
     "cardigans": "layer/cardigan",
     "blazers": "layer/blazer",
     "scarves": "scarf",
-    "bags": "bag"
+    "bags": "bag",
+    "shoes": "shoes"
   };
 
   function plainNoun(c) {
     var m = {
       "base/top": "top", "base/bottom": "bottom", "dress": "dress",
       "layer/cardigan": "cardigan", "layer/blazer": "blazer",
-      "scarf": "scarf", "bag": "bag"
+      "scarf": "scarf", "bag": "bag", "shoes": "shoes"
     };
     return m[c] || "piece";
+  }
+
+  // "shoes" is already plural — never "shoess".
+  function pluralOf(c) {
+    var noun = plainNoun(c);
+    if (noun === "shoes") return "shoes";
+    if (noun === "dress") return "dresses";
+    if (noun === "scarf") return "scarves";
+    return noun + "s";
   }
 
   // Short description used both in the numbered list and as the photo
@@ -129,9 +139,7 @@
   }
 
   function listReply(category, pagePieces, total, offset) {
-    var noun = plainNoun(category);
-    var plural = noun === "dress" ? "dresses" :
-      (noun === "scarf" ? "scarves" : noun + "s");
+    var plural = pluralOf(category);
     var head = "Here are your " + plural + ", darling \u2728";
     var lines = [head].concat(pageLines(pagePieces));
     if (offset + pagePieces.length < total) {
@@ -200,7 +208,7 @@
     var inCategory = activeByCategory(catalog, category);
     if (inCategory.length === 0) {
       return noImageResult(
-        "No " + plainNoun(category) + "s tucked in your wardrobe just yet, darling \u2728 " +
+        "No " + pluralOf(category) + " tucked in your wardrobe just yet, darling \u2728 " +
         "Share a photo and I\u2019ll catalogue your first one!",
         "empty_category"
       );
@@ -212,7 +220,7 @@
     return {
       text: reply,
       image: null,
-      persist: { summaryDelta: "Listed " + plainNoun(category) + "s (" + inCategory.length + ").", preferencesDelta: "" },
+      persist: { summaryDelta: "Listed " + pluralOf(category) + " (" + inCategory.length + ").", preferencesDelta: "" },
       skill: SKILL,
       meta: {
         imageDelivery: { requested: false, generated: false, delivered: false, reason: "list_no_image" }
@@ -258,7 +266,7 @@
       return {
         text: reply,
         image: null,
-        persist: { summaryDelta: "Listed next " + plainNoun(ctx.category) + "s.", preferencesDelta: "" },
+        persist: { summaryDelta: "Listed next " + pluralOf(ctx.category) + ".", preferencesDelta: "" },
         skill: SKILL,
         meta: {
           imageDelivery: { requested: false, generated: false, delivered: false, reason: "list_no_image" }

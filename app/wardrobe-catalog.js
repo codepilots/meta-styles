@@ -52,7 +52,9 @@
 
 (function (root) {
   // Fixed classifier taxonomy term (mirrors app/classifier.js TAXONOMY —
-  // "shoes" is deliberately NOT in it; the assembler rejects shoes).
+  // "shoes" is a storable wardrobe category but NEVER enters an
+  // automatic look: strictShape / assembleLook reject them, so they
+  // ride only as user-chosen extras on top of a fit-checked core).
   var TAXONOMY = [
     "base/top",
     "base/bottom",
@@ -61,6 +63,7 @@
     "layer/blazer",
     "scarf",
     "bag",
+    "shoes",
   ];
 
   var PIECE_STATUSES = ["active", "rejected", "superseded", "held"];
@@ -655,6 +658,37 @@
       return copyPiece(pieces[oi]);
     }
 
+    // Turn-proposal extras (revise_look user-chosen extras riding on top
+    // of the fit-checked core): optional array of { piece_id, category }.
+    // Every extra names a REAL catalog piece (piece_id is a non-empty
+    // string resolving to a live piece) and a fixed TAXONOMY category —
+    // including "shoes", which are catalogued like any other piece but
+    // ride only as extras, never in a fit-checked core. Shape is
+    // fail-closed — unknown keys, null/empty ids, or off-taxonomy
+    // categories throw.
+    var PROPOSAL_EXTRA_KEYS = ["piece_id", "category"];
+    function checkProposalExtras(v, label) {
+      if (!Array.isArray(v)) {
+        throw new Error("wardrobe-catalog: " + label + " must be an array");
+      }
+      v.forEach(function (e) {
+        if (!isPlainObject(e)) {
+          throw new Error("wardrobe-catalog: " + label + " holds only { piece_id, category } entries");
+        }
+        rejectUnknownKeys(e, PROPOSAL_EXTRA_KEYS, label + " entry");
+        if (typeof e.piece_id !== "string" || e.piece_id.length === 0) {
+          throw new Error("wardrobe-catalog: " + label + " entry piece_id must be a non-empty string");
+        }
+        if (typeof e.category !== "string" || TAXONOMY.indexOf(e.category) === -1) {
+          throw new Error(
+            "wardrobe-catalog: " + label + " entry category must be a fixed taxonomy term (" +
+            TAXONOMY.join(", ") + ")"
+          );
+        }
+      });
+      return v;
+    }
+
     // One conversation turn: user text + proposal + assembleLook
     // verdict + reasons[]. verdict accepts a boolean or an
     // assembleLook-shaped { valid } object; stored as a boolean.
@@ -679,7 +713,10 @@
         reasons: v.reasons.slice(),
       };
       if (isPlainObject(turn.proposal)) {
-        rejectUnknownKeys(turn.proposal, ["pieces", "title", "note"], "turn proposal");
+        rejectUnknownKeys(turn.proposal, ["pieces", "title", "note", "extras"], "turn proposal");
+        if (turn.proposal.extras !== undefined && turn.proposal.extras !== null) {
+          checkProposalExtras(turn.proposal.extras, "turn proposal extras");
+        }
       }
       turns.push(turn);
       return JSON.parse(JSON.stringify(turn));

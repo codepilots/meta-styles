@@ -52,8 +52,12 @@ function assertMetaContract(r, label) {
 async function run() {
   console.log("revise-look-add.test.js");
 
-  // --- (a) two-turn round-trip: exclude then add back ---
-  console.log("\n[(a) no cardigan -> add the cardigan back]");
+  // --- (a) two-turn round-trip: exclude, then add back onto the look ---
+  // The re-woven look after "no cardigan" is dress+blazer; adding the
+  // cardigan back cannot join that core (two layers never stack), so it
+  // rides on top as a user-chosen extra: the core stays dress+blazer and
+  // the reply never claims the cardigan passed the fit check.
+  console.log("\n[(a) no cardigan -> add the cardigan back lands as an extra]");
   {
     const cat = seed("a", ["dress", "layer/cardigan", "layer/blazer", "scarf", "bag"]);
     const r1 = await ReviseLook.handle({ catalog: cat, text: "no cardigan this time", metaClient: null });
@@ -64,17 +68,23 @@ async function run() {
     const r2 = await ReviseLook.handle({ catalog: cat, text: "add the cardigan back", metaClient: null });
     const t2 = cat.getTurns()[1];
     assert.strictEqual(t2.verdict, true, "add-back turn validates: " + r2.text);
-    assert.ok(lookCats(cat, t2.proposal).indexOf("layer/cardigan") !== -1,
-      "added look includes the cardigan: " + lookCats(cat, t2.proposal).join("+"));
-    assert.ok(t2.reasons.indexOf("required:layer/cardigan") !== -1,
-      "turn reasons record the required category: " + JSON.stringify(t2.reasons));
-    assert.ok(/brought back your cardigan/.test(r2.text), "add-back reply kept: " + r2.text.slice(0, 100));
-    assert.ok(/Fit check: valid/.test(r2.text), "fit check claimed only for a validated look");
+    assert.ok(lookCats(cat, t2.proposal).indexOf("layer/cardigan") === -1,
+      "core still has no cardigan (two layers never stack): " + lookCats(cat, t2.proposal).join("+"));
+    assert.ok(Array.isArray(t2.proposal.extras) && t2.proposal.extras.length === 1 &&
+      t2.proposal.extras[0].category === "layer/cardigan",
+      "cardigan recorded as an extra: " + JSON.stringify(t2.proposal.extras));
+    assert.ok(t2.reasons.indexOf("added:layer/cardigan") !== -1 &&
+      t2.reasons.indexOf("extra:layer/cardigan") !== -1,
+      "turn reasons record the add and the extra: " + JSON.stringify(t2.reasons));
+    assert.ok(/Added your cardigan on top/.test(r2.text), "extra reply kept: " + r2.text.slice(0, 120));
+    assert.ok(!/Fit check: valid/.test(r2.text), "no fit-check claim over the extra: " + r2.text.slice(0, 160));
+    assert.ok(/fit check covers your dress \+ blazer only/.test(r2.text),
+      "reply scopes the fit check to the core: " + r2.text.slice(0, 160));
     assert.strictEqual(r2.persist.preferencesDelta, "Prefers with cardigan.",
       "preferences delta records the add: " + r2.persist.preferencesDelta);
     assertMetaContract(r2, "add-back");
     noFabrication(r2, "add-back");
-    console.log("  pass: round-trip, look=" + lookCats(cat, t2.proposal).join("+"));
+    console.log("  pass: round-trip, core=" + lookCats(cat, t2.proposal).join("+") + " + cardigan extra");
   }
 
   // --- (b) required-but-not-present: honest failure ---
