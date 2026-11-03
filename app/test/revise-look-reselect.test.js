@@ -109,12 +109,12 @@ async function run() {
   console.log("\n[(c) no valid look left -> honest no-look reply]");
   {
     const cat = Wardrobe.createCatalog({ userKey: "SYNTH_r7_c" });
-    seed(cat, ["dress", "scarf", "bag"], "c"); // only finish is scarf+bag
-    const r = await ReviseLook.handle({ catalog: cat, text: "skip the bag please", metaClient: null });
+    seed(cat, ["dress", "scarf"], "c"); // only finish is the lone scarf
+    const r = await ReviseLook.handle({ catalog: cat, text: "skip the scarf please", metaClient: null });
     assert.strictEqual(r.skill, "revise_look");
-    assert.strictEqual(cat.getActivePieces().length, 3, "nothing destroyed");
-    assert.ok(cat.getActivePieces().some(function (p) { return p.category === "bag"; }),
-      "bag still active even though excluded this turn");
+    assert.strictEqual(cat.getActivePieces().length, 2, "nothing destroyed");
+    assert.ok(cat.getActivePieces().some(function (p) { return p.category === "scarf"; }),
+      "scarf still active even though excluded this turn");
     assert.ok(!/looking darling together/.test(r.text), "no fabricated look claim: " + r.text.slice(0, 160));
     assert.ok(!/Fit check: valid/.test(r.text), "no false fit-check claim");
     assert.ok(/lamplight/.test(r.text), "honest no-look copy kept");

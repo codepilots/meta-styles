@@ -465,7 +465,7 @@ function createHandler(config) {
         const softPref = context
           ? ` The user also said: "${context}" — if more than one combination above is valid, prefer whichever best matches that styling/occasion request; never pick an invalid combination just to match it.` : "";
         const { parsed, cached } = await sparkJson(
-          "You propose complete outfits. A valid look needs a base (dress, or base/top and/or base/bottom) plus exactly one finish: either exactly one layer (layer/cardigan or layer/blazer) OR a scarf plus a bag. Never include shoes. Never use two layers. " +
+          "You propose complete outfits. A valid look needs a base (dress, or base/top and/or base/bottom) plus exactly one finish: exactly one layer (layer/cardigan or layer/blazer), a scarf alone, a bag alone, OR a scarf plus a bag. Never include shoes. Never use two layers. " +
           'Reply with JSON only: {"looks":[{"pieceIds":["..."],"rationale":"..."}]} with up to 3 looks, best first.' +
           softPref,
           `Available pieces:\n${desc}`,

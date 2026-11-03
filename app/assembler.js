@@ -4,10 +4,12 @@
  * Fit rules (hardcoded from docs/decisions.md):
  * - Output is a FULL LOOK CARD: a base garment plus exactly one finish —
  *   either one layer (cardigan/jacket/blazer; tie-blouses and shrugs count
- *   as layers over a cami/base) OR a scarf + bag pair. NEVER shoes.
- * - Layers never stack: two or more layers is invalid.
- * - An incomplete finish is invalid: a lone scarf or a lone bag is flagged,
- *   not silently accepted. A lone base with no finish is also invalid.
+ *   as layers over a cami/base), a scarf alone, a bag alone, OR a scarf +
+ *   bag pair. NEVER shoes.
+ * - Layers never stack: two or more layers is invalid. A layer can NOT be
+ *   combined with a scarf and/or bag.
+ * - A lone base with no finish is invalid. A lone scarf or a lone bag is
+ *   a complete finish on its own, not an incomplete one.
  * - Target body: tall/curvy, 6'2", size 18 top / 12 bottom — the fit note
  *   acknowledges proportions, not generic sizing.
  * - Aesthetic: Y2K x fairycore.
@@ -31,14 +33,25 @@
     "Fit note: cut for a tall/curvy 6'2\" frame — size 18 top / 12 bottom. " +
     "Bases run long in torso and hem; the scarf is tied high and accessories sit at/above the natural waist, " +
     "so nothing added stacks or pulls at the bust. Y2K x fairycore: shine, mesh, butterflies, soft metallics.";
-  const FIT_NOTES = { layer: FIT_NOTE_LAYER, "scarf+bag": FIT_NOTE_SCARF_BAG };
+  const FIT_NOTE_SCARF =
+    "Fit note: cut for a tall/curvy 6'2\" frame — size 18 top / 12 bottom. " +
+    "Bases run long in torso and hem; the scarf is tied high so nothing added stacks or pulls at the bust. " +
+    "Y2K x fairycore: shine, mesh, butterflies, soft metallics.";
+  const FIT_NOTE_BAG =
+    "Fit note: cut for a tall/curvy 6'2\" frame — size 18 top / 12 bottom. " +
+    "Bases run long in torso and hem; the bag sits at/above the natural waist, " +
+    "so nothing added stacks or pulls at the bust. Y2K x fairycore: shine, mesh, butterflies, soft metallics.";
+  const FIT_NOTES = { layer: FIT_NOTE_LAYER, "scarf+bag": FIT_NOTE_SCARF_BAG, scarf: FIT_NOTE_SCARF, bag: FIT_NOTE_BAG };
   // Backward-compatible default: the layer variant is closest to the old
   // single string, and the only in-repo importer (explain_fit) now picks
   // per-finish via FIT_NOTES with this as its fallback.
   const FIT_NOTE = FIT_NOTE_LAYER;
 
   function fitNoteFor(finish) {
-    return finish === "scarf+bag" ? FIT_NOTE_SCARF_BAG : FIT_NOTE_LAYER;
+    if (finish === "scarf+bag") return FIT_NOTE_SCARF_BAG;
+    if (finish === "scarf") return FIT_NOTE_SCARF;
+    if (finish === "bag") return FIT_NOTE_BAG;
+    return FIT_NOTE_LAYER;
   }
 
   function wordCount(text) {
@@ -93,10 +106,12 @@
       }
     } else if (hasScarfBagFinish) {
       finish = "scarf+bag";
-    } else if (scarves.length >= 1 || bags.length >= 1) {
-      reasons.push("Incomplete finish: a scarf needs its bag partner and vice versa (scarf + bag together, or one layer).");
+    } else if (scarves.length >= 1 && bags.length === 0) {
+      finish = "scarf";
+    } else if (bags.length >= 1 && scarves.length === 0) {
+      finish = "bag";
     } else if (layers.length === 0) {
-      reasons.push("Missing finish: add one layer, or a scarf + bag pair.");
+      reasons.push("Missing finish: add one layer, a scarf, a bag, or a scarf + bag pair.");
     }
     // layers.length >= 2 already pushed its reason; no finish assigned.
 
@@ -150,7 +165,7 @@
   }
 
   root.MetaStyles = root.MetaStyles || {};
-  Object.assign(root.MetaStyles, { BASE, LAYERS, MAX_WORDS, FIT_NOTE, FIT_NOTE_LAYER, FIT_NOTE_SCARF_BAG, FIT_NOTES, fitNoteFor, assembleLook });
+  Object.assign(root.MetaStyles, { BASE, LAYERS, MAX_WORDS, FIT_NOTE, FIT_NOTE_LAYER, FIT_NOTE_SCARF_BAG, FIT_NOTE_SCARF, FIT_NOTE_BAG, FIT_NOTES, fitNoteFor, assembleLook });
   if (typeof module !== "undefined" && module.exports) {
     module.exports = root.MetaStyles;
   }

@@ -35,6 +35,8 @@
  *   (i) removing shoes from a look drops just the extra;
  *   (j) view/delete wardrobe item can list a shoes piece like any
  *       other category.
+ *   (k) dress+scarf + "add my bag" joins the core (base+scarf+bag is a
+ *       valid look now) with "Fit check: valid" — the bag is not an extra.
  * All catalogs/ids/images synthetic (SYNTH_ ids, locally generated 1x1
  * PNGs via the repo's own encoder) — never real data. No network.
  *
@@ -366,6 +368,25 @@ async function run() {
     assert.ok(/shoes/i.test(rd.text), "delete names shoes: " + rd.text.slice(0, 160));
     assert.ok(!/shoess/.test(rd.text), "no shoess mis-plural in delete");
     console.log("  pass: shoes list like any other piece");
+  }
+
+  // --- (k) adding a bag to a base+scarf look joins the core ---
+  console.log("\n[(k) bag joins a scarf-finish core]");
+  {
+    const cat = seed("k", ["dress", "scarf", "bag"]);
+    const ids = idsByCat(cat);
+    cat.recordTurn({ userText: "seed", proposal: { pieces: [ids["dress"], ids["scarf"]] }, verdict: true, reasons: [] });
+    const r = await Revise.handle({ catalog: cat, text: "add my bag", metaClient: null });
+    const t = cat.getTurns()[1];
+    assert.deepStrictEqual(catsOf(cat, t.proposal.pieces), ["dress", "scarf", "bag"],
+      "bag joins the core: " + catsOf(cat, t.proposal.pieces).join("+"));
+    assert.deepStrictEqual(t.proposal.extras, [], "no extras on a valid add");
+    assert.ok(/Fit check: valid/.test(r.text), "fit check claimed for the valid core");
+    assert.ok(t.reasons.indexOf("added:bag") !== -1, "add reason kept");
+    assert.ok(!t.reasons.some(function (x) { return /^extra:/.test(x); }), "no extra reasons");
+    assertMetaContract(r, "scarf-core bag add");
+    noFabrication(r, "scarf-core bag add");
+    console.log("  pass: dress+scarf+bag core, fit check valid");
   }
 
   console.log("\nAll revise-look extras tests passed.");

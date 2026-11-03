@@ -130,9 +130,9 @@ async function run() {
     const activeCats = ["base/top", "base/top"];
     const cat = catWith(activeCats, "SYNTH_eb");
     const r = await Handler.handle({
-      catalog: cat, text: "should I get this scarf?", shareId: "SYNTH_share_eb"
+      catalog: cat, text: "should I get this dress?", shareId: "SYNTH_share_eb"
     });
-    assert.strictEqual(oracleCount(activeCats, "scarf"), 0, "oracle agrees nothing validates");
+    assert.strictEqual(oracleCount(activeCats, "dress"), 0, "oracle agrees nothing validates");
     assert.ok(/can\u2019t quite picture a complete look/.test(r.text), "honest zero branch: " + r.text.slice(0, 200));
     assert.ok(/here\u2019s why:/.test(r.text), "says why, engine-grounded");
     assert.ok(!/lovely outfit/.test(r.text), "never claims an outfit count it cannot back");

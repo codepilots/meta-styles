@@ -229,15 +229,17 @@
 
     function missingFinishHint(card) {
       var cats = card.pieces.map(function (p) { return p.category; });
+      var hasBase = cats.indexOf("base/top") !== -1 ||
+        cats.indexOf("base/bottom") !== -1 || cats.indexOf("dress") !== -1;
       var hasScarf = cats.indexOf("scarf") !== -1;
       var hasBag = cats.indexOf("bag") !== -1;
-      if (hasScarf && !hasBag) {
-        return "Want me to find its bag partner, or switch to a single layer instead?";
+      if ((hasScarf || hasBag) && !hasBase) {
+        return "Want me to find a base to wear it with, and I will re-check the fit?";
       }
-      if (hasBag && !hasScarf) {
-        return "Want me to find its scarf partner, or switch to a single layer instead?";
+      if (hasScarf || hasBag) {
+        return "That combination stacks finishes — drop the layer or the accessory, and I will re-check the fit.";
       }
-      return "Add one layer, or a scarf + bag pair, and I will re-check the fit.";
+      return "Add one layer, a scarf or a bag, and I will re-check the fit.";
     }
 
     function finishReply(looks, leadLine, userText, inReplyTo) {

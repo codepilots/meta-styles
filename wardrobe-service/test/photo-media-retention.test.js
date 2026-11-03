@@ -13,10 +13,10 @@
  * genuine send/media semantics, proxy stubbed unreachable so the
  * heuristic router + local fallback run — fully deterministic):
  *
- *  Case A (bug replay): seed top + scarf via two catalogued photos;
- *  text "show me a look" gets the honest no-valid-look reply; the next
- *  1-garment photo (jacket) is catalogued (piece added, reply sent)
- *  and its media acked.
+ *  Case A (bug replay): seed a lone top via one catalogued photo (a
+ *  base with no finish is still no valid look); text "show me a look"
+ *  gets the honest no-valid-look reply; the next 1-garment photo
+ *  (jacket) is catalogued (piece added, reply sent) and its media acked.
  *  Case B (imageConsumed ack): a "should I buy this" photo is evaluated
  *  (hold stored) and its media acked via the explicit imageConsumed
  *  flag — a non-catalogue skill that really used the bytes.
@@ -143,18 +143,14 @@ async function run() {
     const put = await botJson("PUT", "/ig/catalog/" + DEMO_REF, []);
     assert.ok(put.status === 200 || put.status === 204, "catalog seed PUT, got " + put.status);
 
-    // --- Case A1: two photos catalogue a top and a scarf (no valid look) ---
-    console.log("\n[two photos catalogue top + scarf]");
+    // --- Case A1: one photo catalogues a lone top (no valid look) ---
+    console.log("\n[one photo catalogues a lone top]");
     const photoTop = await postPhoto("SYNTH my new top");
     const outTop = await svc.processOne(photoTop);
     assert.ok(outTop.indexOf("terminal:") === 0, "top photo terminal, got " + outTop);
-    const photoScarf = await postPhoto("SYNTH a scarf for winter");
-    const outScarf = await svc.processOne(photoScarf);
-    assert.ok(outScarf.indexOf("terminal:") === 0, "scarf photo terminal, got " + outScarf);
     let pieces = await catalog();
-    assert.strictEqual(pieces.length, 2, "two pieces catalogued, got " + pieces.length);
+    assert.strictEqual(pieces.length, 1, "one piece catalogued, got " + pieces.length);
     assert.ok(pieces.some(function (p) { return p.category === "base/top"; }), "top present");
-    assert.ok(pieces.some(function (p) { return p.category === "scarf"; }), "scarf present");
 
     // --- Case A2 + D: "show me a look" -> honest no-valid-look reply ---
     console.log("\n[no-valid-look reply + truthful activity line]");
@@ -181,7 +177,7 @@ async function run() {
     const outJacket = await svc.processOne(photoJacket);
     assert.ok(outJacket.indexOf("terminal:") === 0, "jacket photo terminal, got " + outJacket);
     pieces = await catalog();
-    assert.strictEqual(pieces.length, 3, "jacket added (3 pieces), got " + pieces.length);
+    assert.strictEqual(pieces.length, 2, "jacket added (2 pieces), got " + pieces.length);
     assert.ok(pieces.some(function (p) { return p.category === "layer/blazer"; }),
       "jacket catalogued as layer/blazer, got " + JSON.stringify(pieces.map(function (p) { return p.category; })));
     assert.strictEqual(await mediaAvailable(photoJacket.id), false,

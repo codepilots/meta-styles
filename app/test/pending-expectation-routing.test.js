@@ -382,7 +382,7 @@ async function run() {
 
     // Honest fallbacks ask for another photo (which routes to
     // catalogue_piece already) — they record nothing: empty wardrobe,
-    // and a lone scarf (incomplete finish, no valid look).
+    // and a lone scarf with no base (missing base, no valid look).
     const catF = Wardrobe.createCatalog({ userKey: "SYNTH_m24_i_f" });
     const fr = await ProposeLook.handle({ catalog: catF });
     assert.ok(/feeling a little empty/.test(fr.text), "empty reply unchanged");

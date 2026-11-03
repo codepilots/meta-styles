@@ -119,13 +119,13 @@ not something to engineer around — the bot side stays as-is.
 1. **Share photo 1** (a dress — use any local image): it lands as an
    inbound bubble. The assistant turn catalogues it as the first wardrobe
    piece and answers honestly: a base alone isn't a full look yet — it
-   needs exactly one finish (a layer, or a scarf + bag).
+   needs exactly one finish (a layer, a scarf, a bag, or a scarf + bag).
 2. **Share photo 2** (a layer, e.g. a cardigan): the reply reaches back
    across the wardrobe and proposes one look combining the dress from
    photo 1 with the layer from photo 2, citing both sources — re-validated
    by the fit rules (valid full look).
 3. **One purchase suggestion:** the thread ends with a single next buy
-   (e.g. a bag, so the scarf look in the wardrobe completes next).
+   (e.g. a scarf, as a second finish option for the dress).
 
 Try the loop: type "no bag" as a user text turn and the look is
 re-proposed minus the bag and re-validated; ask about fabric or price and

@@ -133,8 +133,9 @@
       dress_plus_separates: "a dress already counts as the whole base, so it won't share with separates",
       two_layers: "layers never stack — just one at a time",
       two_finishes: "a look takes exactly one finish, not a layer plus scarf-and-bag",
+      stray_accessory_with_layer: "a layer look takes no scarf or bag",
       incomplete_finish: "a scarf needs its bag partner and vice versa",
-      missing_finish: "there's no finish yet — one layer, or a scarf plus bag",
+      missing_finish: "there's no finish yet — a layer, a scarf or a bag",
       all_pieces: "using every single piece at once would stack finishes",
       duplicate_category: "two pieces played the same role",
       shoes_excluded: "shoes stay out of look cards",
@@ -172,10 +173,10 @@
     if (layers.length >= 2) return { ok: false, reason: "two_layers" };
     var scarves = items.filter(function (it) { return it.category === "scarf"; });
     var bags = items.filter(function (it) { return it.category === "bag"; });
-    if (layers.length === 1 && scarves.length >= 1 && bags.length >= 1) return { ok: false, reason: "two_finishes" };
-    if (layers.length !== 1 && !(scarves.length >= 1 && bags.length >= 1)) {
-      return { ok: false, reason: (scarves.length >= 1 || bags.length >= 1) ? "incomplete_finish" : "missing_finish" };
-    }
+    var hasScarf = scarves.length >= 1, hasBag = bags.length >= 1;
+    if (layers.length === 1 && hasScarf && hasBag) return { ok: false, reason: "two_finishes" };
+    if (layers.length === 1 && (hasScarf || hasBag)) return { ok: false, reason: "stray_accessory_with_layer" };
+    if (layers.length !== 1 && !hasScarf && !hasBag) return { ok: false, reason: "missing_finish" };
     if (typeof assembleLook === "function") {
       var card = null;
       try { card = assembleLook(items); } catch (e) { return { ok: false, reason: "assembler_error" }; }
@@ -214,6 +215,8 @@
     var finishOptions = [];
     layers.forEach(function (l) { finishOptions.push([l]); });
     scarves.forEach(function (s) { bags.forEach(function (b) { finishOptions.push([s, b]); }); });
+    scarves.forEach(function (s) { finishOptions.push([s]); });
+    bags.forEach(function (b) { finishOptions.push([b]); });
     var out = [];
     for (var bi = 0; bi < baseOptions.length; bi++) {
       for (var fi = 0; fi < finishOptions.length; fi++) {
@@ -233,9 +236,14 @@
     return out;
   }
 
-  function finishRoleNoun(heldCategory){
+  function finishRoleNoun(heldCategory, items){
     if (LAYER_CATS.indexOf(heldCategory) !== -1) return "finishes it as the single layer";
-    if (heldCategory === "scarf" || heldCategory === "bag") return "completes the scarf-and-bag finish";
+    if (heldCategory === "scarf" || heldCategory === "bag") {
+      var cats = (Array.isArray(items) ? items : []).map(function (it) { return it.category; });
+      if (cats.indexOf("scarf") !== -1 && cats.indexOf("bag") !== -1) return "completes the scarf-and-bag finish";
+      if (heldCategory === "scarf") return "finishes it as the scarf";
+      return "finishes it as the bag";
+    }
     return "gives the look the base it was missing";
   }
 
@@ -251,11 +259,11 @@
     var heldNoun = held ? nounOf(held.category) : "new piece";
     var heldCat = held ? held.category : "";
     if (existing.length === 0) {
-      return (index + 1) + ". This " + heldNoun + " " + finishRoleNoun(heldCat) + " (fit check: valid \u2714)";
+      return (index + 1) + ". This " + heldNoun + " " + finishRoleNoun(heldCat, entry.items) + " (fit check: valid \u2714)";
     }
     var eNouns = existing.map(function (it) { return nounOf(it.category); }).join(" and ");
     return (index + 1) + ". With your " + eNouns + " \u2014 this " + heldNoun + " " +
-      finishRoleNoun(heldCat) + " (fit check: valid \u2714)";
+      finishRoleNoun(heldCat, entry.items) + " (fit check: valid \u2714)";
   }
 
   var CAVEAT = " (I can\u2019t tuck preview pictures into chat just yet, loveling, so this word-picture will have to sparkle on its own. \u2728)";

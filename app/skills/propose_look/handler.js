@@ -86,13 +86,12 @@
     var scarves = items.filter(function (it) { return it.category === "scarf"; });
     var bags = items.filter(function (it) { return it.category === "bag"; });
     var hasLayerFinish = layers.length === 1;
-    var hasScarfBagFinish = scarves.length >= 1 && bags.length >= 1;
+    var hasScarf = scarves.length >= 1;
+    var hasBag = bags.length >= 1;
+    var hasScarfBagFinish = hasScarf && hasBag;
     if (hasLayerFinish && hasScarfBagFinish) return "two_finishes";
-    if (hasLayerFinish && (scarves.length >= 1 || bags.length >= 1)) return "stray_accessory_with_layer";
-    if (!hasLayerFinish && !hasScarfBagFinish) {
-      if (scarves.length >= 1 || bags.length >= 1) return "incomplete_finish";
-      return "missing_finish";
-    }
+    if (hasLayerFinish && (hasScarf || hasBag)) return "stray_accessory_with_layer";
+    if (!hasLayerFinish && !hasScarf && !hasBag) return "missing_finish";
     // A valid strict-shape look is at most 4 pieces (base pair + scarf + bag),
     // so covering a bigger wardrobe wholesale is never a choice — while a
     // small wardrobe (<=4) may genuinely wear all of itself.
@@ -141,9 +140,12 @@
   }
 
   // Deterministic local fallback: enumerate base x finish combos in fixed
-  // order (dresses first, then tops/bottoms; layers before scarf+bag pairs)
-  // and return the first candidate that validates. Small valid subsets come
-  // out before larger ones by construction — never all pieces by default.
+  // order (dresses first, then tops/bottoms; layers, then scarf+bag pairs,
+  // then a lone scarf, then a lone bag) and return the first candidate
+  // that validates. Richer finishes (layer, scarf+bag) come before lone
+  // accessories, so wardrobes that validated before produce the same look.
+  // Small valid subsets come out before larger ones by construction —
+  // never all pieces by default.
   function fallbackChoose(active, assembleLook) {
     var dresses = active.filter(function (p) { return p.category === "dress"; });
     var tops = active.filter(function (p) { return p.category === "base/top"; });
@@ -165,6 +167,8 @@
     scarves.forEach(function (s) {
       bags.forEach(function (b) { finishOptions.push([s, b]); });
     });
+    scarves.forEach(function (s) { finishOptions.push([s]); });
+    bags.forEach(function (b) { finishOptions.push([b]); });
 
     var rejected = "no_valid_combination";
     for (var bi = 0; bi < baseOptions.length; bi++) {
@@ -192,13 +196,19 @@
     var nouns = items.map(function (it) { return plainNoun(it.category); });
     var finish = (card && card.finish) || null;
     if (!finish) {
-      var cats = items.map(function (it) { return it.category; });
-      var hasLayer = cats.some(function (c) { return LAYER_CATS.indexOf(c) !== -1; });
-      finish = hasLayer ? "layer" : "scarf+bag";
+      finish = finishOf(items, card);
     }
     if (finish === "layer") {
       return "The single layer worn open keeps the line long and leggy over " +
         (nouns.length > 1 ? "the " + nouns.slice(0, -1).join(" and ") : "your base") + " — nothing pulls, nothing stacks.";
+    }
+    if (finish === "scarf") {
+      return "The scarf tied high draws the eye up and finishes the line in one move — " +
+        "nothing stacks, nothing pulls.";
+    }
+    if (finish === "bag") {
+      return "The bag worn high at the waist adds the shine and finishes the line in one move — " +
+        "nothing stacks, nothing pulls.";
     }
     return "The scarf tied high draws the eye up while the bag adds shine at the hip — " +
       "the pair works as one finish, so the line stays long.";
@@ -212,7 +222,7 @@
       two_finishes: "a look takes exactly one finish, not a layer plus scarf-and-bag",
       stray_accessory_with_layer: "a layer look takes no scarf or bag — drop the stray piece or pair up",
       incomplete_finish: "a scarf needs its bag partner and vice versa",
-      missing_finish: "there's no finish yet — one layer, or a scarf plus bag",
+      missing_finish: "there's no finish yet — a layer, a scarf or a bag",
       all_pieces: "using every single piece at once would stack finishes",
       unknown_piece: "Spark named a piece that isn't in your wardrobe",
       repeated_piece: "Spark named the same piece twice",
@@ -952,12 +962,19 @@
 
   function finishOf(items, card) {
     if (card && typeof card.finish === "string" &&
-        (card.finish === "layer" || card.finish === "scarf+bag")) {
+        (card.finish === "layer" || card.finish === "scarf+bag" ||
+         card.finish === "scarf" || card.finish === "bag")) {
       return card.finish;
     }
     var cats = items.map(function (it) { return it.category; });
     var hasLayer = cats.some(function (c) { return LAYER_CATS.indexOf(c) !== -1; });
-    return hasLayer ? "layer" : "scarf+bag";
+    var hasScarf = cats.indexOf("scarf") !== -1;
+    var hasBag = cats.indexOf("bag") !== -1;
+    if (hasLayer) return "layer";
+    if (hasScarf && hasBag) return "scarf+bag";
+    if (hasScarf) return "scarf";
+    if (hasBag) return "bag";
+    return "scarf+bag";
   }
 
   async function handle(opts) {
@@ -1214,7 +1231,7 @@
       });
       return {
         text: "Oh, loveling \u2728 I turned every piece over in the lamplight, but " + why +
-          " — share one more piece (a layer, or a scarf with its bag) and I\u2019ll spin it into a full look!",
+          " — share one more piece (a layer, a scarf or a bag) and I\u2019ll spin it into a full look!",
         image: null,
         persist: { summaryDelta: "No valid look; said why honestly.", preferencesDelta: "" },
         skill: "propose_look",
@@ -1235,7 +1252,10 @@
     // the combination above passed strictShape + assembleLook as one finish.
     var lookFinish = finishOf(chosen.items, chosen.card);
     reply += " Fit check: valid \u2714 \u2014 " +
-      (lookFinish === "scarf+bag" ? "a base finished with a scarf plus a bag." : "a base plus exactly one layer.");
+      (lookFinish === "scarf+bag" ? "a base finished with a scarf plus a bag."
+        : lookFinish === "scarf" ? "a base finished with a scarf."
+        : lookFinish === "bag" ? "a base finished with a bag."
+        : "a base plus exactly one layer.");
     // When Spark's candidates were rejected and the local fallback wove
     // this look instead, say so in one short truthful line (plain words,
     // never IDs or stack traces) — not only in console.log. The full

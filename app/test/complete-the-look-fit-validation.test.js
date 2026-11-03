@@ -8,9 +8,9 @@
  *       already-complete reply — never a redundant gap suggestion;
  *   (a2) a wardrobe that is invalid as a whole but holds a valid subset
  *       names that subset as the already-complete look;
- *   (b) an incomplete set (lone scarf) gets the piece that answers the
- *       engine's own diagnosis (the bag partner), and the suggested fix
- *       independently validates via assembleLook;
+ *   (b) an accessory-only set (scarf + bag, no base) gets the piece that
+ *       answers the engine's own diagnosis (a base), and the suggested
+ *       fix independently validates via assembleLook;
  *   (b2) a bare base still gets the cheapest layer + the generic Vinted
  *       search link (router-skills + image-honesty compat);
  *   (c) a set no single addition can fix gets an honest no-single-fix
@@ -76,23 +76,23 @@ async function run() {
     console.log("  pass: valid subset named, no purchase suggested");
   }
 
-  // --- (b) real gap: lone scarf wants its bag partner ---
-  console.log("\n[(b) lone scarf suggests the bag]");
+  // --- (b) real gap: accessories without a base want a base ---
+  console.log("\n[(b) scarf + bag suggest the dress]");
   {
-    const cat = catWith(["base/top", "base/bottom", "scarf"], "SYNTH_b");
+    const cat = catWith(["scarf", "bag"], "SYNTH_b");
     const before = Assembler.assembleLook(engineItems(cat.getActivePieces()));
     assert.strictEqual(before.valid, false, "engine agrees the set starts invalid");
-    assert.ok(/scarf needs its bag partner/.test(before.reasons.join(" ")), "engine diagnoses the lone scarf");
+    assert.ok(/Missing base/.test(before.reasons.join(" ")), "engine diagnoses the missing base");
     const r = await Handler.handle({ catalog: cat });
-    assert.ok(/little silver bag/.test(r.text), "suggests the bag partner: " + r.text.slice(0, 120));
-    assert.ok(/vinted\.co\.uk\/search\?q=silver%20metallic%20mini%20bag/.test(r.text), "generic Vinted search link kept");
+    assert.ok(/slip dress/.test(r.text), "suggests the base: " + r.text.slice(0, 120));
+    assert.ok(/vinted\.co\.uk\/search\?q=champagne%20slip%20dress/.test(r.text), "generic Vinted search link kept");
     const fixed = Assembler.assembleLook(engineItems(cat.getActivePieces()).concat([{
-      id: "SYNTH_hypo_bag", category: "bag",
-      copy: { text: "SYNTH bag", placeholder: true, note: "test probe" }
+      id: "SYNTH_hypo_dress", category: "dress",
+      copy: { text: "SYNTH dress", placeholder: true, note: "test probe" }
     }]));
     assert.strictEqual(fixed.valid, true, "suggested addition independently turns the set valid:true");
     noLeak(r, "gap reply");
-    console.log("  pass: bag suggested, Vinted link kept, fix validates");
+    console.log("  pass: dress suggested, Vinted link kept, fix validates");
   }
 
   // --- (b2) bare base: cheapest layer + Vinted link ---
@@ -109,7 +109,7 @@ async function run() {
   // --- (c) no single addition fixes it: honest, engine-grounded ---
   console.log("\n[(c) unfixable set gets honest no-single-fix]");
   {
-    const cat = catWith(["scarf"], "SYNTH_c");
+    const cat = catWith(["shoes"], "SYNTH_c");
     const r = await Handler.handle({ catalog: cat });
     assert.ok(/alone wouldn\u2019t finish this look/.test(r.text), "honest no-single-fix copy: " + r.text.slice(0, 160));
     assert.ok(/Missing base/.test(r.text), "quotes the engine's own reason");

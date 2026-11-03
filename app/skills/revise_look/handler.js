@@ -262,9 +262,15 @@
     try{ catalog.recordTurn(entry); }catch(e){}
   }
   function finishOfItems(items, card){
-    if(card && (card.finish==="layer"||card.finish==="scarf+bag")) return card.finish;
+    if(card && (card.finish==="layer"||card.finish==="scarf+bag"||card.finish==="scarf"||card.finish==="bag")) return card.finish;
     var hasLayer=items.some(function(it){ return it.category==="layer/cardigan"||it.category==="layer/blazer"; });
-    return hasLayer ? "layer" : "scarf+bag";
+    var hasScarf=items.some(function(it){ return it.category==="scarf"; });
+    var hasBag=items.some(function(it){ return it.category==="bag"; });
+    if(hasLayer) return "layer";
+    if(hasScarf&&hasBag) return "scarf+bag";
+    if(hasScarf) return "scarf";
+    if(hasBag) return "bag";
+    return "scarf+bag";
   }
   function plainWhy(stack, reason){
     if(stack && typeof stack.plainWhy==="function") return stack.plainWhy(reason);
@@ -983,7 +989,7 @@
           var why=plainWhy(stack, sel.rejected||"no_valid_combination");
           recordReviseTurn(catalog, { userText: typeof text==="string"?text:"", proposal: null, verdict: false, reasons: ["excluded:"+cat, sel.rejected?("fallback_rejected:"+sel.rejected):"no_valid_look"] });
           imageDelivery.reason="no_valid_look";
-          return { text: "Got it, loveling \u2014 set aside your "+noun+" for now \u2728 I turned every piece over in the lamplight, but "+why+" \u2014 share one more piece (a layer, or a scarf with its bag) and I\u2019ll spin it into a full look! And your shoes will have to wait for a valid look to ride on \u2728", image: null, persist:{ summaryDelta: "Tried revising without "+noun+" for shoes; no valid look yet.", preferencesDelta: "Prefers without "+noun+"." }, skill:"revise_look", meta:{ imageDelivery: imageDelivery } };
+          return { text: "Got it, loveling \u2014 set aside your "+noun+" for now \u2728 I turned every piece over in the lamplight, but "+why+" \u2014 share one more piece (a layer, a scarf or a bag) and I\u2019ll spin it into a full look! And your shoes will have to wait for a valid look to ride on \u2728", image: null, persist:{ summaryDelta: "Tried revising without "+noun+" for shoes; no valid look yet.", preferencesDelta: "Prefers without "+noun+"." }, skill:"revise_look", meta:{ imageDelivery: imageDelivery } };
         }
         coreIds=sel.chosen.map(function(it){ return it.id; });
         keptExtras=carryExtras(look.extras, cat, sel.chosen, sel.candidates);
@@ -1218,8 +1224,8 @@
       // never silently propose something else without saying so).
       var why=plainWhy(stack, rejected||"no_valid_combination");
       if(requiredMissing) reply="Oh, loveling \u2728 There\u2019s no "+plainNoun(required)+" in your wardrobe yet, so I can\u2019t add one \u2014 share a photo of it and I\u2019ll catalogue it, then we\u2019ll weave it in!";
-      else if(excluded.length>0) reply="Got it, loveling \u2014 set aside your "+plainNoun(cat)+" for now \u2728 I turned every piece over in the lamplight, but "+why+" \u2014 share one more piece (a layer, or a scarf with its bag) and I\u2019ll spin it into a full look!";
-      else reply="No "+plainNoun(cat)+" in the mix right now, darling \u2014 I turned every piece over in the lamplight, but "+why+" \u2014 share one more piece (a layer, or a scarf with its bag) and I\u2019ll spin it into a full look!";
+      else if(excluded.length>0) reply="Got it, loveling \u2014 set aside your "+plainNoun(cat)+" for now \u2728 I turned every piece over in the lamplight, but "+why+" \u2014 share one more piece (a layer, a scarf or a bag) and I\u2019ll spin it into a full look!";
+      else reply="No "+plainNoun(cat)+" in the mix right now, darling \u2014 I turned every piece over in the lamplight, but "+why+" \u2014 share one more piece (a layer, a scarf or a bag) and I\u2019ll spin it into a full look!";
       imageDelivery.reason="no_valid_look";
     }
     // Opus finding #6: remember the actual revised look (or the honest
@@ -1237,7 +1243,7 @@
     if(revisedVerdict) revisedReasons=revisedReasons.concat(extraReasonsOf(keptExtras));
     recordReviseTurn(catalog, {
       userText: typeof text==="string" ? text : "",
-      proposal: (revisedVerdict && (revisedFinish==="layer"||revisedFinish==="scarf+bag")) ? {
+      proposal: (revisedVerdict && (revisedFinish==="layer"||revisedFinish==="scarf+bag"||revisedFinish==="scarf"||revisedFinish==="bag")) ? {
         pieces: chosen.map(function(it){ return it.id; }),
         extras: keptExtras,
         title: null, note: "valid:"+revisedFinish

@@ -105,7 +105,10 @@ assert(look([["a", "base/top"], ["b", "scarf"], ["c", "bag"]]).valid === true, "
 assert(look([["a", "dress"], ["b", "layer/cardigan"], ["c", "layer/blazer"]]).valid === false,
   "assemble: two layers rejected");
 assert(look([["a", "dress"], ["b", "shoes"]]).valid === false, "assemble: shoes rejected");
-assert(look([["a", "dress"], ["b", "scarf"]]).valid === false, "assemble: lone scarf rejected");
+assert(look([["a", "dress"], ["b", "scarf"]]).valid === true, "assemble: lone scarf valid");
+assert(look([["a", "dress"], ["b", "scarf"]]).finish === "scarf", "assemble: lone scarf finish");
+assert(look([["a", "dress"], ["b", "bag"]]).valid === true, "assemble: lone bag valid");
+assert(look([["a", "dress"], ["b", "bag"]]).finish === "bag", "assemble: lone bag finish");
 assert(look([["a", "dress"]]).valid === false, "assemble: base only rejected");
 
 // --- Proxy routes with fake upstream --------------------------------------------

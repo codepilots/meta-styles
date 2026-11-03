@@ -57,12 +57,18 @@
       "✨ Whole-look story (placeholder): soft base, one sharp-or-sweet layer worn open — the silhouette stays long and leggy while shine and mesh do the Y2K talking. Nothing pulls, nothing stacks; butterflies optional but encouraged.",
     "scarf+bag":
       "✨ Whole-look story (placeholder): the base floats clean while the scarf-plus-bag finish works as a pair — light-catching mesh up top, silver shine at the hip. High tie, high carry, long line: fairycore shimmer anchored for a tall frame.",
-    none: "✨ Whole-look story (placeholder): this card isn't a full look yet — add one layer, or a scarf + bag pair, and the story writes itself.",
+    scarf:
+      "✨ Whole-look story (placeholder): the base floats clean while a single scarf finishes the line in one move — light-catching mesh tied high, nothing added to stack. Long line, fairycore shimmer anchored for a tall frame.",
+    bag:
+      "✨ Whole-look story (placeholder): the base floats clean while a single bag finishes the line in one move — silver shine carried high at the waist. Long line, fairycore shimmer anchored for a tall frame.",
+    none: "✨ Whole-look story (placeholder): this card isn't a full look yet — add one layer, a scarf or a bag, and the story writes itself.",
   };
 
   const TITLES = {
     layer: "✨ Moonlit Mesh Layering Story",
     "scarf+bag": "✨ Opal Shine + Flutter Finish",
+    scarf: "✨ High Tie, Long Line",
+    bag: "✨ Silver Shine Finish",
     none: "✨ Look In Progress",
   };
 

@@ -43,13 +43,15 @@
     var hasScarf=cats.indexOf("scarf")!==-1, hasBag=cats.indexOf("bag")!==-1;
     if(hasLayer) return "layer";
     if(hasScarf&&hasBag) return "scarf+bag";
+    if(hasScarf) return "scarf";
+    if(hasBag) return "bag";
     return null;
   }
 
   function finishFromNote(note){
-    var m=/valid:(layer|scarf\+bag)/.exec(String((note===undefined||note===null)?"":note));
+    var m=/valid:(layer|scarf\+bag|scarf|bag)/.exec(String((note===undefined||note===null)?"":note));
     if(!m) return null;
-    return m[1]==="scarf+bag" ? "scarf+bag" : "layer";
+    return m[1];
   }
 
   function safeActive(catalog){
@@ -100,7 +102,7 @@
   }
 
   // Fallback: a coherent look from the active catalog alone (bases plus
-  // exactly one finish — layers preferred, mirroring the assembler's
+  // exactly one finish — richer finishes first, mirroring the assembler's
   // deterministic fallback order). Returns null when no finish exists.
   function lookFromActive(active){
     var cats=active.map(function(p){ return p.category; }).filter(function(c){ return !!plainNoun(c); });
@@ -110,6 +112,8 @@
     if(bases.length===0) return null;
     if(layers.length===1) return { cats: bases.concat(layers), finish: "layer" };
     if(hasScarf&&hasBag) return { cats: bases.concat(["scarf","bag"]), finish: "scarf+bag" };
+    if(hasScarf) return { cats: bases.concat(["scarf"]), finish: "scarf" };
+    if(hasBag) return { cats: bases.concat(["bag"]), finish: "bag" };
     return null;
   }
 
@@ -139,13 +143,14 @@
         var hinted=hintCategories(lastTurns[i]).filter(function(c){ return !!activeCats[c]; });
         if(hinted.length===0) continue;
         var hf=inferFinish(hinted);
-        if(hf==="layer" || hf==="scarf+bag"){
+        if(hf==="layer" || hf==="scarf+bag" || hf==="scarf" || hf==="bag"){
           var bases=active.map(function(p){ return p.category; })
             .filter(function(c){ return c==="base/top"||c==="base/bottom"||c==="dress"; });
           var finishCats=hinted.filter(function(c){
-            return hf==="layer"
-              ? (c==="layer/cardigan"||c==="layer/blazer")
-              : (c==="scarf"||c==="bag");
+            if(hf==="layer") return (c==="layer/cardigan"||c==="layer/blazer");
+            if(hf==="scarf") return c==="scarf";
+            if(hf==="bag") return c==="bag";
+            return (c==="scarf"||c==="bag");
           });
           if(bases.length>0 && finishCats.length>0){
             look={ cats: bases.slice(0,2).concat(finishCats), finish: hf };
@@ -179,6 +184,16 @@
       body="Oh, lovely question, darling ✨ Your " + nouns + " work because the " + baseNoun +
         " gives you that long, leggy line, and the " + layerNoun +
         " worn open keeps everything skimming — nothing pulls at the bust, nothing stacks, just soft shimmer where you want it. " +
+        "Y2K x fairycore, made for you! ✨";
+    } else if(look.finish==="scarf"){
+      body="Oh, lovely question, darling ✨ Your " + nouns + " work because the " + baseNoun +
+        " gives you that long, leggy line, and the scarf tied high draws the eye up — " +
+        "nothing added stacks, just soft shimmer where you want it. " +
+        "Y2K x fairycore, made for you! ✨";
+    } else if(look.finish==="bag"){
+      body="Oh, lovely question, darling ✨ Your " + nouns + " work because the " + baseNoun +
+        " gives you that long, leggy line, and the bag sitting pretty at the waist " +
+        "keeps everything in proportion — nothing added stacks, just soft shimmer where you want it. " +
         "Y2K x fairycore, made for you! ✨";
     } else {
       body="Oh, lovely question, darling ✨ Your " + nouns + " work because the " + baseNoun +

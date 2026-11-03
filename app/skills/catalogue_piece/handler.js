@@ -607,7 +607,7 @@
       rLook.trace = trace.slice();
       return rLook;
     }
-    var gapText="Got your "+noun+" \u2014 noted, loveling! \u2728 It's tucked safely in your wardrobe. A "+noun+" alone isn't a full look yet \u2014 it needs exactly one finish: one layer, or a scarf plus a bag. Share one of those next and I'll style the complete look. Want me to put a look together from what you've got?";
+    var gapText="Got your "+noun+" \u2014 noted, loveling! \u2728 It's tucked safely in your wardrobe. A "+noun+" alone isn't a full look yet \u2014 it needs exactly one finish: a layer, a scarf or a bag. Share one of those next and I'll style the complete look. Want me to put a look together from what you've got?";
     recordLookExpectation(catalog, gapText);
     pushTrace(trace, "proposal:no");
     pushTrace(trace, "return:added");

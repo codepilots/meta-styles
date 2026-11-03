@@ -183,12 +183,14 @@ async function main() {
     bagNow ? bagNow.status : "missing");
   const turnsC = loopC.catalog.getTurns();
   const lastC = turnsC[turnsC.length - 1];
-  check("19d: revise turn re-validates (new verdict:false + reasons[])",
-    turnsC.length === 2 && lastC.verdict === false && lastC.reasons.length > 0,
+  check("19d: revise turn re-validates top+scarf as a valid lone-scarf look",
+    turnsC.length === 2 && lastC.verdict === true &&
+    lastC.proposal && lastC.proposal.note === "valid:scarf" &&
+    lastC.reasons.length === 0,
     JSON.stringify(lastC).slice(0, 200));
-  check("19d: revised reply names the removal and the re-check reason",
+  check("19d: revised reply names the removal and the valid fit",
     rC2.text.indexOf(bagId) !== -1 &&
-    /bag partner/i.test(rC2.text),
+    /Fit check: valid/.test(rC2.text),
     rC2.text.slice(0, 220));
 
   // --- 4. Cross-piece mix-match across two photo shares (for 19g) --------

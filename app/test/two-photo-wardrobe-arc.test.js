@@ -10,7 +10,7 @@
  * runAgenticTurn makes — router -> skill -> same-turn propose_look
  * selection/validation stack), never isolated handlers alone:
  *  (a) photo 1 (base only): no false full-look claim, honest
- *      missing-finish rule (one layer, or a scarf plus a bag), and the
+ *      missing-finish rule (a layer, a scarf or a bag), and the
  *      M24 yes/no expectation toward propose_look is still recorded.
  *  (b) photo 2 (makes a look possible): one valid cross-piece look via
  *      the existing propose_look -> strictShape/assembleLook stack —
@@ -64,7 +64,7 @@ async function run() {
     assert.strictEqual(t1.skill, "catalogue_piece", "photo 1 routes to catalogue_piece, got " + t1.skill);
     assert.ok(/tucked safely in your wardrobe/.test(t1.text), "catalogue ack kept: " + t1.text.slice(0, 160));
     assert.ok(/isn't a full look yet/.test(t1.text), "base alone is not framed as a look: " + t1.text.slice(0, 220));
-    assert.ok(/one layer, or a scarf plus a bag/.test(t1.text), "exact missing-finish rule: " + t1.text.slice(0, 260));
+    assert.ok(/a layer, a scarf or a bag/.test(t1.text), "exact missing-finish rule: " + t1.text.slice(0, 260));
     assert.ok(!/Fit check: valid/.test(t1.text), "no false valid fit claim on photo 1");
     noSynthLeak(t1.text, "photo-1 reply");
     // M24 preserved: the gap closer still offers the yes/no look question.

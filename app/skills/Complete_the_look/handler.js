@@ -91,9 +91,10 @@
 
   // Local mirror of propose_look's fallbackChoose (same base x finish
   // enumeration order: dresses, then top/bottom pairs, then singles;
-  // layers before scarf+bag pairs), used only when the sibling module
-  // cannot be required. Local strictness matches strictShape: no shoes,
-  // no duplicate categories, never the whole wardrobe when it is large.
+  // layers, then scarf+bag pairs, then a lone scarf, then a lone bag),
+  // used only when the sibling module cannot be required. Local
+  // strictness matches strictShape: no shoes, no duplicate categories,
+  // never the whole wardrobe when it is large.
   function localFallback(active, assembleLook){
     var LAYERS = ["layer/cardigan", "layer/blazer"];
     function ofCat(cats){ return active.filter(function (p) { return cats.indexOf(p.category) !== -1; }); }
@@ -111,6 +112,8 @@
     var finishOptions = [];
     layers.forEach(function (l) { finishOptions.push([l]); });
     scarves.forEach(function (s) { bags.forEach(function (b) { finishOptions.push([s, b]); }); });
+    scarves.forEach(function (s) { finishOptions.push([s]); });
+    bags.forEach(function (b) { finishOptions.push([b]); });
     for (var bi = 0; bi < baseOptions.length; bi++) {
       for (var fi = 0; fi < finishOptions.length; fi++) {
         var combo = baseOptions[bi].concat(finishOptions[fi]);
@@ -133,10 +136,11 @@
 
   // Cheapest/single simplest addition first, steered by what's already
   // there so the suggestion answers the engine's own diagnosis: a missing
-  // base wants a base (dresses first, fallbackChoose's base order); a lone
-  // scarf wants its bag partner and vice versa; a missing finish wants a
-  // layer before anything else — the same spirit as fallbackChoose's
-  // finish order. Every candidate still has to turn the set valid:true.
+  // base wants a base (dresses first, fallbackChoose's base order); a
+  // missing finish wants a layer before anything else — the same spirit
+  // as fallbackChoose's finish order. Lone accessories are already valid
+  // finishes, so they never ask for a partner here. Every candidate still
+  // has to turn the set valid:true.
   function gapOrderFor(active){
     var cats = active.map(function (p) { return p.category; });
     function has(c){ return cats.indexOf(c) !== -1; }

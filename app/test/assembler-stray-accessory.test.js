@@ -2,11 +2,13 @@
 /* meta-styles Opus finding #11 — stray-accessory rejection tests.
  * NEW hackathon work (building period Oct 27 – Nov 4, 2026).
  *
- * The assembler header (app/assembler.js:9-10) and docs/decisions.md agree:
- * a look is a base plus exactly one finish — either one layer OR a
- * scarf+bag pair, never combined. A layer finish alongside a lone scarf or
- * a lone bag must be flagged, not silently accepted. Covers both copies of
- * the rule: assembleLook() and propose_look's strictShape().
+ * The assembler header and docs/decisions.md agree:
+ * a look is a base plus exactly one finish — one layer, a scarf alone, a
+ * bag alone, or a scarf+bag pair, never combined. A layer finish alongside
+ * any scarf and/or bag must be flagged, not silently accepted. A lone base
+ * with no finish is still invalid; dress+separates mixes stay invalid.
+ * Covers both copies of the rule: assembleLook() and propose_look's
+ * strictShape().
  * No network. All fixtures synthetic (SYNTH_ prefix).
  *
  * Run: node app/test/assembler-stray-accessory.test.js
@@ -92,6 +94,35 @@ async function run() {
     assert.strictEqual(shapeFor([["a", "base/top"], ["b", "scarf"], ["c", "bag"]]),
       null, "strictShape accepts scarf+bag alone");
     console.log("  pass: unaffected");
+  }
+
+  // --- (f) base + layer + lone scarf -> still invalid (stray, not a finish) ---
+  console.log("\n[(f) layer + lone scarf]");
+  {
+    const card = cardFor([["SYNTH_a", "dress"], ["SYNTH_b", "layer/cardigan"], ["SYNTH_c", "scarf"]]);
+    assert.strictEqual(card.valid, false, "dress+cardigan+scarf is invalid");
+    assert.strictEqual(card.finish, null, "no finish assigned");
+    assert.ok(card.reasons.some((r) => /stray/i.test(r)),
+      "a reason names the stray accessory, got: " + JSON.stringify(card.reasons));
+    assert.strictEqual(shapeFor([["a", "dress"], ["b", "layer/cardigan"], ["c", "scarf"]]),
+      "stray_accessory_with_layer", "strictShape rejects dress+cardigan+scarf");
+    console.log("  pass: layer + lone accessory stays invalid");
+  }
+
+  // --- (g) lone scarf / lone bag are finishes on their own ---
+  console.log("\n[(g) scarf-only and bag-only finishes]");
+  {
+    const scarfCard = cardFor([["SYNTH_a", "dress"], ["SYNTH_b", "scarf"]]);
+    assert.strictEqual(scarfCard.valid, true, "dress+scarf is valid");
+    assert.strictEqual(scarfCard.finish, "scarf", "finish scarf");
+    assert.strictEqual(shapeFor([["a", "dress"], ["b", "scarf"]]),
+      null, "strictShape accepts dress+scarf");
+    const bagCard = cardFor([["SYNTH_a", "base/top"], ["SYNTH_b", "base/bottom"], ["SYNTH_c", "bag"]]);
+    assert.strictEqual(bagCard.valid, true, "top+bottom+bag is valid");
+    assert.strictEqual(bagCard.finish, "bag", "finish bag");
+    assert.strictEqual(shapeFor([["a", "base/top"], ["b", "base/bottom"], ["c", "bag"]]),
+      null, "strictShape accepts top+bottom+bag");
+    console.log("  pass: lone accessories validate as finishes");
   }
 
   console.log("\nAll assembler-stray-accessory tests passed.");
