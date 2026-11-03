@@ -548,8 +548,8 @@ function createHandler(config) {
           // Opus finding #13: "find the bag" lives under describe_wardrobe only
           // (locating a wardrobe item), not under propose_look.
           "describe_wardrobe: user wants to see/list wardrobe — e.g. \"what do I have\", \"show my wardrobe\", \"find the bag\"",
-          "view_wardrobe_item: user names a wardrobe category to see it — e.g. \"show me the dresses\", \"see my tops\"; also the reply to an already-shown numbered list (a number or \"show more\")",
-          "delete_wardrobe_item: user names a wardrobe category to remove a piece — e.g. \"delete the dresses\", \"remove my cardigans\"; also the reply to an already-shown numbered list (a number or \"show more\")",
+          "view_wardrobe_item: user names a wardrobe category to see it — e.g. \"show me the dresses\", \"see my tops\", \"show my shoes\"; also the reply to an already-shown numbered list (a number or \"show more\")",
+          "delete_wardrobe_item: user removes a piece or clears the whole wardrobe — e.g. \"delete the dresses\", \"remove my cardigans\", \"delete my shoes\"; whole-wardrobe clear — e.g. \"clear my wardrobe\", \"empty my wardrobe\", \"delete everything in my wardrobe\", \"remove all my clothes\" (count + yes/no confirm, saved profile photos untouched — never \"delete my photos\", that is propose_look); also the reply to an already-shown numbered list (a number or \"show more\")",
           "explain_fit: user asks why look works — e.g. \"why does this work\", \"explain the fit\"",
           "answer_no_data: fabric/price/vendor question — e.g. \"what fabric\", \"how much does it cost\"",
           "off_topic: unrelated topic or greeting with no wardrobe intent",

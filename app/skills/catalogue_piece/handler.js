@@ -217,9 +217,12 @@
       rMissing.trace = trace.slice();
       return rMissing;
     }
-    // dedupe against existing pieces by crop_hash
+    // dedupe against existing pieces by crop_hash — ACTIVE and HELD
+    // pieces only, never rejected/superseded history, so the same photo
+    // shared again after a wardrobe clear catalogues as a NEW piece.
     var existing=[];
     try{ existing=catalog.getPieces()||[]; }catch(e){ existing=[]; }
+    existing=existing.filter(function(p){ return p&&(p.status==="active"||p.status==="held"); });
     var existingHashes={};
     for(var ei=0;ei<existing.length;ei++){
       var ep=existing[ei];
@@ -381,7 +384,13 @@
     var pieces=[];
     if(catalog && imageDataUrl){
       var sid=(o && typeof o.shareId==="string" && o.shareId) ? o.shareId : ("SYNTH_share_"+Date.now());
-      // Idempotent guard for single-piece era: same source_share_id
+      // Per-share idempotency guard: the same source_share_id never
+      // catalogues twice, in ANY status (rejected included). The wardrobe
+      // service replays the mock bot's share history on restart, so after
+      // a wardrobe clear a narrowed guard would let every replayed share
+      // resurrect its deleted piece. A genuine re-share always arrives
+      // under a NEW share id, which the crop_hash filter (active/held
+      // only) already allows.
       var alreadyCatalogued=null;
       try{
         if(catalog&&typeof catalog.getPieces==="function"){

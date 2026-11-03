@@ -72,6 +72,24 @@
     return DELETE_PHOTOS_RE.test(text.toLowerCase());
   }
 
+  // Whole-wardrobe clear ("clear my wardrobe", "empty my wardrobe",
+  // "reset my wardrobe", "start my wardrobe fresh/over", "delete/remove
+  // everything in my wardrobe", "delete/remove all my clothes/pieces/
+  // wardrobe"). Must name the wardrobe/clothes/pieces — a bare "delete",
+  // "DELETE", "forget me", or "delete my photos" never matches (photos
+  // are claimed by matchDeletePhotos above). Mirrored in
+  // app/skills/delete_wardrobe_item/handler.js wantsClearAll — keep the
+  // two in lockstep.
+  function matchClearAll(text) {
+    if (typeof text !== "string" || !text) return false;
+    var t = text.toLowerCase();
+    if (!/\b(wardrobe|clothes|pieces)\b/.test(t)) return false;
+    if (/\b(clear|empty|reset)\b/.test(t)) return true;
+    if (/\bstart\b[\s\S]{0,24}\b(fresh|over)\b/.test(t)) return true;
+    if (/\b(delete|remove)\b[\s\S]*\b(everything|all|whole|entire)\b/.test(t)) return true;
+    return false;
+  }
+
   // Heuristic routing rules — mirrors vault 06 trigger definitions.
   // Kept as explicit regex so behaviour is auditable without an LLM.
   function heuristicSkill(input) {
@@ -155,14 +173,26 @@
     if (detectRenderIntent(rawText)) {
       return { skill: "revise_look", confidence: 90, reason: "render-on-user follow-up; render existing look on wearer" };
     }
+    // Whole-wardrobe clear with one yes/no confirm (delete_wardrobe_item
+    // clear-all path). Before the per-category delete rule (so "delete
+    // everything in my wardrobe" is not read as a category delete) and
+    // before describe_wardrobe below (which also matches "my wardrobe").
+    // Saved profile-photo deletion is already claimed above, and bare
+    // "delete" / "forget me" never match matchClearAll's wardrobe-noun
+    // requirement — those keep routing exactly as now.
+    if (matchClearAll(rawText)) {
+      return { skill: "delete_wardrobe_item", confidence: 93, reason: "whole-wardrobe clear trigger" };
+    }
     // Delete one wardrobe piece, with a yes/no confirm (delete_wardrobe_item).
     // Checked before the view trigger below: the verb sets differ ("delete/
     // remove" vs "show/see"), so the two can never collide either way.
-    if (/\b(delete|remove)\b.*\b(tops|bottoms|dresses|cardigans|blazers|scarves|bags)\b/.test(text)) {
+    // "shoes" rides the same category list — it is a storable taxonomy
+    // category like the rest.
+    if (/\b(delete|remove)\b.*\b(tops|bottoms|dresses|cardigans|blazers|scarves|bags|shoes)\b/.test(text)) {
       return { skill: "delete_wardrobe_item", confidence: 93, reason: "wardrobe category delete trigger" };
     }
     // View one wardrobe category, then pick a numbered piece (view_wardrobe_item)
-    if (/\b(show|see)\b.*\b(tops|bottoms|dresses|cardigans|blazers|scarves|bags)\b/.test(text)) {
+    if (/\b(show|see)\b.*\b(tops|bottoms|dresses|cardigans|blazers|scarves|bags|shoes)\b/.test(text)) {
       return { skill: "view_wardrobe_item", confidence: 93, reason: "wardrobe category view trigger" };
     }
     // Describe wardrobe
@@ -252,6 +282,7 @@
     heuristicSkill: heuristicSkill,
     detectRenderIntent: detectRenderIntent,
     matchDeletePhotos: matchDeletePhotos,
+    matchClearAll: matchClearAll,
     classifySync: classifySync,
     classify: classify,
     clarificationFor: clarificationFor,

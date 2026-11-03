@@ -40,6 +40,26 @@
  *    goes stale. A stashed piece_id that is no longer active reads
  *    honestly as already gone, never an error.
  *
+ * Clear-all — a whole-wardrobe wipe with one yes/no confirm, reusing the
+ *    SAME Step C/D machinery (no new skill). A turn naming the whole
+ *    wardrobe ("clear my wardrobe", "delete everything in my wardrobe" —
+ *    see wantsClearAll, mirrored in app/router.js matchClearAll) skips
+ *    Steps A/B and asks directly: the reply names the ACTIVE count plus,
+ *    separately, any "held" prospective-purchase pieces (both are cleared),
+ *    with a short per-category breakdown, states that saved profile photos
+ *    are NOT touched, and records askQuestion({ skill, expects:"yes_no" })
+ *    plus a pending-deletion marked as clear-all: piece_id is the
+ *    "clear-all" sentinel and description carries a JSON snapshot
+ *    { label, piece_ids } (the snapshot ids are the ONLY pieces the
+ *    confirm may touch — anything catalogued after the ask is left alone).
+ *    Same ~10min expiry. An empty wardrobe (no active AND no held pieces)
+ *    reads honestly as nothing to clear, with no question recorded. The
+ *    confirm turn rejectPiece()es every snapshot id still active or held,
+ *    saves the catalog ONCE via catalog.save() (same save path the service
+ *    uses after a single delete), clears pending + list context, and
+ *    replies warmly with the number removed. A confirm whose snapshot
+ *    already went stale reads honestly as already gone, never an error.
+ *
  * Text-only throughout: every reply is { text, image: null, ... } with the
  * same imageDelivery honesty struct view_wardrobe_item uses — no image is
  * ever staged or sent here, so wardrobe-service send/stage plumbing is
@@ -117,6 +137,40 @@
       if (ctx && ctx.skill === SKILL) return ctx;
     } catch (e) { /* never break the reply */ }
     return null;
+  }
+
+  // Whole-wardrobe phrasing ("clear my wardrobe", "empty my wardrobe",
+  // "reset my wardrobe", "start my wardrobe fresh/over", "delete/remove
+  // everything in my wardrobe", "delete/remove all my clothes/pieces/
+  // wardrobe"). Must name the wardrobe/clothes/pieces — a bare "delete",
+  // "forget me", or "delete my photos" never matches (the photos case is
+  // claimed earlier by the router's matchDeletePhotos rule). Mirrored in
+  // app/router.js matchClearAll — keep the two in lockstep.
+  function wantsClearAll(text) {
+    var t = String(text || "").toLowerCase();
+    if (!/\b(wardrobe|clothes|pieces)\b/.test(t)) return false;
+    if (/\b(clear|empty|reset)\b/.test(t)) return true;
+    if (/\bstart\b[\s\S]{0,24}\b(fresh|over)\b/.test(t)) return true;
+    if (/\b(delete|remove)\b[\s\S]*\b(everything|all|whole|entire)\b/.test(t)) return true;
+    return false;
+  }
+
+  // Clear-all pending-deletion marker: piece_id is the sentinel and
+  // description parses as { label, piece_ids }. Single-piece pendings
+  // carry a human description ("pink dress") that never parses as such,
+  // so the two can never be confused either way.
+  var CLEAR_ALL_PIECE_ID = "clear-all";
+  function clearAllSnapshotIds(pending) {
+    try {
+      if (!pending || pending.piece_id !== CLEAR_ALL_PIECE_ID) return null;
+      if (typeof pending.description !== "string") return null;
+      var snap = JSON.parse(pending.description);
+      if (!snap || !Array.isArray(snap.piece_ids)) return null;
+      for (var i = 0; i < snap.piece_ids.length; i++) {
+        if (typeof snap.piece_ids[i] !== "string" || !snap.piece_ids[i]) return null;
+      }
+      return snap.piece_ids.slice();
+    } catch (e) { return null; }
   }
 
   // This skill's OWN live pending deletion only — same skill-scoping.
@@ -386,15 +440,171 @@
     );
   }
 
+  // Pieces the clear-all ask covers: every ACTIVE piece plus every
+  // "held" prospective-purchase piece (held pieces are wardrobe pieces
+  // too — they clear along with the rest and are named separately in
+  // the ask wording). Rejected/superseded history is never touched.
+  function clearAllTargets(catalog) {
+    var actives = [];
+    var helds = [];
+    try { actives = catalog ? catalog.getActivePieces() : []; } catch (e) { actives = []; }
+    try {
+      helds = (catalog && typeof catalog.getPieces === "function") ?
+        catalog.getPieces({ status: "held" }) : [];
+    } catch (e) { helds = []; }
+    if (!Array.isArray(actives)) actives = [];
+    if (!Array.isArray(helds)) helds = [];
+    return actives.concat(helds);
+  }
+
+  // Short per-category breakdown in fixed taxonomy order ("2 dresses,
+  // 3 tops, 2 bags, 1 scarf, 1 pair of shoes").
+  function clearAllBreakdown(targets) {
+    var order = Object.keys(PLURAL_TO_CATEGORY);
+    var counts = {};
+    targets.forEach(function (p) {
+      if (!p || typeof p.category !== "string") return;
+      counts[p.category] = (counts[p.category] || 0) + 1;
+    });
+    var parts = [];
+    order.forEach(function (plural) {
+      var c = PLURAL_TO_CATEGORY[plural];
+      if (!counts[c]) return;
+      var n = counts[c];
+      if (c === "shoes") parts.push(n === 1 ? "1 pair of shoes" : n + " pairs of shoes");
+      else parts.push(n + " " + (n === 1 ? plainNoun(c) : plural));
+    });
+    return parts.join(", ");
+  }
+
+  // ---- Clear-all ask: count + breakdown, profile photos untouched ----
+  function clearAllAsk(catalog) {
+    // A stale Step B list never survives pivoting to a whole-wardrobe
+    // clear — the confirm question becomes the only live expectation.
+    releaseList(catalog);
+    var targets = clearAllTargets(catalog);
+    if (targets.length === 0) {
+      return textOnlyResult(
+        "Your wardrobe is already a blank canvas, darling \u2728 " +
+        "Nothing to clear!",
+        "clear_all_empty",
+        "Clear-all request on an empty wardrobe."
+      );
+    }
+    var heldCount = 0;
+    try {
+      heldCount = targets.filter(function (p) {
+        return p && p.status === "held";
+      }).length;
+    } catch (e) { heldCount = 0; }
+    var total = targets.length;
+    var noun = total === 1 ? "piece" : "pieces";
+    var heldSuffix = (heldCount > 0 ?
+      ", including " + heldCount + " held one" + (heldCount === 1 ? "" : "s") +
+      " you\u2019re still deciding on" : "");
+    var head = total === 1 ?
+      "A brand-new wardrobe, darling \u2728 \u2014 that\u2019s your " +
+      total + " " + noun + " (" + clearAllBreakdown(targets) + ")" +
+      heldSuffix + "." :
+      "A brand-new wardrobe, darling \u2728 \u2014 that\u2019s all " +
+      total + " " + noun + " (" + clearAllBreakdown(targets) + ")" +
+      heldSuffix + ".";
+    var question = head + " Your saved profile photos stay exactly as they are " +
+      "\u2014 this only clears wardrobe pieces. " +
+      "Say yes to clear it all, or no to keep everything.";
+    var label = total === 1 ?
+      "your " + total + " " + noun + " (" + clearAllBreakdown(targets) + ")" :
+      "all " + total + " " + noun + " (" + clearAllBreakdown(targets) + ")";
+    try {
+      if (catalog && typeof catalog.setPendingDeletion === "function") {
+        catalog.setPendingDeletion({
+          skill: SKILL, piece_id: CLEAR_ALL_PIECE_ID,
+          description: JSON.stringify({
+            label: label,
+            piece_ids: targets.map(function (p) { return p.piece_id; })
+          }),
+          expires_at: expiresAt(PENDING_TTL_MS)
+        });
+      }
+    } catch (e) { /* pending state must not break the reply */ }
+    try {
+      if (catalog && typeof catalog.askQuestion === "function") {
+        catalog.askQuestion({ text: question, skill: SKILL, expects: "yes_no" });
+      }
+    } catch (e) { /* expectation must not break the reply */ }
+    return textOnlyResult(question, "clear_all_awaiting_yes_no",
+      "Asked to confirm clearing " + label + ".");
+  }
+
+  // ---- Clear-all confirm: reject ONLY the snapshot ids still live ----
+  // Pieces catalogued after the ask are absent from the snapshot and are
+  // left alone; snapshot ids already rejected read as already gone.
+  // Saves the catalog exactly ONCE via catalog.save() (best-effort, the
+  // same save path the service uses after a single delete).
+  async function confirmClearAll(catalog, pending) {
+    var ids = clearAllSnapshotIds(pending) || [];
+    releasePending(catalog);
+    releaseList(catalog);
+    var removed = 0;
+    ids.forEach(function (id) {
+      var piece = null;
+      try {
+        piece = catalog && typeof catalog.getPiece === "function" ?
+          catalog.getPiece(id) : null;
+      } catch (e) { piece = null; }
+      if (!piece || (piece.status !== "active" && piece.status !== "held")) return;
+      try {
+        if (catalog && typeof catalog.rejectPiece === "function") {
+          catalog.rejectPiece(id);
+          removed += 1;
+        }
+      } catch (e) { /* one bad id never blocks the rest */ }
+    });
+    try {
+      if (catalog && typeof catalog.save === "function") await catalog.save();
+    } catch (e) { /* best-effort: the service also saves after the turn */ }
+    if (removed === 0) {
+      return textOnlyResult(
+        "Oh loveling, those pieces already slipped out of the wardrobe \u2728 " +
+        "Nothing left to clear!",
+        "clear_all_already_gone",
+        "Clear-all confirm found every snapshot piece already gone."
+      );
+    }
+    var noun = removed === 1 ? "piece" : "pieces";
+    if (removed === 1) {
+      return textOnlyResult(
+        "Done, darling \u2728 \u2014 1 piece is out of the wardrobe, a blank canvas just for you. " +
+        "Your saved profile photos are untouched. " +
+        "Share a fresh photo whenever you like and we\u2019ll start your new wardrobe story! \u2728",
+        "clear_all_confirmed",
+        "Cleared 1 piece from the wardrobe."
+      );
+    }
+    return textOnlyResult(
+      "Done, darling \u2728 \u2014 all " + removed + " " + noun +
+      " are out of the wardrobe, a blank canvas just for you. " +
+      "Your saved profile photos are untouched. " +
+      "Share a fresh photo whenever you like and we\u2019ll start your new wardrobe story! \u2728",
+      "clear_all_confirmed",
+      "Cleared " + removed + " " + noun + " from the wardrobe."
+    );
+  }
+
   async function handle(opts) {
     var o = opts || {};
     var catalog = o.catalog || null;
     var text = typeof o.text === "string" ? o.text :
       (typeof o.message === "string" ? o.message : "");
     // Step D first: a live pending deletion means this call is the
-    // already-verified "yes".
+    // already-verified "yes" — single-piece or clear-all by its marker.
     var pending = livePending(catalog);
-    if (pending) return confirmDeletion(catalog, pending);
+    if (pending) {
+      if (clearAllSnapshotIds(pending) !== null) return await confirmClearAll(catalog, pending);
+      return confirmDeletion(catalog, pending);
+    }
+    // A whole-wardrobe ask pivots out of any live Step B list first.
+    if (wantsClearAll(text)) return clearAllAsk(catalog);
     var ctx = liveContext(catalog);
     if (ctx) return followUp(catalog, text, ctx);
     return freshRequest(catalog, text);
@@ -403,6 +613,7 @@
   var api = {
     handle: handle, skill: SKILL,
     plainNoun: plainNoun, shortDesc: shortDesc,
+    wantsClearAll: wantsClearAll,
     PLURAL_TO_CATEGORY: PLURAL_TO_CATEGORY, PAGE: PAGE
   };
   root.MetaStyles = root.MetaStyles || {};
