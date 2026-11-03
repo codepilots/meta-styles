@@ -477,3 +477,10 @@ After a wardrobe clear + services restart, re-shared photos were answered "alrea
 
 **Status: LANDED 2026-11-03; mock-ig-bot restarted on it.** Muse Code; verified: full suite 85/85 on host (new `app/test/mock-bot-restart-ids.test.js`: two bot instances mint different ids; catalogue → clear → same photo via a restarted bot's first share adds 1 piece; same-share replay still blocked).
 
+
+## Milestone 31 — first message after a restart got no reply (live bug, 2026-11-03)
+
+A 2-garment photo sent as the first message after a wardrobe-service restart was processed (detect 2 regions, ask recorded) but never answered (`processed 1, sent 0`, no error). Root cause (pre-existing): per-tick combined-ask flags were initialised only on user contexts that existed at tick start; a context created mid-tick never recorded its reply anchor, and the post-processing "should not happen" branch returned silently with the share already terminal. Fix in `wardrobe-service/server.js`: flags recorded unconditionally when a detect bag lands; the missing-anchor branch is now loud (activity line, `lastError`, `counts.errors`) and re-queues the shares for retry.
+
+**Status: LANDED 2026-11-03; wardrobe-service restarted on it 20:55** (mock bot deliberately not restarted, so its in-memory share history kept the stuck photo). Muse Code; verified: full suite 86/86 on host (new `wardrobe-service/test/first-tick-combined-ask.test.js`, failed pre-fix); live: the replayed photo produced the combined ask (`sent: 1`, no errors).
+
