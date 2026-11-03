@@ -610,7 +610,7 @@ function createHandler(config) {
         if (routeCacheKey) { const routeHit = cacheGet(routeCacheKey); if (routeHit !== undefined) { sendJson(res, 200, Object.assign({}, routeHit, { cached: true }), corsOrigin); return; } }
         var skillList = SKILL_NAMES.join(", ");
         var triggers = [
-          "catalogue_piece: Photo(s) shared (image present, no other trigger — but FIRST check Recent turns: if the assistant just asked the user to share a photo, route to that skill instead)",
+          "catalogue_piece: Photo(s) shared (image present, no other trigger — but FIRST check Recent turns: if the assistant just asked the user to share a photo, route to that skill instead ONLY when that skill consumes a shared photo (catalogue_piece, What_suits, Match_look, Evaluate_prospective_purchase); a 'share a photo/piece' request from propose_look, describe_wardrobe or revise_look is a wardrobe-piece ask — route the photo to catalogue_piece)",
           "propose_look: user wants a look suggested — e.g. \"show me a look\", \"what goes together\", \"style me\", \"outfit idea\", \"cook up a look\", \"make me a look\", \"can you find …\"; also \"make me a look and show me wearing it\" (render-on-user: still propose_look — the skill checks saved profile photos); also \"delete my photos\" / \"forget my profile photos\" (saved headshot+full-body removal — never wardrobe pieces, also propose_look)",
           "revise_look: user wants to change last look — e.g. \"no bag\", \"without blazer\", \"swap scarf\", \"drop the bag\", \"add the cardigan back\", \"swap the cardigan for the blazer\", \"add my shoes\" (shoes ride on top as the user's own extra, never in the core look); also a follow-up \"show me wearing this\" / \"render this on me\" / \"put this look on me\" (render the EXISTING look on the wearer — still revise_look)",
           // Opus finding #13: "find the bag" lives under describe_wardrobe only
@@ -631,7 +631,7 @@ function createHandler(config) {
           "Skills and their triggers:\n" + triggers + "\n" +
           "Valid skills: " + skillList + "\n" +
           "Rules: Return STRICT JSON only with exactly this shape: {\"skill\":\"<one of 13>\",\"confidence\":0-100,\"reason\":\"short\"}. " +
-          "Before defaulting a bare photo to catalogue_piece, check Recent turns for a just-asked pending question (e.g. a request to share photos); if present, route to that skill. " +
+          "Before defaulting a bare photo to catalogue_piece, check Recent turns for a just-asked pending question (e.g. a request to share photos); if present AND that pending skill consumes a shared photo, route to that skill — but a pending 'share a photo/piece' from propose_look, describe_wardrobe or revise_look still routes the photo to catalogue_piece. " +
           "Use confidence 85-95 for clear matches, 40-65 for vague/ambiguous inputs like \"hmm\" or greetings. " +
           "Vague single-word or greeting inputs should get confidence <70 so the system can ask for clarification.";
         var userStr =

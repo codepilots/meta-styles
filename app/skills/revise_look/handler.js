@@ -489,7 +489,12 @@
       if(!followAsm){
         try{ if(root.MetaStyles&&typeof root.MetaStyles.assembleLook==="function") followAsm=root.MetaStyles.assembleLook; }catch(e2){}
       }
-      return await handleRenderFollowup({ catalog: catalog, stack: stackForProfile, text: text, metaClient: metaClient, shareId: shareId, stageImage: stageImage, assembleLook: followAsm, preferences: o.preferences });
+      // imageConsumed (2026-11-03): intake.complete above means the
+      // attached photo was just filed as a wearer reference — consumed
+      // this turn, so the service may ack the media.
+      var followRes=await handleRenderFollowup({ catalog: catalog, stack: stackForProfile, text: text, metaClient: metaClient, shareId: shareId, stageImage: stageImage, assembleLook: followAsm, preferences: o.preferences });
+      try{ if(followRes&&followRes.meta&&typeof followRes.meta==="object") followRes.meta.imageConsumed=true; }catch(e3){}
+      return followRes;
     }
     // Consent "yes" routed back here: grant, persist, ask for headshot.
     // An attached photo counts as the first upload — stored inline and,
@@ -513,7 +518,12 @@
             if(!grantAsm){
               try{ if(root.MetaStyles&&typeof root.MetaStyles.assembleLook==="function") grantAsm=root.MetaStyles.assembleLook; }catch(e6){}
             }
-            return await handleRenderFollowup({ catalog: catalog, stack: stackForProfile, text: text, metaClient: metaClient, shareId: shareId, stageImage: stageImage, assembleLook: grantAsm, preferences: o.preferences });
+            // imageConsumed (2026-11-03): grantIntake2.complete above
+            // means the attached photo was just filed as a wearer
+            // reference — consumed this turn.
+            var grantRes=await handleRenderFollowup({ catalog: catalog, stack: stackForProfile, text: text, metaClient: metaClient, shareId: shareId, stageImage: stageImage, assembleLook: grantAsm, preferences: o.preferences });
+            try{ if(grantRes&&grantRes.meta&&typeof grantRes.meta==="object") grantRes.meta.imageConsumed=true; }catch(e7){}
+            return grantRes;
           }
           var grantAsk2=stackForProfile.profileAskText(["headshot","full_body"]);
           try{ stackForProfile.recordProfileImageExpectation(catalog, "revise_look", grantAsk2); }catch(e4){}

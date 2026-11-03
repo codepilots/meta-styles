@@ -304,6 +304,7 @@ function createService(opts) {
     duplicates: 0, errors: 0, gave_up: 0, images_delivered: 0,
     catalog_save_failed: 0,
     deletions_cleared: 0,
+    media_kept: 0,
   };
   // Observed-call truth, one value each: "unprobed" (never attempted),
   // "live" (proxy answered and the result was used), "fallback" (proxy
@@ -1062,8 +1063,15 @@ function piecesCount() {
           say("Answered a photo-deletion request (nothing was saved).");
         } else if (hrP && hrP.meta && hrP.meta.renderOnUser) {
           say("Rendered the look on you with a preview picture.");
+        } else if (hrP && hrP.meta && typeof hrP.meta.selectedCount === "number" && hrP.meta.selectedCount > 0) {
+          // Verified outcome only: selectedCount counts pieces that
+          // passed the fit-rule validation this turn, so a positive
+          // count means a validated look card was actually proposed.
+          // Anything else (empty wardrobe, no valid combination, intake
+          // replies) is honestly not a full look — never the skill name.
+          say("Replied with a full look.");
         } else {
-          say("Replied to your message with a full look.");
+          say("Replied — no full look yet.");
         }
       } else if (skill === "revise_look") {
         var hrR = result && result.handlerResult ? result.handlerResult : result;
@@ -1105,9 +1113,18 @@ function piecesCount() {
             if(_hr.meta && _hr.meta.addFailure && _hr.meta.addFailure.kind) _isFailure = true;
             else if(_hr.trace && Array.isArray(_hr.trace) && _hr.trace.indexOf("added:0")!==-1 && _hr.trace.indexOf("return:fail")!==-1) _isFailure = true;
           }
+          // The collected source is acked only when the processing
+          // landed (2026-11-03): catalogue_piece success paths as now,
+          // or an explicit imageConsumed flag from a skill that really
+          // used the bytes this turn (What_suits / Match_look /
+          // Evaluate_prospective_purchase / the profile_image intake).
+          // Anything else keeps the media so a later turn can still use
+          // it — retained media stays discoverable, never silently lost.
+          var _consumed = !!(_hr && _hr.meta && _hr.meta.imageConsumed === true);
           if(_isCat && _isFailure){
             say("Your photo stays with me until its pieces land.");
-          } else {
+            counts.media_kept += 1;
+          } else if((_isCat && !_isFailure) || _consumed){
             acknowledgeMedia(item.media_id);
             // On successful yes-add, also ack original photo media retained from ask
             if(_isCat && _hr && _hr.trace && _hr.trace.indexOf("regions:")!==-1){
@@ -1129,6 +1146,11 @@ function piecesCount() {
                 for(var _mi=0; _mi<_mediaIds.length; _mi++){ if(_mediaIds[_mi]) acknowledgeMedia(_mediaIds[_mi]); }
               }
             }catch(e){}
+          } else {
+            // Photo arrived but no skill consumed it this turn — keep
+            // the media (never delete unprocessed bytes) and say so.
+            counts.media_kept += 1;
+            say("Kept your photo — I didn't use it this time.");
           }
         }
         return outcome;

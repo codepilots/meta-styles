@@ -40,6 +40,11 @@
     if(!o.imagePresent && !o.imageDataUrl){ recordPhotoExpectation(o.catalog, CONSENT_TEXT); return { text:CONSENT_TEXT, image:null, persist:{ summaryDelta:"Asked for What_suits consent.", preferencesDelta:"" }, skill:"What_suits" }; }
     var imageDataUrl=o.imageDataUrl||null;
     var metaClient=o.metaClient||null;
+    // imageConsumed (2026-11-03): this turn arrived WITH the awaited
+    // photo, so the image bytes were consumed as the turn input whether
+    // or not the vision read below succeeds — the service may ack the
+    // media once this reply goes out. The no-photo consent path above
+    // carries no flag (nothing consumed).
     if(imageDataUrl && metaClient && typeof metaClient.palette==="function"){
       try{
         var r=await metaClient.palette(imageDataUrl);
@@ -49,9 +54,12 @@
         var note=r&&typeof r.note==="string" ? r.note.trim() : "";
         if(words.length>0 && note){
           if(!/[.!?\u2026]$/.test(note)) note+=".";
-          return { text:"Lovely, thank you for trusting me, darling \u2728 From what I can see, "+joinWords(words)+" will sing on you \u2014 "+note+" A touch of silver shimmer near the face will catch the light just so \u2728 Your photo isn\u2019t kept once I\u2019ve replied, loveling \u2014 it\u2019s just for this read.", image:null, persist:{ summaryDelta:"Gave What_suits colour advice.", preferencesDelta:words.join("/")+" palette." }, skill:"What_suits" };
+          return { text:"Lovely, thank you for trusting me, darling \u2728 From what I can see, "+joinWords(words)+" will sing on you \u2014 "+note+" A touch of silver shimmer near the face will catch the light just so \u2728 Your photo isn\u2019t kept once I\u2019ve replied, loveling \u2014 it\u2019s just for this read.", image:null, persist:{ summaryDelta:"Gave What_suits colour advice.", preferencesDelta:words.join("/")+" palette." }, skill:"What_suits", meta:{ imageConsumed:true } };
         }
       }catch(e){}
+    }
+    if(imageDataUrl){
+      return { text:"Lovely, thank you for trusting me, darling \u2728 I couldn\u2019t quite read the photo just now, so here\u2019s some general colour guidance, loveling \u2014 soft lilac, sage and warm cream flatter most Y2K x fairycore looks and lift your natural glow. A touch of silver shimmer near the face will catch the light just so \u2728 Your photo isn\u2019t kept once I\u2019ve replied, loveling \u2014 it\u2019s just for this read.", image:null, persist:{ summaryDelta:"Gave What_suits colour advice.", preferencesDelta:"Warm lilac/sage palette." }, skill:"What_suits", meta:{ imageConsumed:true } };
     }
     return { text:"Lovely, thank you for trusting me, darling \u2728 I couldn\u2019t quite read the photo just now, so here\u2019s some general colour guidance, loveling \u2014 soft lilac, sage and warm cream flatter most Y2K x fairycore looks and lift your natural glow. A touch of silver shimmer near the face will catch the light just so \u2728 Your photo isn\u2019t kept once I\u2019ve replied, loveling \u2014 it\u2019s just for this read.", image:null, persist:{ summaryDelta:"Gave What_suits colour advice.", preferencesDelta:"Warm lilac/sage palette." }, skill:"What_suits" };
   }

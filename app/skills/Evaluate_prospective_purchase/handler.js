@@ -478,12 +478,18 @@
     }
     var intro = "Ooh, let\u2019s have a look, loveling \u2728 I\u2019ll hold this one just for 24 hours while you decide \u2014 text first, preview only if you\u2019d like it.";
     var previewQ = canPreview ? " Want a preview image too? \u2728" : " \u2728";
+    // imageConsumed (2026-11-03): a new evaluation treats the attached
+    // photo as the item under review (sniffed via classify when a client
+    // exists, held regardless), so the service may ack the media once
+    // the reply goes out. The confirmation branch above and the
+    // hold-not-stored fallback below never consume a photo: no flag.
+    var photoUsed = !!imageDataUrl;
     if(active.length === 0){
       var emptyReply = intro + " Your wardrobe\u2019s empty just now, so I can\u2019t cross-check \u2014 but it looks like a darling piece on its own! Share a couple of wardrobe photos and I can show you how it would mix and match. (24hr hold, then I discard it unless you say you bought it \u2728)";
       var pv0 = await maybePreview("a new " + nounOf(heldCat), []);
       emptyReply += pv0.caveat;
       recordPurchaseExpectation(catalog, emptyReply);
-      return { text: emptyReply, image: pv0.image, persist: { summaryDelta: "Evaluated prospective purchase (empty wardrobe).", preferencesDelta: "" }, skill: "Evaluate_prospective_purchase", meta: { imageDelivery: pv0.imageDelivery } };
+      return { text: emptyReply, image: pv0.image, persist: { summaryDelta: "Evaluated prospective purchase (empty wardrobe).", preferencesDelta: "" }, skill: "Evaluate_prospective_purchase", meta: { imageDelivery: pv0.imageDelivery, imageConsumed: photoUsed } };
     }
     var pool = active.map(function (p) { return { piece_id: p.piece_id, category: p.category }; });
     if (heldId) pool.push({ piece_id: heldId, category: heldCat });
@@ -498,7 +504,7 @@
       var pvz = await maybePreview(promptNouns, active);
       outfitsReply += pvz.caveat;
       recordPurchaseExpectation(catalog, outfitsReply);
-      return { text: outfitsReply, image: pvz.image, persist: { summaryDelta: "Evaluated prospective purchase: no valid combination yet.", preferencesDelta: "" }, skill: "Evaluate_prospective_purchase", meta: { imageDelivery: pvz.imageDelivery } };
+      return { text: outfitsReply, image: pvz.image, persist: { summaryDelta: "Evaluated prospective purchase: no valid combination yet.", preferencesDelta: "" }, skill: "Evaluate_prospective_purchase", meta: { imageDelivery: pvz.imageDelivery, imageConsumed: photoUsed } };
     }
     if (found.outfits.length > 0 && found.outfits[0].items.length > 0) {
       var firstNouns = found.outfits[0].items.map(function (it) { return nounOf(it.category); }).join(" + ");
@@ -509,7 +515,7 @@
     var pv = await maybePreview(promptNouns, active);
     outfitsReply += pv.caveat;
     recordPurchaseExpectation(catalog, outfitsReply);
-    return { text: outfitsReply, image: pv.image, persist: { summaryDelta: "Evaluated prospective purchase: " + n + " outfits.", preferencesDelta: "" }, skill: "Evaluate_prospective_purchase", meta: { imageDelivery: pv.imageDelivery } };
+    return { text: outfitsReply, image: pv.image, persist: { summaryDelta: "Evaluated prospective purchase: " + n + " outfits.", preferencesDelta: "" }, skill: "Evaluate_prospective_purchase", meta: { imageDelivery: pv.imageDelivery, imageConsumed: photoUsed } };
   }
 
   var api = { handle: handle, skill: "Evaluate_prospective_purchase" };

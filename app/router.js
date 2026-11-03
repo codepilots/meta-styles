@@ -56,6 +56,54 @@
     "Evaluate_prospective_purchase",
   ];
 
+  // Skills that consume a shared photo as a turn input (verified in each
+  // handler: they actually read imageDataUrl for a routed photo).
+  // Complete_the_look, describe_wardrobe, explain_fit, propose_look,
+  // revise_look and the view/delete/off_topic skills never touch the
+  // attached bytes — a photo routed to one of those would be silently
+  // dropped (2026-11-03 live bug: Spark sent a "share one more piece"
+  // follow-up photo to propose_look, which ignored it, and the service
+  // then deleted the unprocessed media). Any photo turn landing on a
+  // non-consuming skill is overridden to catalogue_piece below. Pending
+  // expectations decided BEFORE the router (agentic-loop.js: expects
+  // image / profile_image, e.g. What_suits consent, propose_look /
+  // revise_look profile photos) bypass the router entirely and are NOT
+  // subject to this guard.
+  var IMAGE_SKILLS = [
+    "catalogue_piece",
+    "What_suits",
+    "Match_look",
+    "Evaluate_prospective_purchase",
+  ];
+
+  function guardPhotoSkill(input, decided) {
+    if (!input || !input.imagePresent || !decided ||
+        typeof decided.skill !== "string") {
+      return decided;
+    }
+    if (IMAGE_SKILLS.indexOf(decided.skill) === -1) {
+      // A confident override carries no clarification: the attached
+      // photo is a strong cataloguing signal on its own.
+      return {
+        skill: "catalogue_piece",
+        confidence: 90,
+        reason: "photo routed to catalogue_piece (was " + decided.skill + ")",
+      };
+    }
+    if (decided.clarification) {
+      // A photo turn already aimed at an image-consuming skill must not
+      // detour through low-confidence clarification (short/greeting
+      // text plus a photo): the detour returns before any skill runs
+      // and leaves the attached bytes unused.
+      return {
+        skill: decided.skill,
+        confidence: 90,
+        reason: "photo routed to " + decided.skill + " (was low-confidence clarification)",
+      };
+    }
+    return decided;
+  }
+
   // Explicit render-on-user intent: the wearer asks to see a look
   // rendered ON THEM (using their saved headshot + full-body photo),
   // not a flat-lay. Single source of truth — propose_look and
@@ -260,7 +308,11 @@
   // opts: { text, imagePresent, wardrobeSummary, preferences, lastTurns }
   // metaClient optional: { classifyText } for live Spark path — when present,
   // we call it and merge, but never let it invent a skill outside SKILL_NAMES.
-  function classifySync(input) {
+  // The photo guard applies to the FINAL heuristic result (after the
+  // clarification logic), so a photo can never be routed to a skill
+  // that ignores attached bytes — not even via a low-confidence
+  // clarification detour, which would leave the bytes unfetched-unused.
+  function classifySyncUnguarded(input) {
     var h = heuristicSkill(input || {});
     // Vague / very short inputs get low confidence → clarification path
     var raw = (input.text || "").trim();
@@ -281,8 +333,16 @@
     return h;
   }
 
+  // Sync entry with the photo guard applied to the final decision.
+  function classifySync(input) {
+    return guardPhotoSkill(input || {}, classifySyncUnguarded(input || {}));
+  }
+
   // Async entry that tries live Spark first, falls back to heuristic.
   // Spark is called via metaClient.route(text, context) if available.
+  // The photo guard applies to the live result exactly as to the
+  // heuristic one (2026-11-03 bug: live Spark routed a follow-up photo
+  // to propose_look, which cannot catalogue it).
   async function classify(input, metaClient) {
     if (metaClient && typeof metaClient.route === "function") {
       try {
@@ -297,8 +357,10 @@
         if (live && typeof live.skill === "string" && SKILL_NAMES.indexOf(live.skill) !== -1) {
           var conf = typeof live.confidence === "number" ? live.confidence : 75;
           var reason = typeof live.reason === "string" ? live.reason : "live router";
-          if (conf < 70) return { skill: live.skill, confidence: conf, reason: reason, clarification: clarificationFor(input) };
-          return { skill: live.skill, confidence: conf, reason: reason };
+          var decided;
+          if (conf < 70) decided = { skill: live.skill, confidence: conf, reason: reason, clarification: clarificationFor(input) };
+          else decided = { skill: live.skill, confidence: conf, reason: reason };
+          return guardPhotoSkill(input || {}, decided);
         }
       } catch (e) { /* fall through to heuristic */ }
     }
@@ -316,6 +378,7 @@
 
   var api = {
     SKILL_NAMES: SKILL_NAMES,
+    IMAGE_SKILLS: IMAGE_SKILLS.slice(),
     heuristicSkill: heuristicSkill,
     detectRenderIntent: detectRenderIntent,
     matchDeletePhotos: matchDeletePhotos,

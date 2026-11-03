@@ -480,6 +480,9 @@
     if (stillMissing.length > 0) {
       var ask = profileAskText(stillMissing);
       recordProfileImageExpectation(catalog, skill, ask);
+      // imageConsumed (2026-11-03): the attached photo was just filed
+      // as a wearer reference — consumed this turn, so the service may
+      // ack the media once this reply goes out.
       return {
         complete: false, profile: after,
         reply: {
@@ -487,7 +490,7 @@
           image: null,
           persist: { summaryDelta: "Kept profile " + slot + "; still missing " + stillMissing.join(", ") + ".", preferencesDelta: "" },
           skill: skill,
-          meta: { profileAction: "stored", profileSlot: slot, profileMissing: stillMissing, imageDelivery: noPreviewDelivery("profile_refs_pending") }
+          meta: { profileAction: "stored", profileSlot: slot, profileMissing: stillMissing, imageDelivery: noPreviewDelivery("profile_refs_pending"), imageConsumed: true }
         }
       };
     }
@@ -979,6 +982,16 @@
     var renderIntent = isRenderIntent(o, userText);
     var imageDataUrl = typeof o.imageDataUrl === "string" ? o.imageDataUrl : null;
     var pendingSatisfied = o.pendingSatisfied && typeof o.pendingSatisfied === "object" ? o.pendingSatisfied : null;
+    // imageConsumed (2026-11-03): true once a profile photo attached to
+    // THIS turn has actually been stored as a wearer reference below
+    // (intake.complete with bytes present). Stamps result metas so the
+    // service may ack the media; turns with no usable photo stay
+    // unflagged and the service retains the media.
+    var profilePhotoUsed = false;
+    function markPhotoUsedMeta(meta) {
+      if (profilePhotoUsed && meta && typeof meta === "object") meta.imageConsumed = true;
+      return meta;
+    }
     if (isDeletePhotos(o, userText)) {
       return await handleDeletePhotos({ catalog: catalog, skill: "propose_look" });
     }
@@ -1001,6 +1014,9 @@
       }
       renderProfile = intake.profile;
       renderIntent = true;
+      // intake.complete with bytes present means the photo was just
+      // stored as a wearer reference — consumed this turn.
+      if (imageDataUrl) profilePhotoUsed = true;
     }
     // Consent "yes" (routed back here by the pending yes_no): grant,
     // persist, then ask for the headshot. An attached photo counts as
@@ -1031,6 +1047,7 @@
             }
             renderProfile = grantIntake.profile;
             renderIntent = true;
+            if (imageDataUrl) profilePhotoUsed = true;
           } else {
             var grantAsk = profileAskText(["headshot", "full_body"]);
             recordProfileImageExpectation(catalog, "propose_look", grantAsk);
@@ -1066,11 +1083,11 @@
         image: null,
         persist: { summaryDelta: "Empty wardrobe, offered to catalogue.", preferencesDelta: "" },
         skill: "propose_look",
-        meta: {
+        meta: markPhotoUsedMeta({
           source: "empty", selectedCount: 0, rejectedReason: "empty_wardrobe",
           toolSteps: toolSteps,
           imageDelivery: { requested: false, generated: false, delivered: false, reason: "empty_wardrobe" }
-        }
+        })
       };
     }
 
@@ -1201,11 +1218,11 @@
         image: null,
         persist: { summaryDelta: "No valid look; said why honestly.", preferencesDelta: "" },
         skill: "propose_look",
-        meta: {
+        meta: markPhotoUsedMeta({
           source: "fallback", selectedCount: 0, rejectedReason: rejectedReason,
           toolSteps: toolSteps,
           imageDelivery: { requested: false, generated: false, delivered: false, reason: "no_valid_look" }
-        }
+        })
       };
     }
 
@@ -1374,6 +1391,9 @@
       toolSteps: toolSteps, rationale: rationale, imageDelivery: imageDelivery,
       renderOnUser: didRenderOnUser
     };
+    // A profile photo stored earlier this turn rode along into this
+    // validated look — the bytes were consumed, so stamp it.
+    markPhotoUsedMeta(outMeta);
     if (didRenderOnUser && renderOnUserMeta) {
       outMeta.referenceThumb = false;
       outMeta.referencePieces = renderOnUserMeta.referencePieces;
