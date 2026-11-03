@@ -75,6 +75,39 @@
   var PENDING_TTL_MS = 10 * 60 * 1000;
   var SKILL = "delete_wardrobe_item";
 
+  // Shared singular/plural/synonym table (app/interpret.js) with the
+  // old plural map as a fail-closed fallback when the module is
+  // unreachable. Pinned to the classifier taxonomy.
+  var InterpretMod = null;
+  try {
+    if (typeof require !== "undefined") InterpretMod = require("../../interpret.js");
+  } catch (e) { InterpretMod = null; }
+  function interpretMod() {
+    if (InterpretMod && typeof InterpretMod.categoryOf === "function") return InterpretMod;
+    try {
+      var g = root.MetaStyles && root.MetaStyles.interpret;
+      if (g && typeof g.categoryOf === "function") return g;
+    } catch (e2) {}
+    return null;
+  }
+  function sparkPickFn() {
+    var mod = interpretMod();
+    if (mod && typeof mod.sparkPick === "function") return mod.sparkPick;
+    return null;
+  }
+  // Closed-choice Spark fallback: resolves the option id or null. Never
+  // throws, never calls when metaClient.interpret is missing, and records
+  // the outcome in trace (never the user's raw text).
+  async function closedPick(metaClient, text, options, question, trace) {
+    var sp = sparkPickFn();
+    // No usable client means no fallback was attempted: stay exactly as
+    // before (no trace entry either).
+    if (!sp || !metaClient || typeof metaClient.interpret !== "function") return null;
+    var pick = null;
+    try { pick = await sp(metaClient, text, options, question, null); } catch (e) { pick = null; }
+    if (trace) trace.push("interpret:spark:" + (pick || "none"));
+    return pick;
+  }
   // Fixed plural -> category map (identical to view_wardrobe_item's,
   // pinned to the classifier taxonomy).
   var PLURAL_TO_CATEGORY = {
@@ -117,6 +150,11 @@
   }
 
   function categoryOf(text) {
+    var mod = interpretMod();
+    if (mod) {
+      var shared = mod.categoryOf(text);
+      if (shared) return shared;
+    }
     var t = String(text || "").toLowerCase();
     var names = Object.keys(PLURAL_TO_CATEGORY);
     for (var i = 0; i < names.length; i++) {
@@ -125,6 +163,36 @@
       }
     }
     return null;
+  }
+
+  // Categories that actually hold active pieces, in fixed taxonomy
+  // order — the closed option set for the Step A Spark fallback, plus a
+  // clear_all option that enters the existing clear-all confirm path
+  // (never deletes directly).
+  var CATEGORY_ORDER = [
+    "base/top", "base/bottom", "dress",
+    "layer/cardigan", "layer/blazer", "scarf", "bag", "shoes"
+  ];
+  function activeCategories(catalog) {
+    var active = [];
+    try { active = catalog ? catalog.getActivePieces() : []; } catch (e) { active = []; }
+    if (!Array.isArray(active)) return [];
+    var counts = {};
+    active.forEach(function (p) {
+      if (p && typeof p.category === "string") counts[p.category] = (counts[p.category] || 0) + 1;
+    });
+    var out = [];
+    CATEGORY_ORDER.forEach(function (c) {
+      if (counts[c]) out.push({ category: c, count: counts[c] });
+    });
+    return out;
+  }
+  function categoryOptions(cats) {
+    var opts = cats.map(function (c) {
+      return { id: c.category, description: "delete one of the " + pluralOf(c.category) + " (" + c.count + ")" };
+    });
+    opts.push({ id: "clear_all", description: "clear the whole wardrobe (every piece, with a confirm)" });
+    return opts;
   }
 
   // This skill's OWN live list context only — keyed on its own skill name,
@@ -285,8 +353,26 @@
   }
 
   // ---- Step A: fresh category request ----
-  function freshRequest(catalog, text) {
+  // Local parse first; only a miss consults Spark, constrained to the
+  // categories that actually hold active pieces plus a clear_all option
+  // that enters the existing clear-all confirm path (never deletes).
+  async function freshRequest(catalog, text, opts) {
+    var o = opts || {};
+    var trace = (o && Array.isArray(o._trace)) ? o._trace : null;
     var category = categoryOf(text);
+    if (!category) {
+      var cats = activeCategories(catalog);
+      if (cats.length > 0) {
+        var pick = await closedPick(o.metaClient || null, text, categoryOptions(cats),
+          "Which category of the wardrobe does the user want to delete, or the whole wardrobe?", trace);
+        if (pick === "clear_all") return clearAllAsk(catalog);
+        if (pick) {
+          for (var ci = 0; ci < cats.length; ci++) {
+            if (cats[ci].category === pick) { category = pick; break; }
+          }
+        }
+      }
+    }
     if (!category) {
       var names = Object.keys(PLURAL_TO_CATEGORY).join(", ");
       return textOnlyResult(
@@ -321,7 +407,12 @@
   }
 
   // ---- Step B: follow-up against the live list context ----
-  function followUp(catalog, text, ctx) {
+  // A bare number or "show more" resolves locally; only an unparsed
+  // reply consults Spark, constrained to the shown entries plus
+  // show_more/none. A pick moves to the Step C confirm — never deletes.
+  async function followUp(catalog, text, ctx, opts) {
+    var o = opts || {};
+    var trace = (o && Array.isArray(o._trace)) ? o._trace : null;
     var inCategory = activeByCategory(catalog, ctx.category);
     var byId = {};
     inCategory.forEach(function (p) { byId[p.piece_id] = p; });
@@ -356,7 +447,25 @@
       return pickPiece(catalog, ctx, pagePieces, n);
     }
 
-    // (c) anything else: honest re-prompt, same page still live.
+    // (c) anything else: Spark closed-choice over the live page first
+    // ("the second one", "the pink one", "the last one"); only a miss
+    // falls through to the honest re-prompt, same page still live.
+    var entryOpts = pagePieces.map(function (p, i) {
+      return { id: String(i + 1), description: shortDesc(p) };
+    });
+    entryOpts.push({ id: "show_more", description: "show the next page of the list" });
+    entryOpts.push({ id: "none", description: "none of these — not a list pick" });
+    var entryPick = await closedPick(o.metaClient || null, text, entryOpts,
+      "Which entry of the just-shown numbered list does this reply pick?", trace);
+    if (entryPick === "show_more") {
+      return followUp(catalog, "show more", ctx, o);
+    }
+    if (entryPick !== null && entryPick !== "none" && /^\d+$/.test(entryPick)) {
+      var sn = parseInt(entryPick, 10);
+      if (sn >= 1 && sn <= pagePieces.length) {
+        return pickPiece(catalog, ctx, pagePieces, sn);
+      }
+    }
     var again = repromptReply(pagePieces,
       "Oh loveling, I didn\u2019t catch a number or \u2018show more\u2019 just then \u2728 " +
       "Here\u2019s the list again — it\u2019s still live:");
@@ -605,9 +714,18 @@
     }
     // A whole-wardrobe ask pivots out of any live Step B list first.
     if (wantsClearAll(text)) return clearAllAsk(catalog);
+    // Spark-fallback audit trail: entries name only the chosen option id
+    // ("interpret:spark:<choice>" / "interpret:spark:none") — never raw text.
+    var trace = [];
+    var inner = Object.assign({}, o, { _trace: trace });
     var ctx = liveContext(catalog);
-    if (ctx) return followUp(catalog, text, ctx);
-    return freshRequest(catalog, text);
+    var r;
+    if (ctx) r = await followUp(catalog, text, ctx, inner);
+    else r = await freshRequest(catalog, text, inner);
+    if (trace.length && r && typeof r === "object" && !Array.isArray(r.trace)) {
+      r.trace = trace.slice();
+    }
+    return r;
   }
 
   var api = {

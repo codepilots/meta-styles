@@ -42,6 +42,23 @@
   // false-positive "yes" would wrongly activate a piece). Falls back to
   // false (exact-phrase-only, the pre-M24 behaviour) when the matcher is
   // unreachable, so confirmation can only get stricter, never looser.
+  // Shared closed-choice interpreter (app/interpret.js) for the
+  // confirm-branch Spark fallback below. Fail-closed when unreachable.
+  var InterpretMod = null;
+  try {
+    if (typeof require !== "undefined") InterpretMod = require("../../interpret.js");
+  } catch (e) { InterpretMod = null; }
+  function interpretMod(){
+    if (InterpretMod && typeof InterpretMod.sparkPick === "function") return InterpretMod;
+    try {
+      if (root.MetaStyles && root.MetaStyles.interpret &&
+          typeof root.MetaStyles.interpret.sparkPick === "function") {
+        return root.MetaStyles.interpret;
+      }
+    } catch (e2) {}
+    return null;
+  }
+
   // Photo-carrying turns are never affirmative confirmations — a picture
   // plus "sure" is a new item to evaluate, not a bought-it.
   function affirmativeShortReply(text){
@@ -295,8 +312,37 @@
     // "sure") with NO photo attached also confirms — but only ever
     // against a still-live hold (checked inside), so hedged replies
     // ("maybe", "I'll think about it") and declines can never activate.
+    // Spark fallback (closed yes/no/unclear, short replies only): a reply
+    // the fixed list above does not catch is asked of Spark once — "yes"
+    // counts exactly like a typed yes, while "no"/"unclear"/unavailable
+    // fall through exactly like a non-affirmative reply does today (a new
+    // evaluation below). When the loop already decided spark-yes it
+    // arrives flagged via pendingSatisfied and no second call happens.
     var shortYes = !imageDataUrl && !o.imagePresent && affirmativeShortReply(text);
-    if(CONFIRM_RE.test(text.toLowerCase()) || shortYes){
+    var sparkYes = false;
+    if (!shortYes && !CONFIRM_RE.test(text.toLowerCase()) &&
+        !imageDataUrl && !o.imagePresent) {
+      if (o.pendingSatisfied && o.pendingSatisfied.sparkAffirmative === true &&
+          o.pendingSatisfied.expects === "yes_no") {
+        sparkYes = true;
+      } else if (typeof text === "string" && text.trim().length > 0 && text.length <= 200) {
+        try {
+          var im = interpretMod();
+          if (im && metaClient && typeof metaClient.interpret === "function") {
+            var yno = (typeof im.yesNoUnclearOptions === "function")
+              ? im.yesNoUnclearOptions() : null;
+            if (yno) {
+              var q = (o.pendingSatisfied && typeof o.pendingSatisfied.text === "string" &&
+                o.pendingSatisfied.text) ? o.pendingSatisfied.text.slice(0, 300) :
+                "The user was asked to say 'I bought it' to confirm a 24-hour hold. Does this reply confirm the purchase?";
+              var pick = await im.sparkPick(metaClient, text, yno, q, null);
+              if (pick === "yes") sparkYes = true;
+            }
+          }
+        } catch (e) { /* unavailable -> normal path, as today */ }
+      }
+    }
+    if(CONFIRM_RE.test(text.toLowerCase()) || shortYes || sparkYes){
       var held = readHeldPieces(catalog);
       var live = null;
       for(var i = 0; i < held.length; i++){

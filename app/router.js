@@ -12,6 +12,34 @@
  */
 
 (function (root) {
+  // Shared singular/plural/synonym category table (app/interpret.js):
+  // the offline heuristic and the view/delete skills parse the same
+  // vocabulary, so "delete my dress" / "show me my jacket" work locally
+  // with no Spark call. Fail-closed to the old plural list when the
+  // module is unreachable — routing can only get stricter, never looser.
+  var InterpretMod = null;
+  try {
+    if (typeof require !== "undefined") InterpretMod = require("./interpret.js");
+  } catch (e) { InterpretMod = null; }
+  function interpretMod() {
+    if (InterpretMod && typeof InterpretMod.categoryOf === "function") return InterpretMod;
+    try {
+      var g = root.MetaStyles && root.MetaStyles.interpret;
+      if (g && typeof g.categoryOf === "function") return g;
+    } catch (e2) {}
+    return null;
+  }
+  function escapeRegExp(s) {
+    return String(s).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  }
+  var FALLBACK_PLURALS = ["tops", "bottoms", "dresses", "cardigans", "blazers", "scarves", "bags", "shoes"];
+  function categoryAlt() {
+    var mod = interpretMod();
+    var words = mod ? Object.keys(mod.CATEGORY_WORDS) : FALLBACK_PLURALS.slice();
+    words.sort(function (a, b) { return b.length - a.length; });
+    return words.map(escapeRegExp).join("|");
+  }
+
   var SKILL_NAMES = [
     "catalogue_piece",
     "propose_look",
@@ -184,19 +212,28 @@
       return { skill: "delete_wardrobe_item", confidence: 93, reason: "whole-wardrobe clear trigger" };
     }
     // Delete one wardrobe piece, with a yes/no confirm (delete_wardrobe_item).
-    // Checked before the view trigger below: the verb sets differ ("delete/
-    // remove" vs "show/see"), so the two can never collide either way.
+    // Checked before the view trigger below: the verb sets differ (delete/
+    // remove/bin/get-rid-of/throw-out vs show/see/look), so the two can
+    // never collide either way. Category words come from the shared
+    // interpret.js table (singulars, plurals, synonyms) — "delete my
+    // dress" / "bin my heels" route offline. A bare "delete"/"DELETE" or
+    // "delete my photos" names no category word and never matches.
     // "shoes" rides the same category list — it is a storable taxonomy
     // category like the rest.
-    if (/\b(delete|remove)\b.*\b(tops|bottoms|dresses|cardigans|blazers|scarves|bags|shoes)\b/.test(text)) {
+    var catAlt = categoryAlt();
+    if (new RegExp("\\b(?:delete|remove|bin|get\\s+rid\\s+of|throw\\s+out)\\b.*\\b(?:" + catAlt + ")\\b").test(text)) {
       return { skill: "delete_wardrobe_item", confidence: 93, reason: "wardrobe category delete trigger" };
     }
-    // View one wardrobe category, then pick a numbered piece (view_wardrobe_item)
-    if (/\b(show|see)\b.*\b(tops|bottoms|dresses|cardigans|blazers|scarves|bags|shoes)\b/.test(text)) {
+    // View one wardrobe category, then pick a numbered piece (view_wardrobe_item).
+    // "look at" / "can I see" ride the same verbs as show/see.
+    if (new RegExp("\\b(?:show|see|look)\\b.*\\b(?:" + catAlt + ")\\b").test(text)) {
       return { skill: "view_wardrobe_item", confidence: 93, reason: "wardrobe category view trigger" };
     }
-    // Describe wardrobe
-    if (/\b(what do i have|show.*wardrobe|my wardrobe|what.*in.*wardrobe|list.*pieces|find.*(bag|dress|scarf|top|wardrobe))\b/.test(text)) {
+    // Describe wardrobe. The find-a-piece garment list rides the same
+    // shared category table ("find my jacket" counts like "find the
+    // bag"); checked after the view/delete rules above, so a view/delete
+    // verb plus a category word still routes there first.
+    if (new RegExp("\\b(?:what do i have|show.*wardrobe|my wardrobe|what.*in.*wardrobe|list.*pieces|find.*(?:wardrobe|" + catAlt + "))\\b").test(text)) {
       return { skill: "describe_wardrobe", confidence: 93, reason: "describe-wardrobe trigger" };
     }
     // Explain fit

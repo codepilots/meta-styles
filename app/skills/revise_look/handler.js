@@ -33,6 +33,59 @@
 (function (root) {
 
   var REVISE_WORDS=[{ re:/\bbag\b|purse|handbag/, category:"bag" },{ re:/\bscarf\b|wrap\b/, category:"scarf" },{ re:/\bblazer\b|jacket|coat/, category:"layer/blazer" },{ re:/\bcardigan\b|shrug|tie-blouse|blouse/, category:"layer/cardigan" },{ re:/\bdress\b|gown/, category:"dress" },{ re:/\btop\b|cami|camisole|tee/, category:"base/top" },{ re:/\bbottom\b|jeans|skirt|trousers|pants|mini/, category:"base/bottom" },{ re:/\bshoes?\b|boots?|heels?|trainers?|sneakers?|sandals?\b/, category:"shoes" }];
+  // Shared vocabulary (app/interpret.js): extend each category regex with
+  // the table's singular/plural/synonym words it does not already match
+  // ("dresses", "tops", "blazers", "scarves", "bags", "tote", "shirt",
+  // "t-shirt", "skirts", "shorts", "coats", "jackets", "cardigans",
+  // "scarfs", "shoe", "loafers"). Existing alternatives are never
+  // removed or reordered, so every previously-matching input matches
+  // identically — the set only grows. Fail-closed: when the module is
+  // unreachable the literal regexes above stand as before.
+  var InterpretMod = null;
+  try {
+    if (typeof require !== "undefined") InterpretMod = require("../../interpret.js");
+  } catch (e) { InterpretMod = null; }
+  function interpretMod(){
+    if (InterpretMod && typeof InterpretMod.categoryOf === "function") return InterpretMod;
+    try {
+      var g = root.MetaStyles && root.MetaStyles.interpret;
+      if (g && typeof g.categoryOf === "function") return g;
+    } catch (e2) {}
+    return null;
+  }
+  (function extendReviseWords(){
+    var mod = interpretMod();
+    if (!mod || !mod.CATEGORY_WORDS) return;
+    var byCat = {};
+    Object.keys(mod.CATEGORY_WORDS).forEach(function (w) {
+      var c = mod.CATEGORY_WORDS[w];
+      (byCat[c] = byCat[c] || []).push(w);
+    });
+    function esc(s){ return String(s).replace(/[.*+?^${}()|[\]\\]/g, "\\$&"); }
+    for (var i = 0; i < REVISE_WORDS.length; i++) {
+      var entry = REVISE_WORDS[i];
+      var words = byCat[entry.category] || [];
+      var extra = [];
+      for (var k = 0; k < words.length; k++) {
+        var already = false;
+        try { already = entry.re.test(words[k]); } catch (e) { already = false; }
+        if (!already) extra.push("\\b" + esc(words[k]) + "\\b");
+      }
+      if (extra.length) {
+        try { entry.re = new RegExp(entry.re.source + "|" + extra.join("|")); } catch (e) {}
+      }
+    }
+  })();
+  function sparkPickFn() {
+    var mod = interpretMod();
+    if (mod && typeof mod.sparkPick === "function") return mod.sparkPick;
+    return null;
+  }
+  var TAXONOMY_ORDER = [
+    "base/top", "base/bottom", "dress",
+    "layer/cardigan", "layer/blazer", "scarf", "bag", "shoes"
+  ];
+  function isRealCategory(c) { return TAXONOMY_ORDER.indexOf(c) !== -1; }
   function matchRevise(t){ if(typeof t!=="string") return null; if(!/\b(no|drop|remove|without|lose|ditch|swap|skip)\b/i.test(t)) return null; for(var i=0;i<REVISE_WORDS.length;i++) if(REVISE_WORDS[i].re.test(t.toLowerCase())) return REVISE_WORDS[i].category; return null; }
   // ADD/INCLUDE support: same category-noun set as matchRevise (never
   // duplicated/diverged), scanned over the FULL text independently so a
@@ -99,6 +152,103 @@
         catalog.askQuestion({ text:CLARIFY_TEXT, skill:"revise_look", expects:"text" });
       }
     }catch(e){}
+  }
+  // Closed-choice options for the no-target CLARIFY path, built from REAL
+  // state only: the current look's plus the wardrobe's live categories.
+  // remove:<cat> / add:<cat> map onto the existing cat/required flow;
+  // swap:<from>:<to> maps onto cat=<from>, required=<to> (the wire id
+  // uses ":" — ">" is outside the /api/interpret id charset); render
+  // means "show me wearing it" via the normal render follow-up. "none"
+  // keeps the existing CLARIFY_TEXT. Never invents a category.
+  function relevantReviseCategories(catalog){
+    var have = {};
+    var active = [];
+    try { active = catalog ? catalog.getActivePieces() : []; } catch (e) { active = []; }
+    (Array.isArray(active) ? active : []).forEach(function (p) {
+      if (p && typeof p.category === "string" && isRealCategory(p.category)) have[p.category] = true;
+    });
+    try {
+      var look = lastValidLook(catalog);
+      if (look) {
+        var map = {};
+        active.forEach(function (p) { if (p && p.piece_id) map[p.piece_id] = p; });
+        look.coreIds.forEach(function (id) {
+          if (map[id] && isRealCategory(map[id].category)) have[map[id].category] = true;
+        });
+        (look.extras || []).forEach(function (ex) {
+          if (ex && isRealCategory(ex.category)) have[ex.category] = true;
+        });
+      }
+    } catch (e) {}
+    return TAXONOMY_ORDER.filter(function (c) { return have[c]; });
+  }
+  function clarifyOptions(catalog){
+    var cats = relevantReviseCategories(catalog);
+    var opts = [];
+    cats.forEach(function (c) {
+      opts.push({ id: "remove:" + c, description: "take the " + plainNoun(c) + " out of the look" });
+    });
+    cats.forEach(function (c) {
+      opts.push({ id: "add:" + c, description: "add the " + plainNoun(c) + " to the look" });
+    });
+    // Swaps ride whatever budget remains (at most 24 options total):
+    // each look category crossed with each other real category.
+    var lookCats = [];
+    try {
+      var look = lastValidLook(catalog);
+      if (look) {
+        var seen = {};
+        var activeNow = [];
+        try { activeNow = catalog ? catalog.getActivePieces() : []; } catch (e) { activeNow = []; }
+        var liveMap = {};
+        (Array.isArray(activeNow) ? activeNow : []).forEach(function (p) { if (p && p.piece_id) liveMap[p.piece_id] = p; });
+        look.coreIds.forEach(function (id) {
+          if (liveMap[id] && isRealCategory(liveMap[id].category) && !seen[liveMap[id].category]) {
+            seen[liveMap[id].category] = true;
+            lookCats.push(liveMap[id].category);
+          }
+        });
+      }
+    } catch (e) {}
+    for (var fi = 0; fi < lookCats.length && opts.length < 22; fi++) {
+      for (var ti = 0; ti < cats.length && opts.length < 22; ti++) {
+        if (lookCats[fi] === cats[ti]) continue;
+        opts.push({ id: "swap:" + lookCats[fi] + ":" + cats[ti],
+          description: "swap the " + plainNoun(lookCats[fi]) + " for the " + plainNoun(cats[ti]) });
+      }
+    }
+    opts.push({ id: "render", description: "show me wearing the current look" });
+    opts.push({ id: "none", description: "none of these — still unclear" });
+    return opts.slice(0, 24);
+  }
+  // Resolve one CLARIFY-miss turn via Spark. Returns { choice, cat,
+  // required, render } for the normal flow, or null to keep the existing
+  // CLARIFY_TEXT. Records "interpret:spark:<choice|none>" in trace —
+  // never the user's raw text. Never throws.
+  async function clarifyViaSpark(catalog, text, metaClient, trace){
+    var sp = sparkPickFn();
+    // No usable client means no fallback was attempted: stay exactly as
+    // before (no trace entry either).
+    if (!sp || !metaClient || typeof metaClient.interpret !== "function") return null;
+    var pick = null;
+    try {
+      pick = await sp(metaClient, text, clarifyOptions(catalog),
+        "The user was asked which piece to swap, skip, or add back. What did they mean?", null);
+    } catch (e) { pick = null; }
+    if (trace) trace.push("interpret:spark:" + (pick || "none"));
+    if (!pick || pick === "none") return null;
+    if (pick === "render") return { choice: pick, cat: null, required: null, render: true };
+    var parts = pick.split(":");
+    if (parts[0] === "remove" && parts.length === 2 && isRealCategory(parts[1])) {
+      return { choice: pick, cat: parts[1], required: null, render: false };
+    }
+    if (parts[0] === "add" && parts.length === 2 && isRealCategory(parts[1])) {
+      return { choice: pick, cat: null, required: parts[1], render: false };
+    }
+    if (parts[0] === "swap" && parts.length === 3 && isRealCategory(parts[1]) && isRealCategory(parts[2])) {
+      return { choice: pick, cat: parts[1], required: parts[2], render: false };
+    }
+    return null;
   }
   var CAVEAT=" (I can\u2019t tuck preview pictures into chat just yet, so this word-picture will have to sparkle on its own. \u2728)";
   var NO_SHOES_TEXT="Oh, loveling \u2728 There are no shoes in your wardrobe yet, so I can\u2019t pop them on top \u2014 share a photo of them and I\u2019ll catalogue it, then we\u2019ll pop them on top of a look! \u2728";
@@ -308,7 +458,7 @@
     return { text: reply, image: onUser.image, persist:{ summaryDelta: "Rendered saved look on wearer: "+nouns+".", preferencesDelta: "" }, skill:"revise_look", meta:{ imageDelivery: onUser.imageDelivery, renderOnUser: true, profileRefs: onUser.meta.profileRefs, referencePieces: onUser.meta.referencePieces, referenceGarmentTotal: onUser.meta.referenceGarmentTotal, referenceDowngraded: onUser.meta.referenceDowngraded, referencePayloadBytes: onUser.meta.referencePayloadBytes, referenceMode: onUser.meta.referenceMode, previewPrompt: onUser.meta.previewPrompt } };
   }
 
-  async function handle(opts){
+  async function handleInner(opts){
     var o=opts||{}, catalog=o.catalog, text=o.text||"";
     var metaClient=o.metaClient||null;
     var shareId=typeof o.shareId==="string"&&o.shareId?o.shareId:null;
@@ -404,15 +554,41 @@
     // revise first, then render the revised look below (never a flat-lay).
     var renderOnRevised = renderIntent && hasProfileStack && (!!cat || !!required);
 
-    // Ambiguous / no revision target: clarification path (unchanged).
+    // Ambiguous / no revision target: Spark closed-choice over the live
+    // look + wardrobe categories FIRST ("lose the strappy thing" ->
+    // remove:bag); only a miss keeps the clarification path (unchanged).
+    // A hit maps onto the existing cat / required variables (or the
+    // render follow-up) so the normal flow runs below. Never invents a
+    // category — clarifyViaSpark only returns real ones.
     if(!cat && !required){
-      recordTextExpectation(catalog);
-      recordReviseTurn(catalog, {
-        userText: typeof text==="string" ? text : "",
-        proposal: null, verdict: false, reasons: ["no_revision_target"]
-      });
-      imageDelivery.reason="no_valid_look";
-      return { text: CLARIFY_TEXT, image: null, persist:{ summaryDelta: "Asked for revise clarification.", preferencesDelta: "" }, skill:"revise_look", meta:{ imageDelivery: imageDelivery } };
+      var sparkTrace = (o && Array.isArray(o._trace)) ? o._trace : null;
+      var mapped = await clarifyViaSpark(catalog, text, metaClient, sparkTrace);
+      // A "render" choice renders the most recent valid proposal on the
+      // wearer via the normal render follow-up (the pure-render block
+      // sits above, so this calls it directly — never a re-weave).
+      if (mapped && mapped.render) {
+        if (hasProfileStack) {
+          var followAsmR = null;
+          try{ followAsmR=stackForProfile.getAssembleLook(o); }catch(e11){ followAsmR=null; }
+          if(!followAsmR){
+            try{ if(root.MetaStyles&&typeof root.MetaStyles.assembleLook==="function") followAsmR=root.MetaStyles.assembleLook; }catch(e12){}
+          }
+          return await handleRenderFollowup({ catalog: catalog, stack: stackForProfile, text: text, metaClient: metaClient, shareId: shareId, stageImage: stageImage, assembleLook: followAsmR, preferences: o.preferences });
+        }
+        mapped = null;
+      } else if (mapped) {
+        cat = mapped.cat;
+        required = mapped.required;
+      }
+      if(!cat && !required){
+        recordTextExpectation(catalog);
+        recordReviseTurn(catalog, {
+          userText: typeof text==="string" ? text : "",
+          proposal: null, verdict: false, reasons: ["no_revision_target"]
+        });
+        imageDelivery.reason="no_valid_look";
+        return { text: CLARIFY_TEXT, image: null, persist:{ summaryDelta: "Asked for revise clarification.", preferencesDelta: "" }, skill:"revise_look", meta:{ imageDelivery: imageDelivery } };
+      }
     }
 
     // Per-turn exclusion only (Opus finding #7): the catalog is never
@@ -1079,6 +1255,20 @@
     return { text: reply, image: img, persist:{ summaryDelta: sumDelta, preferencesDelta: prefDelta }, skill:"revise_look", meta: outMeta };
   }
 
+  // Trace wrapper: Spark-fallback entries name only the chosen option
+  // id ("interpret:spark:<choice>" / "interpret:spark:none") — never raw
+  // text. Attached only when a fallback was actually attempted, so the
+  // no-client path stays exactly as before.
+  async function handle(opts){
+    var o = opts || {};
+    var trace = [];
+    var inner = Object.assign({}, o, { _trace: trace });
+    var r = await handleInner(inner);
+    if (trace.length && r && typeof r === "object" && !Array.isArray(r.trace)) {
+      r.trace = trace.slice();
+    }
+    return r;
+  }
   var api = { handle: handle, skill: "revise_look", matchRevise: matchRevise, matchAdd: matchAdd };
   root.MetaStyles = root.MetaStyles || {};
   root.MetaStyles.skills = root.MetaStyles.skills || {};

@@ -9,6 +9,21 @@
 (function (root) {
   var DEFAULT_MAX_STEPS = 20;
 
+  // Shared closed-choice interpreter (app/interpret.js): the yes_no
+  // Spark fallback below. Fail-closed to null when unreachable.
+  var InterpretMod = null;
+  try {
+    if (typeof require !== "undefined") InterpretMod = require("./interpret.js");
+  } catch (e) { InterpretMod = null; }
+  function interpretMod() {
+    if (InterpretMod && typeof InterpretMod.sparkPick === "function") return InterpretMod;
+    try {
+      var g = root.MetaStyles && root.MetaStyles.interpret;
+      if (g && typeof g.sparkPick === "function") return g;
+    } catch (e2) {}
+    return null;
+  }
+
   // Conservative whole-reply affirmative list for pending yes_no
   // expectations (Milestone 24). Deliberately narrow: a false-positive
   // "yes" can activate a held piece into the wardrobe (purchase
@@ -140,6 +155,34 @@
               } else if (pq.expects === "yes_no") {
                 satisfied = isAffirmativeReply(message);
                 satisfiedKind = "affirmative reply";
+                // Spark fallback (closed yes/no/unclear): a reply that is
+                // NOT on the fixed list above — and is short (<=200 chars)
+                // — is asked of Spark before giving up. "yes" counts
+                // exactly like a typed yes (direct action, no re-confirm);
+                // "no"/"unclear"/unavailable behave exactly as a
+                // non-affirmative reply does today (normal routing). Only
+                // runs when a metaClient with interpret is wired; the
+                // fixed list above never calls Spark.
+                var sparkAffirmative = false;
+                if (!satisfied && typeof message === "string" &&
+                    message.trim().length > 0 && message.length <= 200) {
+                  try {
+                    var im = interpretMod();
+                    if (im && o.metaClient && typeof o.metaClient.interpret === "function") {
+                      var yno = (typeof im.yesNoUnclearOptions === "function")
+                        ? im.yesNoUnclearOptions() : null;
+                      if (yno) {
+                        var pick = await im.sparkPick(o.metaClient, message, yno,
+                          (typeof pq.text === "string" && pq.text) ? pq.text.slice(0, 300) : "", null);
+                        if (pick === "yes") {
+                          satisfied = true;
+                          satisfiedKind = "spark-affirmative yes";
+                          sparkAffirmative = true;
+                        }
+                      }
+                    }
+                  } catch (e) { /* unavailable -> normal routing, as today */ }
+                }
               } else if (pq.expects === "profile_image") {
                 // Wearer-profile upload: satisfied ONLY by a photo reply.
                 // The receiving skill files it as a headshot/full-body
@@ -156,8 +199,13 @@
               // a profile photo (pendingSatisfied.expects profile_image)
               // is filed as a wearer reference, an image as a garment
               // photo, a yes_no as consent/confirmation. Passed straight
-              // through to handler opts below.
+              // through to handler opts below. A Spark-decided yes rides
+              // the sparkAffirmative flag so the receiving skill counts it
+              // exactly like a typed yes without asking Spark twice.
               pendingSatisfied = { expects: pq.expects, text: pq.text || "" };
+              if (pq.expects === "yes_no" && sparkAffirmative) {
+                pendingSatisfied.sparkAffirmative = true;
+              }
             }
             break; // one expectation at a time: oldest first, never stacked
           }

@@ -179,6 +179,22 @@
     });
   }
 
+  // Generic closed-choice fallback (server validates the choice against
+  // the supplied option ids; anything else comes back choice null).
+  // Throws on proxy/API failure like the other calls — callers (via
+  // interpret.js sparkPick) treat that as "no match".
+  function interpret(text, options, question, context) {
+    var body = {
+      text: String(text || ""),
+      options: (options || []).map(function (o) {
+        return { id: o.id, description: o.description };
+      }),
+    };
+    if (typeof question === "string" && question) body.question = question;
+    if (typeof context === "string" && context) body.context = context;
+    return post("/api/interpret", body, 30000);
+  }
+
   var client = {
     PROXY_BASE: PROXY_BASE,
     joinBase: joinBase,
@@ -186,6 +202,7 @@
     palette: palette,
     copy: copy, assemble: assemble, preview: preview,
     route: route, detectGarments: detectGarments,
+    interpret: interpret,
     cardSignature: cardSignature,
   };
 

@@ -523,6 +523,74 @@ function createHandler(config) {
         return;
       }
 
+      if (url.pathname === "/api/interpret") {
+        // Generic closed-choice fallback: the caller supplies the FULL
+        // option set (ids + short descriptions); Spark picks exactly one
+        // id or "none". The choice is validated against the supplied ids
+        // here — anything outside them (an invented id) is treated as no
+        // match (choice null), per the coercion-seam rule: exact match
+        // passes, everything else fails closed.
+        var itext = typeof payload.text === "string" ? payload.text : "";
+        if (!itext.trim() || itext.length > 300) {
+          sendJson(res, 400, { error: "text_required" }, corsOrigin); return;
+        }
+        var iquestion = payload.question === undefined || payload.question === null
+          ? "" : (typeof payload.question === "string" ? payload.question : null);
+        if (iquestion === null || iquestion.length > 300) {
+          sendJson(res, 400, { error: "bad_question" }, corsOrigin); return;
+        }
+        var icontext = payload.context === undefined || payload.context === null
+          ? "" : (typeof payload.context === "string" ? payload.context : null);
+        if (icontext === null || icontext.length > 300) {
+          sendJson(res, 400, { error: "bad_context" }, corsOrigin); return;
+        }
+        var ioptions = payload.options;
+        var ID_RE = /^[a-z0-9_:/-]{1,40}$/;
+        if (!Array.isArray(ioptions) || ioptions.length < 1 || ioptions.length > 24) {
+          sendJson(res, 400, { error: "options_required" }, corsOrigin); return;
+        }
+        var iids = [];
+        for (const opt of ioptions) {
+          if (!opt || typeof opt !== "object" ||
+              typeof opt.id !== "string" || !ID_RE.test(opt.id) ||
+              typeof opt.description !== "string" || !opt.description.trim() ||
+              opt.description.length > 120) {
+            sendJson(res, 400, { error: "bad_option" }, corsOrigin); return;
+          }
+          iids.push(opt.id);
+        }
+        var ioptKey = ioptions.map((o) => o.id + "=" + o.description).join("|");
+        var icacheKey = "interpret|" + hashKey(itext + "|" + iquestion + "|" + ioptKey + "|" + icontext);
+        { const ihit = cacheGet(icacheKey); if (ihit !== undefined) { sendJson(res, 200, Object.assign({}, ihit, { cached: true }), corsOrigin); return; } }
+        var ioptList = ioptions.map((o) => `- "${o.id}": ${o.description}`).join("\n");
+        var isystemText =
+          "You resolve one ambiguous user message into exactly one caller-supplied option. " +
+          "Reply with STRICT JSON only: {\"choice\":\"<one of the option ids below, or the literal string none>\",\"confidence\":0-100}. " +
+          "Pick the single option the message most plausibly means" +
+          (iquestion ? " given what the assistant is trying to work out: \"" + iquestion.slice(0, 300) + "\"." : ".") +
+          " Choose \"none\" unless one option clearly fits. Never invent an id — only the listed ids or \"none\".\n" +
+          "Options:\n" + ioptList;
+        var iuserStr = "Message: \"" + itext.slice(0, 300) + "\"" +
+          (icontext ? "\nContext: " + icontext.slice(0, 300) : "");
+        // No sparkJson-internal cache tag: the manual cache below stores
+        // the POST-coercion value (invented ids already mapped to null),
+        // so a cached reply can never leak a raw unvalidated choice.
+        var ires = await sparkJson(isystemText, iuserStr, null, ROUTE_UPSTREAM_TIMEOUT_MS);
+        var iparsed = ires.parsed;
+        var icached = ires.cached;
+        var ichoice = (iparsed && typeof iparsed.choice === "string") ? iparsed.choice : "none";
+        if (iids.indexOf(ichoice) === -1) ichoice = "none";
+        var iconf = (iparsed && typeof iparsed.confidence === "number")
+          ? Math.max(0, Math.min(100, Math.round(iparsed.confidence))) : 75;
+        var iout = {
+          choice: ichoice === "none" ? null : ichoice,
+          confidence: iconf, source: SPARK_MODEL, placeholder: false,
+        };
+        cacheSet(icacheKey, iout);
+        sendJson(res, 200, Object.assign({}, iout, { cached: !!icached }), corsOrigin);
+        return;
+      }
+
       if (url.pathname === "/api/route") {
         var text = typeof payload.text === "string" ? payload.text : "";
         var SKILL_NAMES = [
