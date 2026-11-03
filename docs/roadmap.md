@@ -461,3 +461,19 @@ Chat command (chosen over an operator script): "clear / empty / reset my wardrob
 
 Open:
 - Pre-existing, not addressed: the single-piece catalogue path has no photo-hash dedupe, so the same photo sent in two separate messages adds two pieces.
+
+## Milestone 29 — Spark fallback for not-understood messages (Autumn, 2026-11-03)
+
+Per `docs/decisions.md` row 17. New `POST /api/interpret` (closed-choice, validated, cached), `metaClient.interpret`, `app/interpret.js` (`sparkPick` + shared category-word table). Fallbacks at: view/delete category (+ `clear_all` → existing confirm), view/delete numbered pick ("the pink one"), revise_look clarify (`remove:`/`add:`/`swap:`/`render`), pending yes/no (agentic loop + purchase confirm). Deliberately no fallback where nothing was unparsed or no closed option set exists (terminal answers, presence-satisfied photo expectations, router <70 — live routing already uses Spark).
+
+**Status: LANDED 2026-11-03; services restarted on it.** Muse Code; verified independently: full suite 84/84 on host; live Spark via a temporary proxy on the new code: "delete my dress" resolved locally (no Spark call), "the pink one" → entry 1, "something for keeping my neck warm" → scarves, "lose the strappy thing" → remove dress; yes/no results recorded in decision 17.
+
+Open:
+- "yes but only the dresses" on a clear-all confirm keeps everything (safe) but routes off_topic instead of starting a dresses delete.
+
+## Milestone 30 — mock bot ids unique across restarts (live bug, 2026-11-03)
+
+After a wardrobe clear + services restart, re-shared photos were answered "already have it" (live trace `guard:hit`, `return:already`). Root cause: `mock-ig-bot` minted share/media/message ids from counters that reset to 0 on every restart, while the per-user catalog persists on disk — new shares reused old pieces' `source_share_id`, and catalogue_piece's per-share guard (correct, unchanged) skipped them. Could also mis-answer a new photo as an existing active piece. Fix: a per-process random base36 boot tag in every minted id (`SYNTH_mid_op_<tag>_001`); `bootTag: ""` opt-in keeps legacy ids for deterministic tests.
+
+**Status: LANDED 2026-11-03; mock-ig-bot restarted on it.** Muse Code; verified: full suite 85/85 on host (new `app/test/mock-bot-restart-ids.test.js`: two bot instances mint different ids; catalogue → clear → same photo via a restarted bot's first share adds 1 piece; same-share replay still blocked).
+
