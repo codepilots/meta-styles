@@ -437,10 +437,9 @@ Acceptance: a test proving the exact scenario Autumn hit (What_suits consent pro
 
 Root causes and fix recorded as `docs/decisions.md` row 15: per-piece cropped ≤384px references stored at capture (no more whole-photo originals per region), JPEG crop-before-scale in `app/photo-thumb.js` (`makeRefSync`), `revise_look` flat-lay sends up to 4 refs via `buildGarmentRefUrls`, mock bot catalog PUT cap 1 MB → 12 MB.
 
-**Status: IMPLEMENTED, UNCOMMITTED 2026-11-03.** Implemented by Muse Code (delegated); verified independently: full suite `node --test app/test/*.test.js wardrobe-service/test/*.test.js meta-api-proxy/test/*.test.js` → 77/77 pass (baseline 73 + 4 new: `photo-thumb-crop-scale`, `catalogue-piece-crop-refs`, `revise-look-flatlay-refs`, `mock-bot-catalog-limits`); synthetic 3-band JPEG check confirms each crop returns its own region at 384px. Bundled in the same working tree: the earlier uncommitted preview-audit ring (`last_previews` on `/wardrobe/status`, tests `preview-audit*.test.js`).
+**Status: LANDED 2026-11-03 (commit `65385b4`, docs `17a42fe`); mock-ig-bot + wardrobe-service restarted 18:00 on the new code.** Implemented by Muse Code (delegated); verified independently: full suite `node --test app/test/*.test.js wardrobe-service/test/*.test.js meta-api-proxy/test/*.test.js` → 77/77 pass (baseline 73 + 4 new: `photo-thumb-crop-scale`, `catalogue-piece-crop-refs`, `revise-look-flatlay-refs`, `mock-bot-catalog-limits`); synthetic 3-band JPEG check confirms each crop returns its own region at 384px. Bundled in the same working tree: the earlier uncommitted preview-audit ring (`last_previews` on `/wardrobe/status`, tests `preview-audit*.test.js`).
 
 Open:
-- Commit (app code as `muse-code`), then restart `mock-ig-bot`, `wardrobe-service` (and the proxy if touched) — running processes predate the change.
 - Pieces catalogued before the fix keep uncropped/absent originals: re-share them (or clear the demo wardrobe) before recording.
 - Render-on-user still carries at most 2 garment refs (headshot + full-body take 2 of the proxy's 4 image slots); a 3-piece look loses one. Not addressed.
 - Live confirmation: after restart, check `/wardrobe/status` `last_previews` shows one distinct `piece_id` per ref with `ref_source: image_original`, and eyeball a generated look.
