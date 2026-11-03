@@ -609,7 +609,24 @@ function createService(opts) {
     });
   }
 
-  function piecesCount() {
+  // Preview audit ring (app/skills/propose_look/handler.js): one entry per
+// Muse Image preview request, request facts only (piece ids, categories,
+// ref byte counts, prompt text) — never image bytes, base64, data URLs, or
+// secrets. propose_look and revise_look both log through that one shared
+// ring. Fail-closed: [] when the module is unavailable, so status never
+// breaks because of the audit path.
+function getPreviewAuditForStatus() {
+  try {
+    var Propose = require("../app/skills/propose_look/handler.js");
+    if (Propose && typeof Propose.getPreviewAudit === "function") {
+      var entries = Propose.getPreviewAudit() || [];
+      return entries.slice(-20);
+    }
+  } catch (err) {}
+  return [];
+}
+
+function piecesCount() {
     var n = 0;
     users.forEach(function (ctx) {
       try {
@@ -658,6 +675,10 @@ function createService(opts) {
         note: "Live mode stages the generated preview via POST /ig/outbound-stage and sends it with the reply (image:true). Delivery counts only on a bot-confirmed image_message_id; if the bot's photo send is not yet credentialed, staged sends fail at that Graph step and retry — never reported as delivered.",
       },
       activity: activity.slice(),
+      // Preview request audit: last 20 Muse Image preview calls (both
+      // skills, both paths), newest last. Request facts only — ids,
+      // categories, byte counts, prompt text — never image bytes.
+      last_previews: getPreviewAuditForStatus(),
       last_error: lastError,
       agentic_recent: (function(){
         var out=[];

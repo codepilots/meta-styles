@@ -70,14 +70,16 @@
   // time by app/photo-thumb.js makeSync() (M21 photo-reference work);
   // optional for backward compat (old pieces before the feature lack it),
   // but REQUIRED on all new pieces — status/collage/summary use it.
-  // image_original is the received source image as a data URL (M25
-  // originals+384px): optional — old pieces lack it, oversize/non-image
-  // inputs omit it thumb-only. JPEG or PNG magic-sniffed, cap 1 MB per
-  // piece (Instagram DMs are typically 100-300 KB, and the whole-array
-  // catalog PUT must stay inside the bot's 12 MB body ceiling at the
-  // documented piece-count cap — e.g. 10 pieces x 1 MB + thumbs/meta
-  // stays inside 12 MB with margin; see mock-ig-bot MAX_SEND_BODY and
-  // the prior-work bot's 12 MB PUT ceiling / 15 MB media cap).
+  // image_original is the piece's CROPPED <=384px reference as a data URL
+  // (M25 originals+384px, per-piece crop since the crop-first fix — never
+  // the whole uncropped photo): optional — old pieces lack it,
+  // oversize/non-image inputs and failed crops omit it thumb-only. JPEG or
+  // PNG magic-sniffed, cap 1 MB per piece (Instagram DMs are typically
+  // 100-300 KB, and the whole-array catalog PUT must stay inside the
+  // bot's 12 MB body ceiling at the documented piece-count cap — e.g. 10
+  // pieces x 1 MB + thumbs/meta stays inside 12 MB with margin; see
+  // mock-ig-bot MAX_CATALOG_BODY and the prior-work bot's 12 MB PUT
+  // ceiling / 15 MB media cap).
   // held_until is the ISO-8601 expiry of a prospective-purchase 24h hold
   // (M22 item 3); optional — only "held" pieces carry it, and it is
   // cleared to null when the hold is confirmed via activatePiece().

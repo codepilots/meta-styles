@@ -534,6 +534,7 @@
     });
     var items = Array.isArray(chosenItems) ? chosenItems : [];
     var urls = [];
+    var refs = [];
     var payloadBytes = 0;
     var downgraded = false;
     for (var i = 0; i < items.length && urls.length < 4; i++) {
@@ -541,24 +542,32 @@
       if (!piece) { downgraded = true; continue; }
       var u = null;
       var down = false;
+      var src = null;
       if (typeof piece.image_original === "string" && /^data:image\//.test(piece.image_original)) {
         var s = scaleProfileRef(piece.image_original);
-        if (s) { u = s.url; down = !s.scaled; }
-        else if (typeof piece.photo_thumb === "string" && /^data:image\//.test(piece.photo_thumb)) { u = piece.photo_thumb; down = true; }
+        if (s) { u = s.url; down = !s.scaled; src = "image_original"; }
+        else if (typeof piece.photo_thumb === "string" && /^data:image\//.test(piece.photo_thumb)) { u = piece.photo_thumb; down = true; src = "photo_thumb"; }
         else { downgraded = true; continue; }
       } else if (typeof piece.photo_thumb === "string" && /^data:image\//.test(piece.photo_thumb)) {
-        u = piece.photo_thumb; down = true;
+        u = piece.photo_thumb; down = true; src = "photo_thumb";
       } else { downgraded = true; continue; }
       var len = refBytesLen(u);
       if (urls.length === 0 || payloadBytes + len <= ONUSER_PAYLOAD_CAP) {
         urls.push(u);
+        // Audit detail for the preview ring (additive: urls/total/
+        // downgraded/payloadBytes above are byte-for-byte as before).
+        refs.push({
+          piece_id: items[i] && items[i].id,
+          category: items[i] && items[i].category,
+          ref_source: src, ref_bytes: len, downgraded: !!down
+        });
         payloadBytes += len;
         if (down) downgraded = true;
       } else {
         downgraded = true;
       }
     }
-    return { urls: urls, total: items.length, downgraded: downgraded, payloadBytes: payloadBytes };
+    return { urls: urls, refs: refs, total: items.length, downgraded: downgraded, payloadBytes: payloadBytes };
   }
 
   // The on-user preview request: profile refs FIRST (headshot,
@@ -568,6 +577,12 @@
   // and in meta. o: { metaClient, headshot, fullBody, garmentRefs[],
   // garmentTotal, nouns, context, shareId, stageImage, toolSteps }.
   async function requestOnUserPreview(o) {
+    var auditSkill = (o && typeof o.skill === "string" && o.skill) ? o.skill : "propose_look";
+    // Per-garment audit detail, parallel to o.garmentRefs (built by
+    // buildGarmentRefUrls above): {piece_id, category, ref_source,
+    // ref_bytes, downgraded}. Callers pass garBuilt.refs; when absent the
+    // entry still records counts and prompt text, never bytes.
+    var garmentNotes = (o && Array.isArray(o.garments)) ? o.garments : [];
     var toolSteps = typeof o.toolSteps === "number" ? o.toolSteps : 0;
     var imageDelivery = { requested: true, generated: false, delivered: false, reason: "preview_failed" };
     var meta = {
@@ -587,6 +602,7 @@
     var payloadBytes = refBytesLen(hs.url) + refBytesLen(fb.url);
     var downgraded = !(hs.scaled && fb.scaled);
     var passed = 0;
+    var passedGarments = [];
     // Proxy cap: 4 images max, so at most 2 garment refs ride along.
     for (var i = 0; i < garmentRefs.length && images.length < 4; i++) {
       var len = refBytesLen(garmentRefs[i]);
@@ -594,6 +610,7 @@
         images.push(garmentRefs[i]);
         payloadBytes += len;
         passed += 1;
+        if (garmentNotes[i]) passedGarments.push(garmentNotes[i]);
       } else {
         downgraded = true;
       }
@@ -616,6 +633,14 @@
     meta.previewPrompt = previewPrompt;
     var image = null;
     if (o.metaClient && typeof o.metaClient.preview === "function") {
+      // Audit the request (facts only — ids, counts, prompt text; the
+      // images[] bytes themselves are never recorded). One entry per
+      // preview call, recorded up front so even a throwing call is logged.
+      recordPreviewAudit({
+        skill: auditSkill, renderOnUser: true, profileRefs: meta.profileRefs,
+        refs: passedGarments, previewPromptPreview: previewPrompt,
+        totalRefs: images.length, totalPayloadBytes: payloadBytes
+      });
       toolSteps += 1;
       try {
         var pr = await o.metaClient.preview(previewPrompt, images);
@@ -648,6 +673,61 @@
     }
     return { image: image, imageDelivery: imageDelivery, meta: meta, toolSteps: toolSteps };
   }
+
+  // ---- Muse Image preview audit ring (shared with revise_look) ----
+  //
+  // One entry per metaClient.preview() call, request facts ONLY: which
+  // stored pieces/references were actually sent (ids, categories, source
+  // kind, byte counts), the prompt text (truncated), and totals. NEVER
+  // image bytes, base64, data URLs, tokens, or secrets — the sanitising
+  // copy below keeps exactly the declared keys so a caller can never
+  // smuggle bytes in. Bounded like the service's activity ring
+  // (wardrobe-service/server.js ACTIVITY_RING style): newest last, cap 20.
+  // The wardrobe-service status surface reads this via getPreviewAudit().
+  // Logging never breaks the reply: recordPreviewAudit never throws.
+  var PREVIEW_AUDIT_CAP = 20;
+  var PREVIEW_PROMPT_PREVIEW_LEN = 200;
+  var previewAudit = [];
+
+  function previewPromptPreviewText(prompt) {
+    var t = String(prompt || "");
+    return t.length > PREVIEW_PROMPT_PREVIEW_LEN ? t.slice(0, PREVIEW_PROMPT_PREVIEW_LEN) : t;
+  }
+
+  function recordPreviewAudit(entry) {
+    try {
+      var o = entry || {};
+      var refs = [];
+      if (Array.isArray(o.refs)) {
+        for (var i = 0; i < o.refs.length; i++) {
+          var r = o.refs[i] || {};
+          refs.push({
+            piece_id: typeof r.piece_id === "string" ? r.piece_id : null,
+            category: typeof r.category === "string" ? r.category : null,
+            ref_source: r.ref_source === "image_original" ? "image_original" : "photo_thumb",
+            ref_bytes: typeof r.ref_bytes === "number" ? r.ref_bytes : 0,
+            downgraded: r.downgraded === true
+          });
+        }
+      }
+      previewAudit.push({
+        timestamp: new Date().toISOString(),
+        skill: typeof o.skill === "string" && o.skill ? o.skill : "propose_look",
+        renderOnUser: o.renderOnUser === true,
+        profileRefs: typeof o.profileRefs === "number" ? o.profileRefs : 0,
+        refs: refs,
+        previewPromptPreview: previewPromptPreviewText(o.previewPromptPreview || o.previewPrompt),
+        totalRefs: typeof o.totalRefs === "number" ? o.totalRefs : refs.length,
+        totalPayloadBytes: typeof o.totalPayloadBytes === "number" ? o.totalPayloadBytes : 0
+      });
+      if (previewAudit.length > PREVIEW_AUDIT_CAP) previewAudit = previewAudit.slice(-PREVIEW_AUDIT_CAP);
+      return previewAudit[previewAudit.length - 1];
+    } catch (e) { return null; }
+  }
+
+  function getPreviewAudit() { return previewAudit.slice(); }
+
+  function clearPreviewAudit() { previewAudit = []; }
 
   function logDecision(source, selectedCount, rejectedReason, toolSteps) {
     try {
@@ -962,9 +1042,9 @@
         renderProfile.headshot && renderProfile.full_body) {
       var garBuilt = buildGarmentRefUrls(active, chosen.items);
       var onUser = await requestOnUserPreview({
-        metaClient: metaClient,
+        skill: "propose_look", metaClient: metaClient,
         headshot: renderProfile.headshot, fullBody: renderProfile.full_body,
-        garmentRefs: garBuilt.urls, garmentTotal: chosen.items.length,
+        garmentRefs: garBuilt.urls, garments: garBuilt.refs, garmentTotal: chosen.items.length,
         nouns: nouns, context: context, shareId: shareId, stageImage: stageImage,
         toolSteps: toolSteps
       });
@@ -991,7 +1071,8 @@
       }catch(e){ return dataUrl.length; }
     }
     function buildRefForPiece(piece){
-      // Prefer image_original-derived 384px via shared pipeline.
+      // Prefer image_original-derived 384px via shared pipeline. The
+      // source label below feeds the preview audit ring only (additive).
       if(piece && typeof piece.image_original==="string" && /^data:image\//.test(piece.image_original)){
         try{
           var pt=null;
@@ -999,17 +1080,17 @@
           if((!pt||typeof pt.makeSync!=="function")&&root.MetaStyles&&root.MetaStyles.photoThumb) pt=root.MetaStyles.photoThumb;
           if(pt&&typeof pt.makeSync==="function"){
             var r=pt.makeSync(piece.image_original, null, REF_DIM_PX);
-            if(typeof r==="string"&&r) return { url:r, downgraded:false };
+            if(typeof r==="string"&&r) return { url:r, downgraded:false, source:"image_original" };
           }
         }catch(e){}
         // Original existed but 384 failed -> fallback to thumb counts as downgraded.
         if(piece && typeof piece.photo_thumb==="string" && /^data:image\//.test(piece.photo_thumb)){
-          return { url:piece.photo_thumb, downgraded:true };
+          return { url:piece.photo_thumb, downgraded:true, source:"photo_thumb" };
         }
         return null;
       }
       if(piece && typeof piece.photo_thumb==="string" && /^data:image\//.test(piece.photo_thumb)){
-        return { url:piece.photo_thumb, downgraded:true };
+        return { url:piece.photo_thumb, downgraded:true, source:"photo_thumb" };
       }
       return null;
     }
@@ -1021,6 +1102,10 @@
       if(!lp) continue;
       var built=buildRefForPiece(lp);
       if(built){
+        // Carry the piece identity alongside the built ref so the audit
+        // ring can name exactly what was sent, in selection order.
+        built.piece_id = chosen.items[ti].id;
+        built.category = chosen.items[ti].category;
         refCandidates.push(built);
         if(built.downgraded) anyDowngraded=true;
       }
@@ -1028,6 +1113,7 @@
     // Defensive total payload cap ~2 MB: keep at least 1 ref, skip extras that would exceed cap.
     // Ordering preserved; we accumulate in selection order and skip any that push over cap.
     var refThumbs = [];
+    var auditRefs = [];
     var payloadBytes=0;
     for(var ri=0; ri<refCandidates.length; ri++){
       var cand=refCandidates[ri];
@@ -1035,9 +1121,11 @@
       if(refThumbs.length===0){
         // Always keep first ref even if over cap alone (still >=1 ref)
         refThumbs.push(cand.url);
+        auditRefs.push({ piece_id: cand.piece_id, category: cand.category, ref_source: cand.source, ref_bytes: len, downgraded: !!cand.downgraded });
         payloadBytes+=len;
       } else if(payloadBytes+len <= REF_PAYLOAD_CAP){
         refThumbs.push(cand.url);
+        auditRefs.push({ piece_id: cand.piece_id, category: cand.category, ref_source: cand.source, ref_bytes: len, downgraded: !!cand.downgraded });
         payloadBytes+=len;
       } else {
         // Skip extra beyond cap — honest meta via downgraded flag.
@@ -1045,7 +1133,7 @@
       }
     }
     // Legacy cap <=4 already enforced via strictShape (max 4 pieces), but ensure.
-    if(refThumbs.length>4){ refThumbs=refThumbs.slice(0,4); anyDowngraded=true; }
+    if(refThumbs.length>4){ refThumbs=refThumbs.slice(0,4); auditRefs=auditRefs.slice(0,4); anyDowngraded=true; }
     var refPieces = refThumbs.length;
     var refThumb = refThumbs[0] || null;
     var missingRefs = chosen.items.length - refThumbs.length;
@@ -1069,6 +1157,14 @@
     if (metaClient && typeof metaClient.preview === "function") {
       imageDelivery.requested = true;
       imageDelivery.reason = "preview_failed";
+      // Audit the request (facts only — ids, counts, prompt text; the
+      // refThumbs bytes themselves are never recorded). One entry per
+      // preview call, recorded up front so even a throwing call is logged.
+      recordPreviewAudit({
+        skill: "propose_look", renderOnUser: false,
+        refs: auditRefs, previewPromptPreview: previewPrompt,
+        totalRefs: refThumbs.length, totalPayloadBytes: payloadBytes
+      });
       toolSteps += 1;
       try {
         var previewRef = null;
@@ -1188,6 +1284,9 @@
     handleDeletePhotos: handleDeletePhotos, handleProfileIntake: handleProfileIntake,
     scaleProfileRef: scaleProfileRef, buildGarmentRefUrls: buildGarmentRefUrls,
     requestOnUserPreview: requestOnUserPreview,
+    refBytesLen: refBytesLen, previewPromptPreviewText: previewPromptPreviewText,
+    recordPreviewAudit: recordPreviewAudit, getPreviewAudit: getPreviewAudit,
+    clearPreviewAudit: clearPreviewAudit, PREVIEW_AUDIT_CAP: PREVIEW_AUDIT_CAP,
     PROFILE_CONSENT_TEXT: PROFILE_CONSENT_TEXT,
     profileAskText: profileAskText, profileStoredText: profileStoredText,
     noPreviewDelivery: noPreviewDelivery

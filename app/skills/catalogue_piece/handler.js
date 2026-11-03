@@ -54,6 +54,21 @@
     }catch(e){ return null; }
   }
 
+  // Compact CROPPED per-piece reference for image_original: the cropRect
+  // region resampled to <=384px via photo-thumb.makeRefSync (JPEG via
+  // ffmpeg when available, PNG fallback otherwise). Null when cropping
+  // fails — the caller stores thumb-only, never the uncropped photo.
+  function captureRef(imageDataUrl, cropRect){
+    try{
+      var pt=null;
+      try{ if(typeof require!=="undefined") pt=require("../../photo-thumb.js"); }catch(e){ pt=null; }
+      if((!pt||typeof pt.makeRefSync!=="function")&&root.MetaStyles&&root.MetaStyles.photoThumb) pt=root.MetaStyles.photoThumb;
+      if(!pt||typeof pt.makeRefSync!=="function"||!imageDataUrl) return null;
+      var r=cropRect?pt.makeRefSync(imageDataUrl,cropRect,384):pt.makeRefSync(imageDataUrl,null,384);
+      return (typeof r==="string"&&r)?r:null;
+    }catch(e){ return null; }
+  }
+
   function captureOriginal(imageDataUrl){
     try{
       if(typeof imageDataUrl!=="string"||!imageDataUrl) return null;
@@ -161,7 +176,11 @@
       }catch(e){ samRect=null; }
       var cropRect=samRect||dp.bbox;
       var thumb=captureThumb(imageDataUrl,cropRect);
-      var original=captureOriginal(imageDataUrl);
+      // Per-piece CROPPED reference (never the whole photo): when the
+      // ref build fails for a cropped piece, store NO original
+      // (thumb-only) rather than the uncropped full photo.
+      var refUrl=captureRef(imageDataUrl,cropRect);
+      var original=refUrl?captureOriginal(refUrl):null;
       var hashInput=(thumb||original||imageDataUrl)+"|"+dp.category+"|"+dp.bbox.join(",");
       var ch=computeCropHash(hashInput);
       var attrs={};
@@ -510,7 +529,11 @@
       pushTrace(trace, rect ? "single:segment:rect" : "single:segment:null");
       var thumb=captureThumb(imageDataUrl,rect);
       pushTrace(trace, thumb ? "single:thumb:ok" : "single:thumb:null");
-      var original=captureOriginal(imageDataUrl);
+      // Cropped <=384px reference (never the whole photo when a rect
+      // exists); with no rect (segment returned null) the whole photo
+      // downscaled to <=384px. Crop failure -> thumb only.
+      var refUrlSingle=captureRef(imageDataUrl,rect);
+      var original=refUrlSingle?captureOriginal(refUrlSingle):null;
       pushTrace(trace, original ? "single:original:ok" : "single:original:null");
       var cropHashVal=null;
       if(thumb||original) cropHashVal=computeCropHash(thumb||original);

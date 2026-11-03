@@ -172,8 +172,9 @@
     var rctx=(text+(prefsText?". "+prefsText:"")).slice(0,300);
     if(!rctx.trim()) rctx="";
     var onUser=await stack.requestOnUserPreview({
+      skill: "revise_look",
       metaClient: metaClient, headshot: prof.headshot, fullBody: prof.full_body,
-      garmentRefs: gar.urls, garmentTotal: checked.items.length,
+      garmentRefs: gar.urls, garments: gar.refs, garmentTotal: checked.items.length,
       nouns: nouns, context: rctx, shareId: shareId, stageImage: stageImage, toolSteps: 0
     });
     var reply="Oh, here you are wearing it, darling \u2728 \u2014 your "+nouns+" together. Fit check: valid \u2714 Rendered on you from your saved photos \u2728.";
@@ -379,8 +380,9 @@
         candidates.forEach(function(p){ byIdRender[p.piece_id]=p; });
         var garRender=stackForProfile.buildGarmentRefUrls(candidates, chosen);
         var onUserRevised=await stackForProfile.requestOnUserPreview({
+          skill: "revise_look",
           metaClient: metaClient, headshot: gateProf.headshot, fullBody: gateProf.full_body,
-          garmentRefs: garRender.urls, garmentTotal: chosen.length,
+          garmentRefs: garRender.urls, garments: garRender.refs, garmentTotal: chosen.length,
           nouns: nouns, context: text, shareId: shareId, stageImage: stageImage, toolSteps: 0
         });
         img=onUserRevised.image;
@@ -393,14 +395,64 @@
       // Preview prompt names the actual chosen look only.
       var byId={};
       candidates.forEach(function(p){ byId[p.piece_id]=p; });
-      var refThumb=null;
-      for(var ti=0;ti<chosen.length;ti++){ var lp=byId[chosen[ti].id]; if(lp&&typeof lp.photo_thumb==="string"&&/^data:image\//.test(lp.photo_thumb)){ refThumb=lp.photo_thumb; break; } }
+      // Multi-reference flat-lay: the shared selection-stack helper builds
+      // up to 4 garment refs (384px original-derived, thumb fallback) in
+      // selection order — the same helper the render path above uses.
+      var garFlat=null;
+      try{
+        if(stackForProfile&&typeof stackForProfile.buildGarmentRefUrls==="function"){
+          garFlat=stackForProfile.buildGarmentRefUrls(candidates, chosen);
+        }
+      }catch(e){ garFlat=null; }
+      var refThumbs=[], auditRefsFlat=[];
+      if(garFlat&&Array.isArray(garFlat.urls)&&garFlat.urls.length>0){
+        refThumbs=garFlat.urls.slice(0,4);
+        auditRefsFlat=(Array.isArray(garFlat.refs)?garFlat.refs:[]).slice(0,refThumbs.length);
+      } else if(!garFlat){
+        // Helper unavailable: legacy single-thumb fallback (first chosen
+        // piece with a photo_thumb), never more than one ref.
+        for(var ti2=0;ti2<chosen.length;ti2++){
+          var lp2=byId[chosen[ti2].id];
+          if(lp2&&typeof lp2.photo_thumb==="string"&&/^data:image\//.test(lp2.photo_thumb)){
+            var legacyLen=0;
+            try{ if(stackForProfile&&typeof stackForProfile.refBytesLen==="function") legacyLen=stackForProfile.refBytesLen(lp2.photo_thumb); }catch(e2){ legacyLen=0; }
+            refThumbs=[lp2.photo_thumb];
+            auditRefsFlat=[{ piece_id: chosen[ti2].id, category: chosen[ti2].category, ref_source:"photo_thumb", ref_bytes: legacyLen, downgraded:true }];
+            break;
+          }
+        }
+      }
+      var missingRefsFlat=chosen.length-refThumbs.length;
       var previewPrompt="Y2K fairycore flat-lay look card, soft pastel background, garments laid out neatly: "+nouns+". No people, no worn try-on, no readable text.";
-      if(refThumb) previewPrompt+=" Use the attached reference garment photo for the true colors and silhouette.";
+      if(refThumbs.length>0){
+        previewPrompt+=" Use the attached reference garment photo for the true colors and silhouette.";
+        previewPrompt+=" Each attached image is a distinct wardrobe garment; preserve the colour, print, silhouette, and details of every attached reference as a separate flat-lay item; do not substitute generic garments; do not add unreferenced garments; no person/try-on/readable text.";
+        if(missingRefsFlat>0){
+          previewPrompt+=" Only "+refThumbs.length+" of "+chosen.length+" selected pieces have reference photos; the remaining piece(s) are not represented in references.";
+        }
+      }
       if(metaClient&&typeof metaClient.preview==="function"){
         imageDelivery.requested=true; imageDelivery.reason="preview_failed";
+        // Audit the request via the shared propose_look ring (facts only —
+        // ids, counts, prompt text; the ref bytes are never recorded).
+        // Fail-closed: a logging problem must never break the reply.
         try{
-          var pr=await metaClient.preview(previewPrompt, refThumb||null);
+          if(stackForProfile&&typeof stackForProfile.recordPreviewAudit==="function"){
+            var flatPayloadBytes=0;
+            for(var ai=0;ai<auditRefsFlat.length;ai++){ if(typeof auditRefsFlat[ai].ref_bytes==="number") flatPayloadBytes+=auditRefsFlat[ai].ref_bytes; }
+            stackForProfile.recordPreviewAudit({
+              skill:"revise_look", renderOnUser:false,
+              refs: auditRefsFlat,
+              previewPromptPreview: previewPrompt,
+              totalRefs: refThumbs.length, totalPayloadBytes: flatPayloadBytes
+            });
+          }
+        }catch(auditErr){}
+        try{
+          var previewRefFlat=null;
+          if(refThumbs.length===1) previewRefFlat=refThumbs[0];
+          else if(refThumbs.length>1) previewRefFlat=refThumbs;
+          var pr=await metaClient.preview(previewPrompt, previewRefFlat);
           var durl=pr&&(pr.dataURL||pr.dataUrl||pr.data_url);
           if(typeof durl==="string"&&/^data:image\//.test(durl)){
             imageDelivery.generated=true;

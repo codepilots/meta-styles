@@ -221,6 +221,11 @@ function publicShare(item) {
 }
 
 const MAX_SEND_BODY = 1024 * 1024; // 1 MB, per the send spec
+// Catalog PUT ceiling: 12 MB, mirroring the real (prior-work, out-of-repo)
+// bot's catalog PUT ceiling (see docs/decisions.md row 11). The catalog
+// route is the ONLY route that uses this cap — /ig/send and the other
+// routes keep MAX_SEND_BODY (1 MB).
+const MAX_CATALOG_BODY = 12 * 1024 * 1024;
 const MAX_MEDIA_BODY = 15 * 1024 * 1024; // 15 MB, mirrors the read spec's download cap
 const WINDOW_MS = 24 * 3600 * 1000; // IG reply window: 24h from the share
 
@@ -420,7 +425,7 @@ function createHandler(store, config) {
         return;
       }
       if (req.method === "PUT") {
-        readBody(req, MAX_SEND_BODY).then((parsed) => {
+        readBody(req, MAX_CATALOG_BODY).then((parsed) => {
           if (parsed.tooLarge) {
             sendJson(res, 413, { error: "body_too_large" }, corsOrigin);
             return;

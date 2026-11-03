@@ -55,6 +55,7 @@
   var REF_DIM = 384;              // reference size for Muse edit model (M25)
   var REF_BYTE_BUDGET = 500 * 1024; // 384px PNG typically 20-200KB, allow 500KB max
   var REF_MAX_CHARS = 800 * 1024; // ~500KB raw -> ~700KB base64
+  var REF_JPEG_BUDGET = 120 * 1024; // per-piece JPEG ref target (cropped <=384px, raw bytes)
   var MAX_INPUT_BYTES = 20 * 1024 * 1024; // decode guard (CPU/DoS bound)
   var MAX_PIXELS = 12 * 1000 * 1000;      // decoded-pixel guard
 
@@ -302,6 +303,19 @@
     return out;
   }
 
+  // Shared fractional-rect validation ([x, y, w, h] in [0,1], the SAM box
+  // shape). True only for a present, numeric, positive-area rect — the
+  // same gate cropPixels() applies before touching pixels, reused by the
+  // ffmpeg crop filter so both paths agree on what "a crop" means.
+  function validCropRect(rect) {
+    if (!Array.isArray(rect) || rect.length !== 4) return false;
+    for (var i = 0; i < 4; i++) {
+      if (typeof rect[i] !== "number" || !isFinite(rect[i])) return false;
+    }
+    if (rect[2] <= 0 || rect[3] <= 0) return false;
+    return true;
+  }
+
   // --- Crop + resample + entry points -------------------------------------------
   // Crop decoded RGB pixels to a fractional rect [x, y, w, h] in [0,1]
   // (the SAM box shape: fractions of full width/height, NOT pixels).
@@ -310,11 +324,7 @@
   // unchanged (the caller then stores the whole-photo thumbnail).
   function cropPixels(img, rect) {
     if (!img || !img.rgb) return img;
-    if (!Array.isArray(rect) || rect.length !== 4) return img;
-    for (var i = 0; i < 4; i++) {
-      if (typeof rect[i] !== "number" || !isFinite(rect[i])) return img;
-    }
-    if (rect[2] <= 0 || rect[3] <= 0) return img;
+    if (!validCropRect(rect)) return img;
     var x0 = Math.max(0, Math.floor(rect[0] * img.w));
     var y0 = Math.max(0, Math.floor(rect[1] * img.h));
     var x1 = Math.min(img.w, Math.ceil((rect[0] + rect[2]) * img.w));
@@ -358,17 +368,29 @@
     return { w: dw, h: dh, rgb: dst };
   }
 
-  // --- JPEG -> PNG via optional ffmpeg (Node only) ----------------------
-  // Converts JPEG input bytes to PNG bytes using the system ffmpeg binary
-  // when available. Bounded: input already capped by MAX_INPUT_BYTES,
-  // output capped, no shell, arg-array only, stdin/stdout pipes, timeout,
-  // no temp files, no image-byte logging. Returns Uint8Array PNG or null.
-  // Never throws for bad input; programmer errors still throw fail().
-  function jpegToPngBytes(jpegBytes, targetDim) {
-    if (!jpegBytes || jpegBytes.length === 0 || jpegBytes.length > MAX_INPUT_BYTES) return null;
-    var dim = typeof targetDim === "number" && targetDim > 0 ? targetDim : 96;
-    // Clamp dim to REF_DIM to avoid unbounded ffmpeg scale.
-    if (dim > REF_DIM) dim = REF_DIM;
+  // Format one fractional rect edge for the ffmpeg crop filter: a finite
+  // non-negative number rendered in plain decimal (never locale-grouped,
+  // never NaN/Infinity — those fall back to 0 and the caller skips the
+  // crop when the rect fails validCropRect first).
+  function cropNum(n) {
+    var v = Number(n);
+    if (!isFinite(v) || v < 0) return "0";
+    return String(v);
+  }
+
+  // Crop-first ffmpeg filter chain for JPEG sources: the crop runs on the
+  // FULL-RES decoded frame, then the scale shrinks the cropped region.
+  // (Scaling first and cropping after would keep only a sliver of a small
+  // region — e.g. a scarf filling 20% of the photo collapses to a few px.)
+  // Returns the "-vf" argument, or null when the rect is not a crop.
+  function cropFirstFilter(rect, dim) {
+    if (!validCropRect(rect)) return null;
+    return "crop=floor(iw*" + cropNum(rect[2]) + "):floor(ih*" + cropNum(rect[3]) + ")" +
+      ":floor(iw*" + cropNum(rect[0]) + "):floor(ih*" + cropNum(rect[1]) + ")" +
+      ",scale=w=" + dim + ":h=" + dim + ":force_original_aspect_ratio=decrease";
+  }
+
+  function spawnFfmpegSync(args, inputBytes, maxBuffer) {
     var cp = null;
     try {
       if (typeof require === "undefined") return null;
@@ -376,37 +398,115 @@
     } catch (e) { return null; }
     if (!cp || typeof cp.spawnSync !== "function") return null;
     try {
-      var res = cp.spawnSync("ffmpeg", [
-        "-hide_banner", "-loglevel", "error",
-        "-f", "image2pipe", "-i", "pipe:0",
-        "-frames:v", "1",
-        "-vf", "scale=w=" + dim + ":h=" + dim + ":force_original_aspect_ratio=decrease",
-        "-f", "image2pipe", "-vcodec", "png",
-        "pipe:1"
-      ], {
-        input: Buffer.from(jpegBytes),
-        maxBuffer: 4 * 1024 * 1024,
+      var res = cp.spawnSync("ffmpeg", args, {
+        input: Buffer.from(inputBytes),
+        maxBuffer: typeof maxBuffer === "number" ? maxBuffer : 4 * 1024 * 1024,
         timeout: 5000,
         windowsHide: true
       });
       if (!res || res.error || res.status !== 0) return null;
-      var out = res.stdout;
-      if (!out || out.length === 0) return null;
-      if (out.length < 8 || out[0] !== 0x89 || out[1] !== 0x50 || out[2] !== 0x4e || out[3] !== 0x47) return null;
-      return new Uint8Array(out);
+      return res.stdout;
     } catch (e) {
       return null;
     }
+  }
+
+  // --- JPEG -> PNG via optional ffmpeg (Node only) ----------------------
+  // Converts JPEG input bytes to PNG bytes using the system ffmpeg binary
+  // when available. Bounded: input already capped by MAX_INPUT_BYTES,
+  // output capped, no shell, arg-array only, stdin/stdout pipes, timeout,
+  // no temp files, no image-byte logging. Returns Uint8Array PNG or null.
+  // Never throws for bad input; programmer errors still throw fail().
+  // Optional cropRect ([x,y,w,h] fractions, same validation as
+  // cropPixels) crops the FULL-RES frame BEFORE scaling; when the crop
+  // filter fails (e.g. a degenerate rect on a tiny frame) this returns
+  // null and the caller retries without the crop.
+  function jpegToPngBytes(jpegBytes, targetDim, cropRect) {
+    if (!jpegBytes || jpegBytes.length === 0 || jpegBytes.length > MAX_INPUT_BYTES) return null;
+    var dim = typeof targetDim === "number" && targetDim > 0 ? targetDim : 96;
+    // Clamp dim to REF_DIM to avoid unbounded ffmpeg scale.
+    if (dim > REF_DIM) dim = REF_DIM;
+    var vf = cropFirstFilter(cropRect, dim) ||
+      ("scale=w=" + dim + ":h=" + dim + ":force_original_aspect_ratio=decrease");
+    var out = spawnFfmpegSync([
+      "-hide_banner", "-loglevel", "error",
+      "-f", "image2pipe", "-i", "pipe:0",
+      "-frames:v", "1",
+      "-vf", vf,
+      "-f", "image2pipe", "-vcodec", "png",
+      "pipe:1"
+    ], jpegBytes);
+    if (!out || out.length === 0) return null;
+    if (out.length < 8 || out[0] !== 0x89 || out[1] !== 0x50 || out[2] !== 0x4e || out[3] !== 0x47) return null;
+    return new Uint8Array(out);
+  }
+
+  // Encode PNG input bytes to JPEG bytes via optional ffmpeg (Node only).
+  // Same bounds/conventions as jpegToPngBytes (no shell, arg-array, pipes,
+  // timeout, no logging). quality is the mjpeg -q:v value (2 best .. 31
+  // worst). Returns Uint8Array JPEG or null. Never throws for bad input.
+  function pngToJpegBytes(pngBytes, quality) {
+    if (!pngBytes || pngBytes.length === 0 || pngBytes.length > MAX_INPUT_BYTES) return null;
+    var q = typeof quality === "number" && isFinite(quality) ? Math.max(2, Math.min(31, Math.round(quality))) : 8;
+    var out = spawnFfmpegSync([
+      "-hide_banner", "-loglevel", "error",
+      "-f", "image2pipe", "-i", "pipe:0",
+      "-frames:v", "1",
+      "-q:v", String(q),
+      "-f", "image2pipe", "-vcodec", "mjpeg",
+      "pipe:1"
+    ], pngBytes);
+    if (!out || out.length === 0) return null;
+    if (out.length < 3 || out[0] !== 0xff || out[1] !== 0xd8 || out[2] !== 0xff) return null;
+    return new Uint8Array(out);
+  }
+
+  // JPEG -> cropped + scaled JPEG in ONE ffmpeg call (the makeRefSync fast
+  // path): crop on the full-res frame, scale to fit targetDim, mjpeg
+  // encode. Same bounds/conventions as above. Returns Uint8Array JPEG or
+  // null. Never throws for bad input.
+  function jpegCropToJpegBytes(jpegBytes, cropRect, targetDim, quality) {
+    if (!jpegBytes || jpegBytes.length === 0 || jpegBytes.length > MAX_INPUT_BYTES) return null;
+    var dim = typeof targetDim === "number" && targetDim > 0 ? targetDim : REF_DIM;
+    if (dim > REF_DIM) dim = REF_DIM;
+    var q = typeof quality === "number" && isFinite(quality) ? Math.max(2, Math.min(31, Math.round(quality))) : 8;
+    var vf = cropFirstFilter(cropRect, dim) ||
+      ("scale=w=" + dim + ":h=" + dim + ":force_original_aspect_ratio=decrease");
+    var out = spawnFfmpegSync([
+      "-hide_banner", "-loglevel", "error",
+      "-f", "image2pipe", "-i", "pipe:0",
+      "-frames:v", "1",
+      "-vf", vf,
+      "-q:v", String(q),
+      "-f", "image2pipe", "-vcodec", "mjpeg",
+      "pipe:1"
+    ], jpegBytes);
+    if (!out || out.length === 0) return null;
+    if (out.length < 3 || out[0] !== 0xff || out[1] !== 0xd8 || out[2] !== 0xff) return null;
+    return new Uint8Array(out);
   }
 
   // PNG pure-JS; JPEG via optional Node ffmpeg conversion. Any other kind
   // (GIF/WebP, garbage with an image data-URL wrapper) throws fail() and
   // the caller maps it to null — the piece still catalogues without a thumb.
   // JPEG conversion failure also maps to fail() so callers keep fail-soft.
-  function decodePixels(bytes, targetDim) {
+  // Optional cropRect flows into the ffmpeg call so JPEG crops on the
+  // FULL-RES frame before scaling (cropPixels must NOT run again after —
+  // the returned image carries cropped:true); PNG still crops in
+  // cropPixels() after decode. When the ffmpeg crop fails but the plain
+  // conversion succeeds, the caller crops the small frame as before.
+  function decodePixels(bytes, targetDim, cropRect) {
     var kind = sniffKind(bytes);
     if (kind === "png") return decodePng(bytes);
     if (kind === "jpeg") {
+      if (validCropRect(cropRect)) {
+        var croppedPng = jpegToPngBytes(bytes, targetDim, cropRect);
+        if (croppedPng) {
+          var croppedImg = decodePng(croppedPng);
+          croppedImg.cropped = true;
+          return croppedImg;
+        }
+      }
       var pngBytes = jpegToPngBytes(bytes, targetDim);
       if (pngBytes) return decodePng(pngBytes);
       throw fail("JPEG conversion unavailable or failed");
@@ -438,8 +538,10 @@
       var charCap = isRef ? REF_MAX_CHARS : MAX_CHARS;
       var parsed = parseDataUrl(dataUrl);
       if (!parsed) return null;
-      var img = decodePixels(parsed.bytes, targetDim);
-      if (cropRect) img = cropPixels(img, cropRect);
+      var img = decodePixels(parsed.bytes, targetDim, cropRect);
+      // JPEG already cropped full-res inside ffmpeg (cropped:true); PNG
+      // still crops here. Never crop twice.
+      if (cropRect && !img.cropped) img = cropPixels(img, cropRect);
       var dims;
       if (isRef) {
         dims = [targetDim, Math.round(targetDim * 0.75), Math.round(targetDim * 0.5), 96].filter(function (d) { return d > 0 && d <= targetDim; });
@@ -458,6 +560,65 @@
         }
       }
       return null;
+    } catch (e) {
+      return null;
+    }
+  }
+
+  // Compact per-piece reference (Node stdlib + optional ffmpeg for JPEG).
+  // Returns a data URL of the CROPPED region (cropRect fractions, same
+  // validation as cropPixels; null/!invalid keeps the whole photo) with
+  // longest side <= dim (default and max REF_DIM 384). Prefers JPEG via
+  // ffmpeg (data:image/jpeg;base64, raw target <= REF_JPEG_BUDGET, stepping
+  // quality then size down when over budget); falls back to the existing
+  // PNG makeSync(dataUrl, cropRect, dim) result, else null. Never throws.
+  function makeRefSync(dataUrl, cropRect, dim) {
+    try {
+      // Backward-compat: makeRefSync(url, 384) -> dim=384, no crop.
+      if (typeof cropRect === "number" && dim === undefined) {
+        dim = cropRect; cropRect = null;
+      }
+      var targetDim = typeof dim === "number" && dim > 0 ? dim : REF_DIM;
+      if (targetDim > REF_DIM) targetDim = REF_DIM;
+      var parsed = parseDataUrl(dataUrl);
+      if (!parsed) return null;
+      var kind = sniffKind(parsed.bytes);
+      if (kind !== "png" && kind !== "jpeg") return null;
+      var dims = [targetDim, Math.round(targetDim * 0.75), Math.round(targetDim * 0.5)];
+      dims = dims.filter(function (d) { return d > 0 && d <= targetDim; });
+      var seenDims = {};
+      dims = dims.filter(function (d) { if (seenDims[d]) return false; seenDims[d] = true; return true; });
+      var quals = [6, 12, 20];
+      var di, qi, jbytes, jurl;
+      if (kind === "jpeg") {
+        // One ffmpeg call each: crop full-res, scale, mjpeg encode.
+        for (di = 0; di < dims.length; di++) {
+          for (qi = 0; qi < quals.length; qi++) {
+            jbytes = jpegCropToJpegBytes(parsed.bytes, cropRect, dims[di], quals[qi]);
+            if (jbytes && jbytes.length <= REF_JPEG_BUDGET) {
+              jurl = "data:image/jpeg;base64," + bytesToB64(jbytes);
+              if (jurl.length <= REF_MAX_CHARS) return jurl;
+            }
+          }
+        }
+      } else {
+        // PNG: crop full-res pixels in-process, then JPEG-encode each step.
+        var img = decodePng(parsed.bytes);
+        if (cropRect) img = cropPixels(img, cropRect);
+        for (di = 0; di < dims.length; di++) {
+          var small = resampleFit(img, dims[di]);
+          var pbytes = encodePng(small.w, small.h, small.rgb);
+          for (qi = 0; qi < quals.length; qi++) {
+            jbytes = pngToJpegBytes(pbytes, quals[qi]);
+            if (jbytes && jbytes.length <= REF_JPEG_BUDGET) {
+              jurl = "data:image/jpeg;base64," + bytesToB64(jbytes);
+              if (jurl.length <= REF_MAX_CHARS) return jurl;
+            }
+          }
+        }
+      }
+      // ffmpeg missing or every JPEG step over budget: PNG fallback.
+      return makeSync(dataUrl, cropRect, targetDim);
     } catch (e) {
       return null;
     }
@@ -513,6 +674,7 @@
     REF_DIM: REF_DIM,
     REF_BYTE_BUDGET: REF_BYTE_BUDGET,
     REF_MAX_CHARS: REF_MAX_CHARS,
+    REF_JPEG_BUDGET: REF_JPEG_BUDGET,
     sniffKind: sniffKind,
     parseDataUrl: parseDataUrl,
     decodePng: decodePng,
@@ -522,6 +684,7 @@
     isValidPhotoThumb: isValidPhotoThumb,
     jpegToPngBytes: jpegToPngBytes,
     makeSync: makeSync,
+    makeRefSync: makeRefSync,
     makeCanvas: makeCanvas,
   };
 
