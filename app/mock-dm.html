@@ -299,7 +299,10 @@ function refreshServiceStatus() {
 // refreshThread poll outcomes below. The bot base URL is rendered from
 // the live connection field, never hardcoded here.
 var RT0 = (typeof globalThis !== "undefined" && globalThis.__IG_RUNTIME__) || {};
-var IS_LIVE = !!(RT0.botBase);
+// Gate liveness on the explicit mode field: the relative "/ig" base serves
+// both live and mock-remote through the same-origin proxy, so never infer
+// liveness from base shape. Legacy configs with no mode keep the old rule.
+var IS_LIVE = (RT0.mode === "live") || ((!RT0.mode) && !!(RT0.botBase));
 var BOT_LABEL = IS_LIVE
   ? (String(RT0.botBase).charAt(0) === "/"
       ? window.location.origin + String(RT0.botBase) + " (same-origin proxy on this server)"
@@ -315,6 +318,14 @@ function setConnMode() {
   if (IS_LIVE) {
     el.textContent = "LIVE — talking to your Instagram bot at " + BOT_LABEL +
       ". Photos, wardrobe saving, and replies all go through it." +
+      " Automatic replies are sent by the wardrobe service running alongside this page - this page only displays.";
+  } else if (RT0.botBase) {
+    var remoteLabel = String(RT0.botBase).charAt(0) === "/"
+      ? window.location.origin + String(RT0.botBase) + " (same-origin proxy on this server)"
+      : String(RT0.botBase);
+    el.textContent = "MOCK — demo only, served same-origin through the proxy on this server (" +
+      remoteLabel + "). " +
+      "Nothing here touches real Instagram." +
       " Automatic replies are sent by the wardrobe service running alongside this page - this page only displays.";
   } else {
     el.textContent = "MOCK — demo only, using the pretend bot on this computer. " +
