@@ -3,134 +3,90 @@
 A hackathon entry for the Meta Global AI Developer Hackathon (Indie
 Developer track): an agent that builds a persistent wardrobe from the
 photos you share, then styles validated full looks from it — conversing
-through an Instagram-DM-style chat thread. Every proposal passes a real
-fit-rule engine (base + exactly one finish; two-layer and shoe
+through an Instagram-DM-style chat thread.
+
+Three Meta models do the heavy lifting, all called through one
+local proxy: **SAM 3.1** segments each photo into garments, **Muse
+Spark 1.3** classifies them, reasons about assembly, and writes the copy,
+and **Muse Image 1.0** renders the look preview. Every proposal passes a
+real fit-rule engine (base + exactly one finish; two-layer and shoe
 rejections; ≤300-word budget), and every turn leads with the wardrobe
 payoff: what was catalogued, what look the catalog produced, what the
 validator said, what to buy next. Not a photo classifier in isolation.
 
-## Run the judged demo (one command)
+## Requirements
 
-Your **only** requirement is your own Meta API key. No other credential,
-account, or hosted service is needed.
+- Node 18+ and Python 3 — that's it. There is **no `npm install`**: the
+  app has zero JavaScript package dependencies.
+- Your own Meta API key (see the next section) — the only requirement for
+  the real-model experience. No account, no hosted service, nothing else.
+
+## Quickstart
 
 ```sh
-# from the repo root, with your key in the environment:
+git clone <this repo> && cd meta-styles
+
+# with your key in the environment:
 MODEL_API_KEY=<your-meta-api-key> sh start.sh
+
+# or with no key at all (everything still runs — see below):
+sh start.sh
 ```
 
-No key handy? `sh start.sh` still starts — the proxy reports
-`keyPresent:false` and the demo runs on explicitly labelled stub/cached
-fallbacks. (Alternatively, put a `meta-api-key=<key>` line in
-`.env/secrets` — that file is gitignored and never committed.)
+Then open **[http://localhost:8000/mock-dm.html](http://localhost:8000/mock-dm.html)**
+in a browser on the same machine. Use the hostname `localhost` exactly —
+not `127.0.0.1` — because the demo's API trusts only the `localhost`
+origin string (same host, different string, silently blocked). Ctrl-C
+stops the whole stack.
 
-Then open this URL in a browser:
+## Setting your Meta API key
 
-**[http://localhost:8000/mock-dm.html](http://localhost:8000/mock-dm.html)**
+Get a key from Meta's developer site — see the [Meta Model API quickstart](https://dev.meta.ai/docs/quickstart).
+Two supported routes; pick one:
 
-`start.sh` starts three local processes together and waits until all
-three answer: the Meta-model proxy (`127.0.0.1:8905`), the mock DM bot
-(`127.0.0.1:8904`), and the static server (`localhost:8000`). Ctrl-C
-stops all three. Ports can be overridden with `PROXY_PORT`, `MOCK_PORT`,
-`STATIC_PORT`.
+1. **Environment variable** (simplest):
 
-### Live Instagram bot mode (local-only, for Autumn's machine)
+   ```sh
+   export MODEL_API_KEY=<your-meta-api-key>
+   sh start.sh
+   ```
 
-The default judged path is mock-only (synthetic data). To test against
-the already-running real Instagram bot at `127.0.0.1:8903`:
+2. **A local secrets file** the launcher parses automatically:
 
-```sh
-LIVE_IG=1 sh start.sh
-# Optional: LIVE_BOT_BASE=http://127.0.0.1:8903 LIVE_IG=1 sh start.sh
-```
+   ```sh
+   echo "meta-api-key=<your-meta-api-key>" > .env/secrets
+   sh start.sh
+   ```
 
-**Which URL to open (hard requirement, not a suggestion):** open
-`http://localhost:8000/mock-dm.html` directly in a browser on the same
-machine that runs the bot — **not** the Tailscale HTTPS remote link.
-The live bot deliberately trusts exactly one origin
-(`http://localhost:8000`) and serves plain HTTP only, so a page loaded
-through the HTTPS tunnel fails its preflight (`403`) and the browser
-blocks the calls with no server-side error. Verified 2026-10-29: same
-`GET /ig/shares` returns `200` from the local origin and a rejected
-preflight from the tailnet origin. This is an intentional limitation,
-not something to engineer around — the bot side stays as-is.
+   The whole `.env/` directory is gitignored — the key is never committed,
+   never printed, and never reaches the browser.
 
-**Prerequisites:**
+**No key handy?** The stack still runs: the proxy reports
+`keyPresent:false` and the demo falls back to clearly labelled stubs and
+cached results instead of failing (table below). Perfect for a first
+tour; use a real key for the actual model behavior.
 
-- The real bot must already be running on `127.0.0.1:8903` (local-only,
-  no nginx/public route — see `docs/instagram-bot-api.md` §As implemented).
-  Verify: `curl --noproxy '*' http://127.0.0.1:8903/healthz` → `ok`.
-- Your `.env/secrets` must contain the three local-only bearer tokens
-  (never committed, never printed): `ig-bot-token` (read, `IG_API_TOKEN`),
-  `ig-storage-token` (catalog, `IG_API_STORAGE_TOKEN`), and `ig-send-token`
-  (send, `IG_API_SEND_TOKEN`). The read token is the same var the bot's
-  own `secrets.env` calls `IG_API_TOKEN`; catalog/send use their separate
-  tokens — the Graph token `IG_GRAPH_SEND_TOKEN` is never used for reads.
-  If the file only has `ig-bot-token`, `start.sh` falls back to
-  `~/secure-webserver/igwebhook/secrets.env` for the other two (same
-  machine, same local-only scope).
-- No token value is printed in logs or in the browser; `start.sh` emits
-  only endpoint URLs.
+**Keyless-by-design details:** the demo data is synthetic from the start
+(`SYNTH_` ids, `example.invalid` URLs — no real Instagram content in this
+repo), and the chat needs no Instagram credential at all: a mock bot with
+the same API shape as a real Instagram integration runs locally.
 
-**What happens:**
+## What you'll see (the 2-minute walkthrough)
 
-- `start.sh` generates `app/ig-runtime-config.js` from local secrets
-  (gitignored, browser-readable) mapping the three clients to `127.0.0.1:8903`
-  with their separate bearer credentials. The file is removed on exit
-  (if you had a hand-written `app/ig-runtime-config.js` before, it is left
-  untouched).
-- Only two processes start: proxy + static (no mock bot on 8904). The app at
-  `http://localhost:8000/mock-dm.html` then reads from / writes to the real
-  bot: inbox shares/media via `IG_API_TOKEN`, catalog via
-  `IG_API_STORAGE_TOKEN`, sends via `IG_API_SEND_TOKEN`.
-- Readiness checks `GET /health` (proxy), `GET /mock-dm.html` (static), and
-  `GET http://127.0.0.1:8903/healthz` (live bot). No bearer token appears in
-  any `curl` command line, process arg, stdout, or stderr.
-
-**What to do in Instagram:**
-
-- DM the connected account (SecondBloom / `17841417613087488`) — a photo, a
-  shared post/reel, or a plain text message. The share appears in the app
-  inbox after the next poll.
-- Since the live bot is consent-gated (see
-  `~/secure-webserver/igwebhook/docs/data-management-and-consent.md`),
-  the sending Instagram account must be onboarded/granted before items
-  appear: new senders receive a ToS/privacy/Meta-API-use disclosure and
-  must reply `YES` / agree within 24 h, or their data is scrubbed.
-  Un-consented shares never surface in `GET /ig/shares`.
-- The `user_ref` / catalog flow works for that account: `user_ref` is the
-  stable per-sender id on every `GET /ig/shares` item; `PUT /ig/catalog/<user_ref>`
-  and `GET /ig/catalog/<user_ref>` persist the wardrobe scoped to that
-  `user_ref` (per-user AES-256-GCM at rest on the bot).
-
-**Warning — real sends:**
-
-- In live mode the app's `Send as app` button and the `Propose look`
-  path route to the real bot's `POST /ig/send` (local-only,
-  `IG_API_SEND_TOKEN` + `IG_GRAPH_SEND_TOKEN` + 24 h window). **They only
-  fire on explicit user clicks** — no automatic sends, no background sends.
-  The mock's window/duplicate behaviour (422, 409) is enforced identically
-  on the live bot. Do not click Send unless you intend a real DM.
-- The judged demo (`sh start.sh` without `LIVE_IG`) never touches the live
-  bot and never sends a real DM — mock-only by default.
-
-## The 2-minute judge walkthrough (the video arc)
-
-1. **Share photo 1** (a dress — use any local image): it lands as an
-   inbound bubble. The assistant turn catalogues it as the first wardrobe
-   piece and answers honestly: a base alone isn't a full look yet — it
-   needs exactly one finish (a layer, a scarf, a bag, or a scarf + bag).
-2. **Share photo 2** (a layer, e.g. a cardigan): the reply reaches back
-   across the wardrobe and proposes one look combining the dress from
-   photo 1 with the layer from photo 2, citing both sources — re-validated
-   by the fit rules (valid full look).
+1. **Share photo 1** (a dress — any local image): it lands as an inbound
+   bubble; the assistant catalogues it as the first wardrobe piece and
+   answers honestly: a base alone isn't a full look yet — it needs
+   exactly one finish (a layer, a scarf, a bag, or a scarf + bag).
+2. **Share photo 2** (a layer, e.g. a cardigan): the reply proposes one
+   look combining the dress from photo 1 with the layer from photo 2,
+   citing both sources, re-validated by the fit rules.
 3. **One purchase suggestion:** the thread ends with a single next buy
-   (e.g. a scarf, as a second finish option for the dress).
+   (e.g. a second finish for the dress).
 
-Try the loop: type "no bag" as a user text turn and the look is
-re-proposed minus the bag and re-validated; ask about fabric or price and
-the agent says plainly it doesn't have that data — it never invents a
-listing. The full 3-minute narration is in
+Try the loop: type "no bag" and the look is re-proposed minus the bag,
+re-validated; ask about fabric or price and the agent says plainly it
+doesn't have that data — it never invents a listing. The full 3-minute
+narration is in
 [`docs/demo-video-script-19g.md`](docs/demo-video-script-19g.md).
 
 ## What's real vs stub/cached fallback (honest table)
@@ -146,40 +102,82 @@ listing. The full 3-minute narration is in
 The browser never sees your key: `meta-api-proxy/server.js` holds it
 server-side from the process environment and exposes only narrow local
 routes (`/api/segment`, `/api/classify`, `/api/copy`, `/api/assemble`,
-`/api/preview`, `/health`). The demo chat auto-replies in both modes: the mock bot in MOCK mode,
-real DMs in LIVE mode (automatic replies are armed — the page banner says
-so plainly). The manual Send-as-app panel stays for operator-composed turns.
+`/api/preview`, `/health`). Automatic replies are sent by the companion
+wardrobe service, not the page; the manual Send-as-app panel stays for
+operator-composed turns.
+
+## The four processes
+
+`start.sh` starts them together and waits until all answer:
+
+| Port (default) | Process | Role |
+|---|---|---|
+| `localhost:8000` | static server | the chat page you open |
+| `127.0.0.1:8904` | mock-ig-bot | synthetic inbox the chat polls |
+| `127.0.0.1:8905` | meta-api-proxy | holds your key, calls Meta models |
+| `127.0.0.1:8906` | wardrobe-service | catalogues shares, sends auto-replies |
+
+Ports can be overridden with `STATIC_PORT`, `MOCK_PORT`, `PROXY_PORT`,
+`WARDROBE_PORT`. The full launch/verify/restart playbook (including a
+same-origin proxy mode that also serves the demo over a Tailscale link)
+lives in [`skills/demo-launch/SKILL.md`](skills/demo-launch/SKILL.md).
+
+## Running the tests
+
+```sh
+node --test app/test/*.test.js wardrobe-service/test/*.test.js
+```
+
+## Live Instagram mode (bot operators only, not part of the judged demo)
+
+The default run is mock-only and never touches Instagram. To point the
+same app at the *real* (pre-hackathon, separately-operated, local-only)
+Instagram bot instead of the mock:
+
+```sh
+LIVE_IG=1 sh start.sh
+```
+
+This requires the bot already running on `127.0.0.1:8903`, three local
+bearer tokens in `.env/secrets`, and strict respect for the bot's
+consent gate — un-consented senders never surface. Automatic replies are
+armed in this mode: real DMs go out, so only use it on your own local
+setup. The open `localhost` URL is a hard requirement here too: the live
+bot trusts exactly one origin (`http://localhost:8000`) and a page
+loaded through any other origin fails blocked preflights with no
+server-side error. Full setup, what happens, and the boundary story:
+[`docs/instagram-bot-api.md`](docs/instagram-bot-api.md) and
+[`docs/prior-work-instagram.md`](docs/prior-work-instagram.md).
 
 ## Repo map
 
 - [`start.sh`](start.sh) — one-shot install+run (this README's command).
 - `app/mock-dm.html` — the judged chat surface (thread + operator panels).
-- `wardrobe-service/server.js` — the persistent service `start.sh`
-  actually launches for the judged chat loop. It wraps `app/turn-loop.js`
-  (per-reply orchestration) with the **M21 agentic router + 11 skills**
-  (`app/router.js`, `app/skills/*`, confidence-gated: <70 asks for
-  clarification instead of guessing) and `app/summariser.js` (per-user
-  rolling preference summary). Each inbound share/message becomes exactly
-  one skill invocation — catalogue, propose/revise/match a look, explain,
-  evaluate a prospective purchase (real 24h hold + expiry), suggest a
-  completion, or decline off-topic/no-data — logged per turn.
+- `wardrobe-service/server.js` — the persistent service that drives the
+  chat loop. It wraps `app/turn-loop.js` (per-reply orchestration) with
+  the **agentic router + skill set** (`app/router.js`, `app/skills/*`,
+  confidence-gated: below 70 it asks for clarification instead of
+  guessing) and `app/summariser.js` (per-user rolling preference
+  summary). Each inbound share/message becomes exactly one skill
+  invocation — catalogue, propose/revise/match a look, explain, evaluate
+  a purchase (real 24h hold + expiry), suggest a completion, or decline
+  off-topic/no-data — logged per turn.
 - `app/turn-loop.js`, `app/wardrobe-catalog.js`, `app/send-client.js`,
-  `app/poll-scheduler.js`, `app/auto-reply.js` — the lower-level
-  conversation loop, per-user wardrobe (with per-piece SAM-cropped photo
-  thumbnails), send client, polling/window discipline, and the turn-loop
-  live wiring `refreshThread()` calls once per poll tick in both modes
-  (all synthetic `SYNTH_` ids; `node --test app/test/*.test.js
-  wardrobe-service/test/*.test.js` runs the full suite).
+  `app/poll-scheduler.js`, `app/auto-reply.js` — the conversation loop,
+  per-user wardrobe (with per-piece SAM-cropped photo thumbnails), send
+  client (idempotency keys, send-window discipline), polling, and the
+  auto-reply wiring.
 - `app/index.html` — unlinked dev/debug tool (manual segment/tag/assemble
   without chat); not part of the judged demo.
 - `meta-api-proxy/` — key-holding proxy (`server.js` + standalone
   `start.sh` for proxy-only runs).
 - `mock-ig-bot/` — synthetic offline bot implementing the real bot's API
   contract so the app runs unchanged against it.
-- `docs/` — specs and plans, including the video script and the
-  prior-work boundary (`docs/prior-work-instagram.md`: the pre-hackathon
-  SecondBloom integration is documented there, never vendored into app
-  code or demoed as a hackathon feature).
+- `live-proxy-server.js` — same-origin relay for live and remote modes.
+- `docs/` — specs, plans, the demo-video script, and the prior-work
+  boundary (`docs/prior-work-instagram.md`: the pre-hackathon SecondBloom
+  Instagram integration is documented there, never vendored into app code
+  or demoed as a hackathon feature).
 
 ## Boundaries a judge should know
 
