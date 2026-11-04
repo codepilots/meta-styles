@@ -14,6 +14,10 @@ rejections; ≤300-word budget), and every turn leads with the wardrobe
 payoff: what was catalogued, what look the catalog produced, what the
 validator said, what to buy next. Not a photo classifier in isolation.
 
+An illustrated walkthrough of the whole flow — every panel, reply type,
+and rule — is live on GitHub Pages:
+**[codepilots.github.io/meta-styles/guide.html](https://codepilots.github.io/meta-styles/guide.html)**.
+
 ## Requirements
 
 - Node 18+ and Python 3 — that's it. There is **no `npm install`**: the
@@ -98,8 +102,10 @@ the same API shape as a real Instagram integration runs locally.
 
 Try the loop: type "no bag" and the look is re-proposed minus the bag,
 re-validated; ask about fabric or price and the agent says plainly it
-doesn't have that data — it never invents a listing. The full 3-minute
-narration is in
+doesn't have that data — it never invents a listing. Prefer pictures? The
+[live guide](https://codepilots.github.io/meta-styles/guide.html) covers
+every surface step by step (it's linked right on both chat pages too).
+The full 3-minute narration is in
 [`docs/demo-video-script-19g.md`](docs/demo-video-script-19g.md).
 
 ## What's real vs stub/cached fallback (honest table)
