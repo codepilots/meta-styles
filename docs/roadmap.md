@@ -519,3 +519,15 @@ Per `docs/decisions.md` row 19: poll cursor persisted (`wardrobe-service/data/po
 Open:
 - Commit (app code as `muse-code`), restart `wardrobe-service` twice to confirm the second start resumes without replay.
 - Photos already left on the mock bot by the old dead ack stay there until the mock bot restarts (its store is in-memory).
+
+## Milestone 36 — revise targets a specific piece, not just a category (live bug, 2026-11-04)
+
+Live mock chat: with a pink and a multicolor scarf, "add my multicolored scarf" kept adding the pink one; "add the multicolor scarf to my look?" was swallowed by the open scarves list (view_wardrobe_item) and only showed the scarf; "add it to my look" asked "which piece?"; "swap the scarf" removed it. Cause: revise_look parsed only a category and `pureAddTurn` took the first piece of it; a pending `expects:"text"` question beat the router.
+
+Fix: descriptor → piece resolution in `revise_look` (local `attributes.color` match over a fixed colour/pattern/material vocabulary; else Spark closed choice over real piece ids + `any` + `none`, invented ids rejected; an attribute word that matches nothing → honest no-add listing the real pieces; filler-only words → old default pick). Requested piece replaces a same-category piece already on the look; "swap the X" with ≥2 X swaps within the category ("remove/no X" still removes); `view_wardrobe_item` remembers the last-shown piece in memory (24h, never serialized) so "add it/that one to my look" resolves; `agentic-loop.js` lets a clear add/swap-to-look request break out of a pending text question (yes/no flows untouched); router gains an "add … to my/the look" revise rule.
+
+**Status: LANDED 2026-11-04 (commit `1143f05`); wardrobe-service restarted on it (mock mode).** Muse Code, two passes (review caught a regression in pass 1: any unlisted filler word — "maybe", "hun", "thanks" — was read as a descriptor and refused the add). Verified on host: full suite 94/94 (new `revise-look-specific-piece`, `revise-look-descriptor-filler`; no existing tests changed); live mock replay: multicolored add → multicolor, swap → pink, add-pink with list open → reaches revise, "striped" → honest no-add, list pick #2 → "add it to my look" → multicolor replaces pink (one scarf in the look).
+
+Open:
+- Re-asking "show the scarves" while a scarves list is still held gets "I didn't catch a number" instead of a fresh list (pre-existing view_wardrobe_item behaviour).
+- "colourful"-style descriptors resolve only via Spark (offline they read as no-match).
