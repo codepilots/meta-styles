@@ -1,0 +1,440 @@
+<!DOCTYPE html>
+<html lang="en-GB">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="description" content="meta-styles chat features guide — step through the DM: consent, cataloguing, looks, re-styling, on-you preview, wardrobe, purchase checks and deletion.">
+<title>meta-styles — chat features guide</title>
+<style>
+  :root{color-scheme:light;--paper:#f7f5f2;--ink:#14171a;--muted:#5b6166;--rule:#ded9d2;--accent:#0d5c52;--paper2:#efebe6}
+  *{box-sizing:border-box}
+  html{scroll-behavior:smooth}
+  body{margin:0;font-family:Georgia,"Times New Roman",serif;line-height:1.7;color:var(--ink);background:var(--paper);font-size:17px;-webkit-font-smoothing:antialiased}
+  a{color:var(--accent);text-underline-offset:3px;text-decoration-thickness:1.3px}
+  a:hover{color:#0a4a42}
+  a:focus-visible{outline:2px solid var(--accent);outline-offset:3px}
+  .skip{position:absolute;left:-9999px;top:0;background:var(--ink);color:#fff;padding:.5rem 1rem;font-family:system-ui,sans-serif;font-size:.9rem;z-index:99}
+  .skip:focus{left:0}
+  /* header */
+  .site-head{border-bottom:1px solid var(--rule);background:var(--paper2)}
+  .site-head-inner{max-width:44rem;margin:0 auto;padding:1.2rem 1.25rem 1rem}
+  .eyebrow{font-family:system-ui,sans-serif;font-size:.78rem;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);margin:0 0 .35rem}
+  .site-head h1{font-size:2rem;line-height:1.18;margin:0 0 .4rem;font-weight:700;letter-spacing:-.02em}
+  .site-head h1 span{font-weight:400;color:var(--muted)}
+  .lede{max-width:36rem;color:var(--muted);margin:.35rem 0 0;font-size:1.02rem;line-height:1.6}
+  .top-nav{margin-top:1rem;display:flex;flex-wrap:wrap;gap:.35rem 1rem;font-family:system-ui,sans-serif;font-size:.9rem}
+  .top-nav a{text-decoration:none;border-bottom:1px solid var(--rule);padding-bottom:1px}
+  /* toc */
+  .toc{max-width:44rem;margin:0 auto;padding:1.4rem 1.25rem 0}
+  .toc h2{font-size:.78rem;letter-spacing:.09em;text-transform:uppercase;color:var(--muted);margin:0 0 .7rem;font-family:system-ui,sans-serif;font-weight:600}
+  .toc ol{margin:0;padding:0 0 0 1.2rem}
+  .toc li{margin:.3rem 0;font-size:.95rem;line-height:1.5}
+  .toc a{text-decoration:none;color:var(--ink);border-bottom:1px solid var(--rule)}
+  .toc a:hover{color:var(--accent);border-color:var(--accent)}
+  /* main */
+  main{max-width:44rem;margin:0 auto;padding:1rem 1.25rem 0}
+  section.guide-step{padding:2.2rem 0 1.6rem;border-top:1px solid var(--rule)}
+  section.guide-step:first-of-type{border-top:none;padding-top:1.6rem}
+  .kicker{font-family:system-ui,sans-serif;font-size:.78rem;letter-spacing:.09em;text-transform:uppercase;color:var(--accent);font-weight:600;margin:0 0 .35rem}
+  .guide-step h2{font-size:1.45rem;line-height:1.25;margin:0 0 .2rem;letter-spacing:-.015em}
+  .guide-step h2 .num{color:var(--muted);font-weight:400;margin-right:.3rem}
+  .guide-step p{margin:.7rem 0 0;max-width:36rem}
+  .muted{color:var(--muted)}
+  .chat-bubble{margin:.9rem 0 0;max-width:34rem;background:#fff;border:1px solid var(--rule);border-radius:14px;border-bottom-left-radius:4px;padding:.75rem 1rem;font-size:.95rem;line-height:1.55}
+  .chat-bubble.user{margin-left:auto;border-radius:14px;border-bottom-right-radius:4px;background:var(--ink);color:#fff;border-color:var(--ink);max-width:20rem}
+  .chat-bubble .label{font-family:system-ui,sans-serif;font-size:.72rem;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);margin-bottom:.25rem}
+  .chat-bubble.user .label{color:rgba(255,255,255,.7)}
+  /* illustration frame */
+  .illu-wrap{margin:1.2rem 0 0;border:1px solid var(--rule);border-radius:12px;background:#fff;overflow:hidden;max-width:36rem}
+  .illu-wrap svg{display:block;width:100%;height:auto}
+  .illu-cap{font-family:system-ui,sans-serif;font-size:.82rem;color:var(--muted);padding:.5rem .9rem .7rem;border-top:1px solid var(--rule);background:var(--paper2)}
+  /* details */
+  .tip{margin:1rem 0 0;max-width:36rem;background:var(--paper2);border:1px solid var(--rule);border-left:3px solid var(--accent);border-radius:0 8px 8px 0;padding:.7rem .9rem;font-size:.9rem;line-height:1.55}
+  .tip strong{color:var(--ink)}
+  /* footer */
+  .site-foot{max-width:44rem;margin:2rem auto 0;padding:1.2rem 1.25rem 2rem;border-top:1px solid var(--rule);font-size:.88rem;line-height:1.6;color:var(--muted)}
+  .site-foot p{margin:.5rem 0 0}
+  .cheat{font-family:system-ui,sans-serif;font-size:.85rem;background:#fff;border:1px dashed var(--rule);border-radius:8px;padding:.6rem .85rem;color:var(--ink);margin-top:.8rem}
+  .foot-links{display:flex;flex-wrap:wrap;gap:.4rem 1rem;font-family:system-ui,sans-serif;font-size:.85rem;margin-top:.6rem}
+  code{font-family:ui-monospace,Consolas,monospace;background:var(--paper2);padding:.1rem .35rem;border-radius:.25rem;font-size:.9em}
+  @media(min-width:46rem){
+    .site-head h1{font-size:2.2rem}
+    .guide-step h2{font-size:1.5rem}
+  }
+</style>
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+
+<header class="site-head">
+  <div class="site-head-inner">
+    <p class="eyebrow">CodePilots · Meta hackathon</p>
+    <h1>meta-styles <span>— chat features guide</span></h1>
+    <p class="lede">A wardrobe that styles back, in the DM. Share what you own, get full looks that pass the fit rules — all in one warm, fairy-green-witch voice: <em>loveling ✨</em>.</p>
+    <nav class="top-nav" aria-label="Site">
+      <a href="guide.html">← Project guide</a>
+      <a href="https://github.com/codepilots/meta-styles">Repository</a>
+      <a href="https://codepilots.github.io/meta-styles/guide.html">Live guide</a>
+    </nav>
+  </div>
+</header>
+
+<nav class="toc" aria-label="On this page">
+  <h2>Contents</h2>
+  <ol>
+    <li><a href="#start">Start the chat — say YES</a></li>
+    <li><a href="#single">Share a single garment</a></li>
+    <li><a href="#outfit">Share an outfit photo (multi-detect)</a></li>
+    <li><a href="#look">Ask for a look</a></li>
+    <li><a href="#change">Change the look</a></li>
+    <li><a href="#on-me">“Can you show it on me?”</a></li>
+    <li><a href="#ask-wardrobe">Ask the wardrobe</a></li>
+    <li><a href="#should-buy">“Should I buy this?”</a></li>
+    <li><a href="#your-data">Your data, your delete</a></li>
+  </ol>
+</nav>
+
+<main id="main">
+
+<!-- 1 -->
+<section class="guide-step" id="start" aria-labelledby="h-start">
+  <p class="kicker">First message</p>
+  <h2 id="h-start"><span class="num">01</span> Start the chat</h2>
+  <p>Open the DM. The app says hello with a short consent notice — what it stores, how long the reply window lasts, and links to the <strong>privacy</strong>, <strong>terms</strong> and <strong>data-deletion</strong> pages — and notes you have a <strong>24-hour window</strong> to agree. Reply <code>YES</code> to begin.</p>
+  <div class="chat-bubble" role="note" aria-label="App greeting">Hi, loveling ✨ — quick hello before we begin. By chatting here you agree to our privacy &amp; terms (linked below). You can say <strong>DELETE</strong> any time to remove everything. Reply <code>YES</code> within 24 hours to continue.</div>
+  <div class="chat-bubble user"><div class="label">You</div>YES</div>
+
+  <div class="illu-wrap" aria-hidden="true">
+  <svg viewBox="0 0 520 220" xmlns="http://www.w3.org/2000/svg" role="img">
+    <title>Phone with greeting and YES reply</title>
+    <rect x="1" y="1" width="518" height="218" rx="14" fill="none" stroke="#ded9d2" stroke-width="1.8"/>
+    <!-- phone -->
+    <rect x="165" y="18" width="190" height="184" rx="22" fill="#fff" stroke="#14171a" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+    <line x1="235" y1="28" x2="285" y2="28" stroke="#14171a" stroke-width="2" stroke-linecap="round"/>
+    <!-- greeting bubble -->
+    <rect x="182" y="48" width="150" height="54" rx="14" fill="#f7f5f2" stroke="#14171a" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+    <line x1="195" y1="64" x2="278" y2="64" stroke="#5b6166" stroke-width="2" stroke-linecap="round"/>
+    <line x1="195" y1="76" x2="268" y2="76" stroke="#5b6166" stroke-width="2" stroke-linecap="round"/>
+    <line x1="195" y1="88" x2="246" y2="88" stroke="#5b6166" stroke-width="2" stroke-linecap="round"/>
+    <!-- sparkle + leaf above -->
+    <path d="M332 50 l5 5 l-5 5 l-5 -5 Z" fill="none" stroke="#0d5c52" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+    <path d="M342 44 l3 3 l-3 3 l-3 -3 Z" fill="none" stroke="#0d5c52" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+    <path d="M278 34 C282 26 292 24 296 34 C292 42 282 44 278 34" fill="none" stroke="#0d5c52" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+    <line x1="278" y1="34" x2="272" y2="38" stroke="#0d5c52" stroke-width="2" stroke-linecap="round"/>
+    <!-- dashed YES bubble (user) -->
+    <rect x="202" y="120" width="110" height="36" rx="18" fill="#fff" stroke="#0d5c52" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="7 6"/>
+    <text x="257" y="142" text-anchor="middle" font-family="system-ui,sans-serif" font-size="13" font-weight="700" letter-spacing="1.2" fill="#0d5c52">YES</text>
+    <!-- arrow -->
+    <path d="M257 118 L257 108" stroke="#14171a" stroke-width="2" stroke-linecap="round" stroke-dasharray="5 4"/>
+    <path d="M252 112 L257 106 L262 112" fill="none" stroke="#14171a" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+  </svg>
+  <div class="illu-cap">A hello bubble, a leaf-and-sparkle, and your dashed YES that opens the 24-hour window.</div>
+  </div>
+  <p class="muted" style="font-size:.92rem">If you don’t reply in time, the hello simply lapses — nothing is kept. You can message again later.</p>
+</section>
+
+<!-- 2 -->
+<section class="guide-step" id="single" aria-labelledby="h-single">
+  <p class="kicker">Cataloguing</p>
+  <h2 id="h-single"><span class="num">02</span> Share a single garment</h2>
+  <p>Send a photo of <strong>one piece</strong> — a top, bottom, dress, cardigan, blazer, scarf or bag. The app catalogues it straight away:</p>
+  <div class="chat-bubble" role="note" aria-label="App reply">"Got your top — noted, loveling! ✨ It's tucked safely in your wardrobe."</div>
+  <p>Your piece is saved with the cropped garment photo plus the original, both encrypted at rest.</p>
+
+  <div class="illu-wrap" aria-hidden="true">
+  <svg viewBox="0 0 520 220" xmlns="http://www.w3.org/2000/svg" role="img">
+    <title>Single garment in capture frame</title>
+    <rect x="1" y="1" width="518" height="218" rx="14" fill="none" stroke="#ded9d2" stroke-width="1.8"/>
+    <!-- dashed capture box -->
+    <rect x="150" y="22" width="180" height="150" rx="14" fill="#fff" stroke="#14171a" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="8 7"/>
+    <!-- hanger -->
+    <path d="M240 26 L240 42" stroke="#14171a" stroke-width="2" stroke-linecap="round"/>
+    <path d="M220 48 C220 36 260 36 260 48" fill="none" stroke="#14171a" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+    <path d="M240 42 C236 38 236 32 240 28 C244 32 244 38 240 42" fill="none" stroke="#14171a" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+    <!-- garment: simple top -->
+    <path d="M210 52 L200 68 L210 66 L210 132 L270 132 L270 66 L280 68 L270 52 Z" fill="#f7f5f2" stroke="#14171a" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+    <path d="M218 52 C224 64 256 64 262 52" fill="none" stroke="#14171a" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+    <!-- fold line -->
+    <path d="M240 68 L240 120" stroke="#ded9d2" stroke-width="1.8" stroke-linecap="round"/>
+    <!-- spark -->
+    <path d="M310 44 l7 7 l-7 7 l-7 -7 Z" fill="none" stroke="#0d5c52" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+    <path d="M324 56 l3.5 3.5 l-3.5 3.5 l-3.5 -3.5 Z" fill="none" stroke="#0d5c52" stroke-width="1.8" stroke-linecap="round"/>
+    <!-- camera cue -->
+    <circle cx="150" cy="44" r="14" fill="none" stroke="#14171a" stroke-width="2"/>
+    <circle cx="150" cy="44" r="6" fill="none" stroke="#14171a" stroke-width="1.8"/>
+  </svg>
+  <div class="illu-cap">One garment on a hanger, inside the dashed capture box — one green spark says “catalogued”.</div>
+  </div>
+</section>
+
+<!-- 3 -->
+<section class="guide-step" id="outfit" aria-labelledby="h-outfit">
+  <p class="kicker">Batch cataloguing</p>
+  <h2 id="h-outfit"><span class="num">03</span> Share an outfit photo</h2>
+  <p>One photo can hold several garments. The app finds each piece (up to 6) and asks <strong>once</strong>:</p>
+  <div class="chat-bubble" role="note" aria-label="App ask">"Found 3 pieces in that photo, loveling ✨ — a top, a skirt and a bag. Shall I add all of them?"</div>
+  <p>Reply <code>YES</code> to add them, or <code>no</code> to skip. If you sent multiple photos in one batch, you still get <strong>one combined ask</strong> — one yes answers it all.</p>
+
+  <div class="illu-wrap" aria-hidden="true">
+  <svg viewBox="0 0 520 230" xmlns="http://www.w3.org/2000/svg" role="img">
+    <title>Flat-lay with numbered dashed boxes</title>
+    <rect x="1" y="1" width="518" height="228" rx="14" fill="none" stroke="#ded9d2" stroke-width="1.8"/>
+    <!-- flat surface -->
+    <rect x="54" y="28" width="412" height="164" rx="12" fill="#fff" stroke="#ded9d2" stroke-width="1.8"/>
+    <!-- top -->
+    <rect x="86" y="48" width="112" height="78" rx="10" fill="#f7f5f2" stroke="#14171a" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+    <path d="M118 48 C122 62 176 62 180 48" fill="none" stroke="#14171a" stroke-width="2" stroke-linecap="round"/>
+    <!-- skirt -->
+    <path d="M220 68 L306 68 L296 136 L230 136 Z" fill="#efe9dc" stroke="#14171a" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+    <!-- bag -->
+    <path d="M340 98 C340 88 356 82 372 88 L392 102 L392 134 L340 134 Z" fill="none" stroke="#14171a" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+    <path d="M352 88 C356 74 382 74 386 88" fill="none" stroke="#14171a" stroke-width="2" stroke-linecap="round"/>
+    <!-- dashed numbered boxes -->
+    <rect x="82" y="42" width="120" height="90" rx="10" fill="none" stroke="#0d5c52" stroke-width="2.1" stroke-linecap="round" stroke-dasharray="7 6"/>
+    <rect x="216" y="62" width="94" height="78" rx="10" fill="none" stroke="#0d5c52" stroke-width="2.1" stroke-linecap="round" stroke-dasharray="7 6"/>
+    <rect x="336" y="84" width="64" height="54" rx="10" fill="none" stroke="#0d5c52" stroke-width="2.1" stroke-linecap="round" stroke-dasharray="7 6"/>
+    <!-- numbers -->
+    <circle cx="100" cy="50" r="11" fill="#0d5c52"/><text x="100" y="54" text-anchor="middle" font-family="system-ui,sans-serif" font-size="11" font-weight="700" fill="#fff">1</text>
+    <circle cx="234" cy="70" r="11" fill="#0d5c52"/><text x="234" y="74" text-anchor="middle" font-family="system-ui,sans-serif" font-size="11" font-weight="700" fill="#fff">2</text>
+    <circle cx="354" cy="92" r="11" fill="#0d5c52"/><text x="354" y="96" text-anchor="middle" font-family="system-ui,sans-serif" font-size="11" font-weight="700" fill="#fff">3</text>
+  </svg>
+  <div class="illu-cap">Flat-lay: top, skirt, bag — each in a numbered dashed box. One question, one YES.</div>
+  </div>
+</section>
+
+<!-- 4 -->
+<section class="guide-step" id="look" aria-labelledby="h-look">
+  <p class="kicker">Styling</p>
+  <h2 id="h-look"><span class="num">04</span> Ask for a look</h2>
+  <p>Say <em>“show me a look”</em>. You’ll get a <strong>full-look card</strong>: which pieces were chosen, <em>why</em> they fit the rules, and a preview image grounded in your actual pieces — or an honest text-only note when no picture could be made.</p>
+  <div class="chat-bubble" role="note" aria-label="Look card">Your cashmere cardigan + linen trousers + woven tote, loveling ✨ — a soft base with a single warm layer; fit check: valid ✔<br><span class="muted" style="font-size:.9em">Preview grounded in your wardrobe pieces; text-only when no image is available.</span></div>
+  <p style="font-size:.94rem">Look shape: <strong>a base with exactly one finish</strong> — a layer (cardigan / blazer) or a scarf + bag pair; a lone scarf or lone bag can finish too. Shoes never join a look.</p>
+
+  <div class="illu-wrap" aria-hidden="true">
+  <svg viewBox="0 0 520 220" xmlns="http://www.w3.org/2000/svg" role="img">
+    <title>Look card sketch with three hooks and fit tick</title>
+    <rect x="1" y="1" width="518" height="218" rx="14" fill="none" stroke="#ded9d2" stroke-width="1.8"/>
+    <!-- card -->
+    <rect x="56" y="22" width="408" height="154" rx="14" fill="#fff" stroke="#14171a" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+    <!-- hook 1 -->
+    <path d="M120 42 C120 30 132 30 132 42 L132 56" fill="none" stroke="#14171a" stroke-width="2" stroke-linecap="round"/>
+    <path d="M102 60 L122 76 L142 60 Z" fill="#f7f5f2" stroke="#14171a" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+    <line x1="122" y1="68" x2="122" y2="108" stroke="#ded9d2" stroke-width="1.8"/>
+    <!-- hook 2 -->
+    <path d="M220 42 C220 30 232 30 232 42 L232 56" fill="none" stroke="#14171a" stroke-width="2" stroke-linecap="round"/>
+    <rect x="202" y="60" width="60" height="52" rx="6" fill="#efe9dc" stroke="#14171a" stroke-width="2"/>
+    <!-- hook 3 -->
+    <path d="M330 42 C330 30 342 30 342 42 L342 56" fill="none" stroke="#14171a" stroke-width="2" stroke-linecap="round"/>
+    <path d="M318 62 C318 90 366 90 366 62 L366 108 L318 108 Z" fill="none" stroke="#14171a" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+    <!-- connector -->
+    <line x1="142" y1="84" x2="202" y2="84" stroke="#ded9d2" stroke-width="1.8" stroke-dasharray="6 5"/>
+    <line x1="262" y1="84" x2="318" y2="84" stroke="#ded9d2" stroke-width="1.8" stroke-dasharray="6 5"/>
+    <!-- tick + sparkle -->
+    <circle cx="400" cy="136" r="16" fill="none" stroke="#0d5c52" stroke-width="2.1"/>
+    <path d="M390 136 L397 143 L410 128" fill="none" stroke="#0d5c52" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>
+    <path d="M418 38 l6 6 l-6 6 l-6 -6 Z" fill="none" stroke="#0d5c52" stroke-width="2" stroke-linecap="round"/>
+    <!-- label row -->
+    <line x1="86" y1="132" x2="168" y2="132" stroke="#5b6166" stroke-width="2" stroke-linecap="round"/>
+    <line x1="202" y1="132" x2="268" y2="132" stroke="#5b6166" stroke-width="2" stroke-linecap="round"/>
+    <line x1="308" y1="132" x2="372" y2="132" stroke="#5b6166" stroke-width="2" stroke-linecap="round"/>
+  </svg>
+  <div class="illu-cap">Three pieces on hooks, stitched into one card — fit check ✔ and a sparkle.</div>
+  </div>
+</section>
+
+<!-- 5 -->
+<section class="guide-step" id="change" aria-labelledby="h-change">
+  <p class="kicker">Tweaking</p>
+  <h2 id="h-change"><span class="num">05</span> Change the look</h2>
+  <p>Just say it naturally:</p>
+  <div class="chat-bubble" role="note" aria-label="Examples of change requests">“without the blazer please” · “swap the cardigan for the blazer” · “add my scarf”</div>
+  <p>The look re-composes and the fit rules re-check. If you ask to remove the only finish, the app will tell you what’s missing rather than showing a broken look.</p>
+
+  <div class="illu-wrap" aria-hidden="true">
+  <svg viewBox="0 0 520 190" xmlns="http://www.w3.org/2000/svg" role="img">
+    <title>Hanger swap with dashed arrows</title>
+    <rect x="1" y="1" width="518" height="188" rx="14" fill="none" stroke="#ded9d2" stroke-width="1.8"/>
+    <!-- outgoing hanger (left, fading out) -->
+    <g opacity="0.95">
+      <path d="M150 30 C150 18 162 18 162 30 L162 44" fill="none" stroke="#14171a" stroke-width="2" stroke-linecap="round"/>
+      <path d="M132 48 L162 66 L192 48 L192 118 L132 118 Z" fill="#f7f5f2" stroke="#14171a" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+      <!-- dashed exit arrow -->
+      <path d="M140 132 C112 144 88 144 64 132" fill="none" stroke="#14171a" stroke-width="2" stroke-linecap="round" stroke-dasharray="7 6"/>
+      <path d="M70 124 L60 132 L70 142" fill="none" stroke="#14171a" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+    </g>
+    <!-- incoming hanger (right, sliding in) -->
+    <g>
+      <path d="M368 30 C368 18 380 18 380 30 L380 44" fill="none" stroke="#0d5c52" stroke-width="2" stroke-linecap="round"/>
+      <path d="M348 48 L378 66 L408 48 L402 118 L354 118 Z" fill="#fff" stroke="#0d5c52" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"/>
+      <path d="M452 80 C472 96 472 116 452 132" fill="none" stroke="#0d5c52" stroke-width="2" stroke-linecap="round" stroke-dasharray="7 6"/>
+      <path d="M446 124 L456 132 L446 142" fill="none" stroke="#0d5c52" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+    </g>
+    <!-- centre word -->
+    <text x="260" y="160" text-anchor="middle" font-family="system-ui,sans-serif" font-size="11" letter-spacing="1.4" font-weight="600" fill="#5b6166">SWAP · RE-CHECK</text>
+  </svg>
+  <div class="illu-cap">One hanger out (dashed arrow), another in — the fit is checked again.</div>
+  </div>
+</section>
+
+<!-- 6 -->
+<section class="guide-step" id="on-me" aria-labelledby="h-on-me">
+  <p class="kicker">On-you preview</p>
+  <h2 id="h-on-me"><span class="num">06</span> “Can you show it on me?”</h2>
+  <p>Ask to see the look on you. The app will first ask for <strong>consent</strong>, then for two reference photos one at a time: a <strong>headshot</strong> and a <strong>full-body photo</strong>. They’re kept encrypted, used only to render looks on you, and deletable any time with <em>“delete my photos”</em>. Your headshot is never catalogued as a wardrobe piece.</p>
+  <div class="chat-bubble" role="note" aria-label="Consent ask">To show a look on you, darling ✨ I’ll keep just two photos — a headshot and a full-body — encrypted, only to render your looks on you and never for anything else. Say “delete my photos” anytime to remove them. May I keep them? A quick “yes” and I’ll ask for your headshot first.</div>
+
+  <div class="illu-wrap" aria-hidden="true">
+  <svg viewBox="0 0 520 220" xmlns="http://www.w3.org/2000/svg" role="img">
+    <title>Figure beside mirror with dashed wardrobe arrow</title>
+    <rect x="1" y="1" width="518" height="218" rx="14" fill="none" stroke="#ded9d2" stroke-width="1.8"/>
+    <!-- wardrobe (left) -->
+    <rect x="44" y="32" width="84" height="136" rx="8" fill="#fff" stroke="#14171a" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+    <line x1="44" y1="88" x2="128" y2="88" stroke="#ded9d2" stroke-width="1.8"/>
+    <line x1="44" y1="126" x2="128" y2="126" stroke="#ded9d2" stroke-width="1.8"/>
+    <line x1="60" y1="48" x2="90" y2="48" stroke="#14171a" stroke-width="2" stroke-linecap="round"/>
+    <line x1="60" y1="58" x2="84" y2="58" stroke="#5b6166" stroke-width="2" stroke-linecap="round"/>
+    <line x1="60" y1="104" x2="112" y2="104" stroke="#14171a" stroke-width="2" stroke-linecap="round"/>
+    <!-- dashed arrow wardrobe -> figure -->
+    <path d="M132 100 C176 94 196 96 214 88" fill="none" stroke="#0d5c52" stroke-width="2" stroke-linecap="round" stroke-dasharray="7 6"/>
+    <path d="M210 80 L218 86 L210 94" fill="none" stroke="#0d5c52" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+    <!-- figure -->
+    <circle cx="250" cy="58" r="18" fill="none" stroke="#14171a" stroke-width="2"/>
+    <path d="M232 80 L268 80 L262 152 L238 152 Z" fill="none" stroke="#14171a" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+    <path d="M228 92 L232 80 L228 108" fill="none" stroke="#14171a" stroke-width="2" stroke-linecap="round"/>
+    <path d="M272 92 L268 80 L272 108" fill="none" stroke="#14171a" stroke-width="2" stroke-linecap="round"/>
+    <line x1="238" y1="152" x2="222" y2="176" stroke="#14171a" stroke-width="2" stroke-linecap="round"/>
+    <line x1="262" y1="152" x2="278" y2="176" stroke="#14171a" stroke-width="2" stroke-linecap="round"/>
+    <!-- mirror -->
+    <rect x="334" y="28" width="118" height="162" rx="10" fill="#fff" stroke="#14171a" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+    <!-- reflection (lighter, slightly offset) -->
+    <circle cx="392" cy="60" r="16" fill="none" stroke="#5b6166" stroke-width="1.8" stroke-dasharray="5 4"/>
+    <path d="M376 80 L408 80 L403 148 L381 148 Z" fill="none" stroke="#5b6166" stroke-width="1.8" stroke-dasharray="5 4"/>
+    <!-- sparkle -->
+    <path d="M312 42 l6 6 l-6 6 l-6 -6 Z" fill="none" stroke="#0d5c52" stroke-width="2" stroke-linecap="round"/>
+  </svg>
+  <div class="illu-cap">Wardrobe → you → your mirror reflection. Dashed arrow, same paper and ink.</div>
+  </div>
+</section>
+
+<!-- 7 -->
+<section class="guide-step" id="ask-wardrobe" aria-labelledby="h-ask">
+  <p class="kicker">Browsing</p>
+  <h2 id="h-ask"><span class="num">07</span> Ask the wardrobe</h2>
+  <p>Say <em>“what do I have in my wardrobe?”</em> for a summary by category. Or be pointed:</p>
+  <div class="chat-bubble" role="note" aria-label="Direct wardrobe requests">“delete my dress” · “the pink one” · “view my scarf”</div>
+  <p>The app will show pages you can step through, confirm before deleting, and remember what you picked.</p>
+
+  <div class="illu-wrap" aria-hidden="true">
+  <svg viewBox="0 0 520 210" xmlns="http://www.w3.org/2000/svg" role="img">
+    <title>Open wardrobe with dashed pointer</title>
+    <rect x="1" y="1" width="518" height="208" rx="14" fill="none" stroke="#ded9d2" stroke-width="1.8"/>
+    <!-- wardrobe frame -->
+    <rect x="108" y="20" width="304" height="160" rx="12" fill="#fff" stroke="#14171a" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+    <!-- shelves -->
+    <line x1="108" y1="74" x2="412" y2="74" stroke="#14171a" stroke-width="1.8"/>
+    <line x1="108" y1="122" x2="412" y2="122" stroke="#14171a" stroke-width="1.8"/>
+    <!-- piles: top shelf folded -->
+    <rect x="132" y="36" width="70" height="10" rx="5" fill="#f7f5f2" stroke="#14171a" stroke-width="1.8"/>
+    <rect x="136" y="48" width="62" height="10" rx="5" fill="#efe9dc" stroke="#14171a" stroke-width="1.8"/>
+    <!-- middle shelf items -->
+    <rect x="130" y="86" width="56" height="28" rx="6" fill="#f7f5f2" stroke="#14171a" stroke-width="1.8"/>
+    <rect x="202" y="86" width="56" height="28" rx="6" fill="none" stroke="#14171a" stroke-width="1.8"/>
+    <rect x="274" y="86" width="56" height="28" rx="6" fill="#efe9dc" stroke="#14171a" stroke-width="1.8"/>
+    <!-- bottom: hanging -->
+    <path d="M168 122 L168 136" stroke="#14171a" stroke-width="1.8"/>
+    <path d="M158 142 L178 142 L176 168 L160 168 Z" fill="#f7f5f2" stroke="#14171a" stroke-width="1.8"/>
+    <path d="M268 122 L268 136" stroke="#14171a" stroke-width="1.8"/>
+    <path d="M250 142 L286 142 L282 168 L254 168 Z" fill="none" stroke="#14171a" stroke-width="1.8"/>
+    <!-- dashed pointer touching a shelf -->
+    <circle cx="360" cy="100" r="18" fill="none" stroke="#0d5c52" stroke-width="2.1" stroke-dasharray="7 6"/>
+    <line x1="360" y1="100" x2="304" y2="100" stroke="#0d5c52" stroke-width="2" stroke-linecap="round" stroke-dasharray="7 6"/>
+    <circle cx="360" cy="100" r="3" fill="#0d5c52"/>
+  </svg>
+  <div class="illu-cap">Open wardrobe — folded piles, hanging rails, and a dashed pointer finding one shelf.</div>
+  </div>
+</section>
+
+<!-- 8 -->
+<section class="guide-step" id="should-buy" aria-labelledby="h-buy">
+  <p class="kicker">Prospective piece</p>
+  <h2 id="h-buy"><span class="num">08</span> “Should I buy this?”</h2>
+  <p>Share a photo of something you’re considering. The app checks how it would complete your existing looks and can <strong>hold it for you for 24 hours</strong>. If you decide to buy, just say <em>“I bought it”</em> and it’s filed into your wardrobe.</p>
+  <div class="chat-bubble" role="note" aria-label="Hold reply">Ooh, let’s have a look, loveling ✨ I’ll hold this one just for 24 hours while you decide — from what you’ve got, this could unlock 2 lovely outfits. Say “I bought it” to catalogue it properly, or I’ll gently let it go.</div>
+
+  <div class="illu-wrap" aria-hidden="true">
+  <svg viewBox="0 0 520 210" xmlns="http://www.w3.org/2000/svg" role="img">
+    <title>Thought bubble with bag and 24h clock</title>
+    <rect x="1" y="1" width="518" height="208" rx="14" fill="none" stroke="#ded9d2" stroke-width="1.8"/>
+    <!-- head -->
+    <circle cx="180" cy="108" r="38" fill="#fff" stroke="#14171a" stroke-width="2" stroke-linecap="round"/>
+    <path d="M168 100 C172 96 188 96 192 100" fill="none" stroke="#14171a" stroke-width="1.8" stroke-linecap="round"/>
+    <circle cx="172" cy="112" r="2.5" fill="#14171a"/><circle cx="188" cy="112" r="2.5" fill="#14171a"/>
+    <!-- thought bubble -->
+    <rect x="252" y="20" width="200" height="120" rx="22" fill="#fff" stroke="#14171a" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+    <circle cx="232" cy="142" r="10" fill="#fff" stroke="#14171a" stroke-width="1.8"/>
+    <circle cx="214" cy="158" r="6" fill="#fff" stroke="#14171a" stroke-width="1.8"/>
+    <!-- bag sketch inside bubble -->
+    <path d="M318 56 C318 44 348 44 348 56 L368 74 L368 104 L298 104 L298 74 Z" fill="#f7f5f2" stroke="#14171a" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+    <path d="M322 54 C328 38 342 38 348 54" fill="none" stroke="#14171a" stroke-width="1.8" stroke-linecap="round"/>
+    <!-- 24h clock -->
+    <circle cx="400" cy="94" r="18" fill="none" stroke="#0d5c52" stroke-width="2.1"/>
+    <line x1="400" y1="94" x2="400" y2="82" stroke="#0d5c52" stroke-width="2" stroke-linecap="round"/>
+    <line x1="400" y1="94" x2="410" y2="96" stroke="#0d5c52" stroke-width="2" stroke-linecap="round"/>
+    <text x="400" y="122" text-anchor="middle" font-family="system-ui,sans-serif" font-size="10" font-weight="700" letter-spacing=".8" fill="#0d5c52">24H</text>
+  </svg>
+  <div class="illu-cap">A thought bubble over the bag you’re eyeing — the little 24h clock is ticking.</div>
+  </div>
+</section>
+
+<!-- 9 -->
+<section class="guide-step" id="your-data" aria-labelledby="h-data">
+  <p class="kicker">Privacy</p>
+  <h2 id="h-data"><span class="num">09</span> Your data, your delete</h2>
+  <p>At any point you can say <code>DELETE</code> — or <em>“delete my photos”</em> / <em>“forget me”</em> — and the app purges your wardrobe, photos and history: everything, verified. Other users’ data is untouched.</p>
+
+  <div class="illu-wrap" aria-hidden="true">
+  <svg viewBox="0 0 520 200" xmlns="http://www.w3.org/2000/svg" role="img">
+    <title>Closing wardrobe with padlock and drifting leaf</title>
+    <rect x="1" y="1" width="518" height="198" rx="14" fill="none" stroke="#ded9d2" stroke-width="1.8"/>
+    <!-- wardrobe body -->
+    <rect x="156" y="26" width="208" height="132" rx="10" fill="#fff" stroke="#14171a" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+    <!-- lid closing (angled) -->
+    <path d="M156 26 L172 16 L380 16 L364 26 Z" fill="#f7f5f2" stroke="#14171a" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+    <line x1="172" y1="16" x2="172" y2="28" stroke="#14171a" stroke-width="1.8"/>
+    <!-- shelves hint -->
+    <line x1="172" y1="70" x2="348" y2="70" stroke="#ded9d2" stroke-width="1.8"/>
+    <line x1="172" y1="108" x2="348" y2="108" stroke="#ded9d2" stroke-width="1.8"/>
+    <!-- padlock -->
+    <rect x="244" y="90" width="32" height="26" rx="5" fill="#fff" stroke="#0d5c52" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"/>
+    <path d="M252 90 C252 74 268 74 268 90" fill="none" stroke="#0d5c52" stroke-width="2.1" stroke-linecap="round"/>
+    <circle cx="260" cy="103" r="3.5" fill="#0d5c52"/>
+    <!-- leaf drifting away -->
+    <path d="M404 98 C410 86 424 84 424 98 C418 112 404 112 404 98" fill="none" stroke="#0d5c52" stroke-width="2" stroke-linecap="round"/>
+    <path d="M404 98 L396 106" stroke="#0d5c52" stroke-width="1.8" stroke-linecap="round"/>
+    <path d="M396 106 l4 5 l-5 -3" fill="none" stroke="#0d5c52" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+    <!-- motion dashes -->
+    <line x1="378" y1="78" x2="390" y2="82" stroke="#0d5c52" stroke-width="1.8" stroke-linecap="round" stroke-dasharray="5 5"/>
+    <line x1="376" y1="112" x2="388" y2="116" stroke="#0d5c52" stroke-width="1.8" stroke-linecap="round" stroke-dasharray="5 5"/>
+  </svg>
+  <div class="illu-cap">Wardrobe lid closing, padlock shut — one leaf drifts away. Only your data goes.</div>
+  </div>
+  <div class="tip"><strong>What “delete” does:</strong> removes your wardrobe, stored photos, history and held pieces, verified. Saying it once is enough — and it never touches anyone else’s wardrobe.</div>
+</section>
+
+</main>
+
+<footer class="site-foot">
+  <div class="cheat">Finish rule: <strong>a base + one finish</strong> — a layer, a scarf+bag pair, or a lone scarf / bag — shoes stay out of fits.</div>
+  <div class="foot-links">
+    <a href="guide.html">Project guide</a>
+    <a href="https://codepilots.github.io/meta-styles/guide.html">Live guide</a>
+    <a href="https://www.codepilots.co.uk/secondbloom/privacy.html">Privacy</a>
+    <a href="https://www.codepilots.co.uk/secondbloom/terms.html">Terms</a>
+    <a href="https://www.codepilots.co.uk/secondbloom/data-deletion.html">Data deletion</a>
+  </div>
+  <p>Made for the Meta Global AI Developer Hackathon — Indie Developer track, October–November 2026.</p>
+  <p class="muted" style="font-size:.82rem">No trackers, no external assets, no web fonts. All art is inline SVG. Colour-checked: ink #14171a on paper #f7f5f2.</p>
+</footer>
+
+</body>
+</html>
