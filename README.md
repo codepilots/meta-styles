@@ -39,6 +39,19 @@ not `127.0.0.1` — because the demo's API trusts only the `localhost`
 origin string (same host, different string, silently blocked). Ctrl-C
 stops the whole stack.
 
+Two surfaces ship, both driven by the same four-process stack:
+
+- **[`mock-dm.html`](http://localhost:8000/mock-dm.html) — the demo
+  harness**: the chat plus the operator panels — illustrated how-to,
+  connection controls, manual Send-as-app / Propose look buttons, and
+  the stale-share / duplicate-send demos.
+- **[`chat.html`](http://localhost:8000/chat.html) — the chat-only
+  page**: just the Instagram-DM-style thread and a composer (type a
+  message, share a photo) with everything operator-side hidden and
+  non-editable internal defaults. Same conversation loop, polling
+  cadence, and live/runtime wiring as the harness; the clean view when
+  you want to watch the conversation itself.
+
 ## Setting your Meta API key
 
 Get a key from Meta's developer site — see the [Meta Model API quickstart](https://dev.meta.ai/docs/quickstart).
@@ -153,6 +166,9 @@ server-side error. Full setup, what happens, and the boundary story:
 
 - [`start.sh`](start.sh) — one-shot install+run (this README's command).
 - `app/mock-dm.html` — the judged chat surface (thread + operator panels).
+- `app/chat.html` — the chat-only surface: thread + composer, no operator
+  panels; same modules, polling cadence, and runtime wiring with internal
+  defaults, plus the guide link.
 - `wardrobe-service/server.js` — the persistent service that drives the
   chat loop. It wraps `app/turn-loop.js` (per-reply orchestration) with
   the **agentic router + skill set** (`app/router.js`, `app/skills/*`,
