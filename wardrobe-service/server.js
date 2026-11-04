@@ -35,12 +35,14 @@
  * STORAGE RULE (non-negotiable): ALL catalog/wardrobe data lives in the
  * bot via the existing wardrobe-catalog PUT/GET contract (createCatalog
  * + createCatalogStore + catalog.save()/load()). The service keeps NO
- * separate file, DB, or second schema for piece/turn data — zero local
- * store. The only local/in-memory state is transient runtime state that
- * needs no restart durability: the poll cursor, the in-memory
- * handled-set, per-share attempt counts, cached per-user contexts, and
- * the status ring. Restart recovery is enforced by the BOT, not by local
- * state: (a) photo shares already catalogued match source_share_id and
+ * separate file, DB, or second schema for piece/turn data — no user data
+ * stored locally: only the opaque poll cursor (see below). All other
+ * local/in-memory state is transient runtime state that needs no restart
+ * durability: the in-memory handled-set, per-share attempt counts, cached
+ * per-user contexts, and the status ring. Restart recovery is enforced by
+ * the BOT, not by local state: (a) photo shares already catalogued match
+ * source_share_id (exact, or the same bare mid across the
+ * per-attachment <mid>:<media_id> form) and
  * are skipped without re-sending; (b) every send reuses a stable
  * per-share idempotency key (wardrobe-send-v1:<share_id> — derived, never
  * stored), so any re-attempt replays the bot's stored result or 409s
@@ -82,6 +84,22 @@
  * (error_gave_up) with an honest activity line — a restart replays it
  * with a fresh count, so give-up is never silent loss.
  *
+ * Cursor durability: the in-memory cursor alone is lost on every restart,
+ * forcing a full history replay (wasted agentic turns). So the service
+ * persists ONLY the opaque cursor to a small local JSON file — default
+ * wardrobe-service/data/poll-cursor.json, overridable via
+ * opts.cursorFile (opts.cursorFile === null disables it, for tests).
+ * The file holds { mode, bot_base, cursor, updated_at } — paging
+ * coordinates only, NEVER user data: no share ids, no text, no
+ * per-user state — so there is nothing user-scoped to join the deletion
+ * story (deletion reconciliation clears in-memory user contexts; the
+ * cursor file is untouched because it holds none of their data). It is
+ * written atomically (temp file + rename) only where the cursor already
+ * advances (a page fully terminal), and loaded on startup only when mode
+ * and bot_base match the current config — otherwise ignored. Every
+ * read/parse/write failure is fail-soft: an activity line is logged and
+ * the service behaves exactly as if there were no file.
+ *
  * Poll cadence reuses the poll-scheduler state machine with the
  * document.hidden arm dropped (no DOM server-side — the "stop when
  * hidden" arm is replaced by: keep polling while the process lives, with
@@ -96,6 +114,8 @@
  */
 
 var http = require("http");
+var fs = require("fs");
+var path = require("path");
 
 var Config = require("./config.js");
 var Bridge = require("../app/inbox-bridge.js");
@@ -251,6 +271,12 @@ function createService(opts) {
   var demoUserKey = o.demoUserKey || Config.DEMO_USER_KEY;
   var demoUserRef = o.demoUserRef || Config.DEMO_USER_REF;
   var nowMs = typeof o.nowMs === "function" ? o.nowMs : Date.now;
+  // Opaque poll-cursor persistence: a path string (default
+  // wardrobe-service/data/poll-cursor.json), or null to disable (tests).
+  // Holds { mode, bot_base, cursor, updated_at } only — never user data.
+  var cursorFile = (o.cursorFile === undefined || o.cursorFile === null)
+    ? (o.cursorFile === null ? null : path.join(__dirname, "data", "poll-cursor.json"))
+    : String(o.cursorFile);
 
   var Meta = metaClient(proxyBase);
 
@@ -319,6 +345,65 @@ function createService(opts) {
   };
   var cursor = null;
   var cursorEverSet = false;
+
+  // --- Opaque poll-cursor file ---------------------------------------------
+  // Persists ONLY the paging coordinates { mode, bot_base, cursor,
+  // updated_at } so a restart resumes where polling left off instead of
+  // re-running an agentic turn for every old share. No share ids, no
+  // text, no per-user state — nothing user-scoped, so deletion
+  // reconciliation never touches it. Atomic write (temp + rename) at the
+  // one point the cursor advances; load on startup only when mode and
+  // bot_base match. Every failure is fail-soft: log one activity line
+  // and behave exactly as if there were no file. A missing file on first
+  // run is normal, not a failure — silent.
+  function saveCursorFile() {
+    if (cursorFile === null) return;
+    if (typeof cursor !== "string" || cursor === "") return;
+    var payload;
+    try {
+      payload = JSON.stringify({
+        mode: mode, bot_base: botBase, cursor: cursor,
+        updated_at: new Date(nowMs()).toISOString(),
+      });
+    } catch (err) {
+      say("Couldn't save the poll cursor — will keep polling from memory.");
+      return;
+    }
+    try {
+      fs.mkdirSync(path.dirname(cursorFile), { recursive: true });
+      var tmp = cursorFile + ".tmp-" + String(process.pid);
+      fs.writeFileSync(tmp, payload, "utf8");
+      fs.renameSync(tmp, cursorFile);
+    } catch (err) {
+      say("Couldn't save the poll cursor — will keep polling from memory.");
+      try { fs.unlinkSync(cursorFile + ".tmp-" + String(process.pid)); } catch (e) {}
+    }
+  }
+
+  function loadCursorFile() {
+    if (cursorFile === null) return;
+    var raw;
+    try {
+      raw = fs.readFileSync(cursorFile, "utf8");
+    } catch (err) {
+      if (err && err.code !== "ENOENT") {
+        say("Couldn't read the saved poll cursor — checking from the beginning.");
+      }
+      return;
+    }
+    try {
+      var parsed = JSON.parse(raw);
+      if (!parsed || typeof parsed !== "object" ||
+          parsed.mode !== mode || parsed.bot_base !== botBase ||
+          typeof parsed.cursor !== "string" || parsed.cursor === "") {
+        return;
+      }
+      cursor = parsed.cursor;
+      cursorEverSet = true;
+    } catch (err) {
+      say("Couldn't read the saved poll cursor — checking from the beginning.");
+    }
+  }
   var startedAt = new Date(nowMs()).toISOString();
   var lastProcessedShareAt = null;
   var lastTurnText = "";
@@ -332,6 +417,11 @@ function createService(opts) {
     activity.push("[" + new Date(nowMs()).toLocaleTimeString() + "] " + text);
     if (activity.length > ACTIVITY_RING) activity = activity.slice(-ACTIVITY_RING);
   }
+
+  // Startup: resume polling where the last process left off, when the
+  // saved paging coordinates belong to this exact bot (mode + base).
+  // Fail-soft — a missing/corrupt/foreign file behaves as no file.
+  loadCursorFile();
 
   function authHeaders(token) {
     return { Authorization: "Bearer " + token };
@@ -545,6 +635,14 @@ function createService(opts) {
         // Persist pendingBag from catalogue_piece multi-detect ask; clear on add/discard or expiry
         // NOTE: merging for accumulated-ask is handled in processOne (tick-level), not here;
         // this block only handles text-answer clearing and keeps direct overwrite for non-tick paths (e.g. single photo legacy).
+        // Media ids the turn consumed from the pending bag: when a text
+        // reply resolves the pending add, the bag (with its retained
+        // original media ids) is cleared here — but the collect-then-delete
+        // acknowledgement must still run after a successful add, so the
+        // ids travel out on the turn result for processAgenticShare to ack.
+        // (Reading them later from ctx.detectBag is impossible: it is
+        // already null by then, by design.)
+        var consumedMediaIds = null;
         try{
           var hr2 = result && result.handlerResult;
           if(hr2 && hr2.pendingBag && Array.isArray(hr2.pendingBag.regions)){
@@ -558,7 +656,13 @@ function createService(opts) {
               ctx.detectBag = hr2.pendingBag;
             }
           } else if(skillName==="catalogue_piece" && hr2 && hasImage===false && pendingBagForTurn){
-            // text reply that resolved the pending bag -> clear
+            // text reply that resolved the pending bag -> clear, but keep
+            // the retained media ids so the success path can ack them.
+            try{
+              if(pendingBagForTurn && Array.isArray(pendingBagForTurn.source_media_ids)){
+                consumedMediaIds = pendingBagForTurn.source_media_ids.slice();
+              }
+            }catch(eBag){}
             ctx.detectBag = null;
           }
         }catch(e){}
@@ -568,7 +672,7 @@ function createService(opts) {
           resolveAllCatalogueYesNo(ctx.catalog);
         }
         return saveBestEffort(ctx).then(function () {
-          return { result: result, toolCalls: toolCalls, totalSteps: totalSteps, skill: skillName };
+          return { result: result, toolCalls: toolCalls, totalSteps: totalSteps, skill: skillName, consumedMediaIds: consumedMediaIds };
         });
       }, function (err) {
         var traceErr = [];
@@ -800,6 +904,42 @@ function piecesCount() {
       method: "DELETE",
       headers: authHeaders(readToken),
     }).then(function () { return null; }, function () { return null; });
+  }
+
+  // Provenance match for the media-gone already-answered check: exact
+  // equality, or the same bare mid across the per-attachment
+  // <mid>:<media_id> form in either direction (a replay may surface the
+  // bare mid where pieces landed under the full per-attachment id, or
+  // vice versa). Two distinct FULL per-attachment ids under one mid never
+  // match — attachments stay distinct, so an uncatalogued sibling is
+  // never mistaken for an answered one.
+  function sameProvenance(pieceSourceId, shareId) {
+    if (pieceSourceId === shareId) return true;
+    var a = String(pieceSourceId || "");
+    var b = String(shareId || "");
+    if (!a || !b) return false;
+    var midA = a.split(":")[0];
+    var midB = b.split(":")[0];
+    if (!midA || midA !== midB) return false;
+    var bareA = a.indexOf(":") === -1;
+    var bareB = b.indexOf(":") === -1;
+    return bareA !== bareB;
+  }
+
+  // Fail-open gone check for the media-gone branch: true ONLY on an
+  // explicit 404 (the bot confirms the bytes are gone — collected and
+  // deleted, or never downloadable). Bytes present, flag lag, or any
+  // transport failure reads as "not confirmed gone", preserving the
+  // retry for genuinely not-yet-downloaded media — a transient outage
+  // can never terminally drop a share. Never rejects.
+  function mediaConfirmedGone(mediaId) {
+    return fetch(botBase + "/ig/media/" + encodeURIComponent(mediaId), {
+      headers: authHeaders(readToken),
+    }).then(function (res) {
+      return res && res.status === 404;
+    }, function () {
+      return false;
+    });
   }
 
   // One photo, classified: live Muse Spark vision via the proxy when it
@@ -1105,6 +1245,24 @@ function piecesCount() {
         hr.meta && hr.meta.imageDelivery &&
         hr.meta.imageDelivery.delivered === true);
       return sendComposed(ctx, id, text, { withImage: withImage }).then(function (outcome) {
+        // A successful yes-add consumed the pending bag: collect-then-delete
+        // ack the retained original photo media now that its pieces landed.
+        // This runs for the TEXT yes turn (which carries no media_id of its
+        // own) — the bag's media ids travel out on the turn result because
+        // the bag itself is already cleared by then. Gated on a terminal
+        // send outcome AND actual adds: a failed add or an unsent reply
+        // keeps the media, never silently lost.
+        if (typeof outcome === "string" && outcome.indexOf("terminal:") === 0) {
+          try {
+            var _hrY = result && result.handlerResult ? result.handlerResult : result;
+            var _addedY = skill === "catalogue_piece" && _hrY && _hrY.trace &&
+              _hrY.trace.some(function (s) { return typeof s === "string" && s.indexOf("added:") === 0 && s !== "added:0"; });
+            var _idsY = (agentic && Array.isArray(agentic.consumedMediaIds)) ? agentic.consumedMediaIds : [];
+            if (_addedY) {
+              for (var _yi = 0; _yi < _idsY.length; _yi++) { if (_idsY[_yi]) acknowledgeMedia(_idsY[_yi]); }
+            }
+          } catch (eY) {}
+        }
         if (item.media_id && typeof outcome === "string" && outcome.indexOf("terminal:") === 0) {
           var _hr = result && result.handlerResult ? result.handlerResult : result;
           var _isCat = skill === "catalogue_piece";
@@ -1126,26 +1284,6 @@ function piecesCount() {
             counts.media_kept += 1;
           } else if((_isCat && !_isFailure) || _consumed){
             acknowledgeMedia(item.media_id);
-            // On successful yes-add, also ack original photo media retained from ask
-            if(_isCat && _hr && _hr.trace && _hr.trace.indexOf("regions:")!==-1){
-              // detect successful add via added>0 and return:added / return:already with pieces
-            }
-            // If this was a successful yes-add, ack the bag's original media ids (retained from ask)
-            try{
-              var _bagForAck = ctx.detectBag;
-              // bag is cleared after success in runAgenticTurn, so check pendingBagForTurn
-              var _pendingForAck = pendingBagForTurn;
-              var _srcIds = null;
-              if(_pendingForAck && Array.isArray(_pendingForAck.source_share_ids)) _srcIds = _pendingForAck.source_share_ids;
-              else if(_pendingForAck && _pendingForAck.source_share_id) _srcIds = [_pendingForAck.source_share_id];
-              // Only ack retained media when we actually added pieces (not on fail/empty)
-              var _addedOk = _hr && _hr.trace && _hr.trace.some(function(s){ return typeof s==="string" && s.indexOf("added:")===0 && s!=="added:0"; });
-              if(_srcIds && _addedOk){
-                // We need media_ids: stored as source_media_ids if available, else try acknowledge via share's media (fallback: no-op if not found)
-                var _mediaIds = _pendingForAck && Array.isArray(_pendingForAck.source_media_ids) ? _pendingForAck.source_media_ids : [];
-                for(var _mi=0; _mi<_mediaIds.length; _mi++){ if(_mediaIds[_mi]) acknowledgeMedia(_mediaIds[_mi]); }
-              }
-            }catch(e){}
           } else {
             // Photo arrived but no skill consumed it this turn — keep
             // the media (never delete unprocessed bytes) and say so.
@@ -1291,10 +1429,23 @@ function piecesCount() {
         // send the probe itself would deliver a message, and for shares
         // first answered before the stable per-share key existed it would
         // duplicate-send instead of 409ing.
+        //
+        // The match bridges the bare-mid and per-attachment
+        // <mid>:<media_id> id forms in EITHER direction: multi-detect
+        // pieces land under their per-region share id on the later "yes"
+        // turn, while a replay may surface the bare mid (or vice versa).
+        // Two distinct full per-attachment ids under one mid never match
+        // each other — attachments stay distinct. A media-gone share
+        // whose media is confirmed gone (GET /ig/media 404s) and matches
+        // nothing goes terminal at once instead of retrying to give-up:
+        // its bytes can never arrive, so retries are futile. Any other
+        // outcome (bytes present, flag lag, transient error) keeps the
+        // retry for genuinely not-yet-downloaded media.
         var already = false;
         try {
           already = ctx.catalog.getPieces().some(function (p) {
-            return !!p && p.source_share_id === id;
+            return !!p && typeof p.source_share_id === "string" &&
+              sameProvenance(p.source_share_id, id);
           });
         } catch (err) {
           already = false;
@@ -1313,11 +1464,17 @@ function piecesCount() {
           say("Reply window expired, didn't send a reply.");
           return noteTerminal(id, "window_closed", true, false);
         }
-        if (!deferredLogged[id]) {
-          deferredLogged[id] = true;
-          say("Your photo isn't ready yet — I'll try again on the next check.");
-        }
-        return noteRetry(id);
+        return mediaConfirmedGone(item.media_id).then(function (gone) {
+          if (gone) {
+            say("That photo is gone and I couldn't find its pieces — nothing was sent.");
+            return noteTerminal(id, "media_gone", true, false);
+          }
+          if (!deferredLogged[id]) {
+            deferredLogged[id] = true;
+            say("Your photo isn't ready yet — I'll try again on the next check.");
+          }
+          return noteRetry(id);
+        });
       }
 
       // 24h window BEFORE composing, user-anchored like the 19c catalog:
@@ -1535,6 +1692,7 @@ function piecesCount() {
         if (allTerminal && typeof page.nextCursor === "string") {
           cursor = page.nextCursor;
           cursorEverSet = true;
+          saveCursorFile();
         }
         lastError = null;
         return { tick: "ok", items: items.length, outcomes: outcomes };
@@ -1723,6 +1881,7 @@ if (require.main === module) {
     port: cfg.port,
     demoUserKey: cfg.demoUserKey,
     demoUserRef: cfg.demoUserRef,
+    cursorFile: cfg.cursorFile,
   });
   svc.start().then(function (info) {
     console.log("wardrobe-service listening on 127.0.0.1:" + info.port +

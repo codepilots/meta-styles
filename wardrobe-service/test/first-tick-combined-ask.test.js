@@ -133,6 +133,9 @@ async function run() {
         botBase: botBase, proxyBase: PROXY_BASE,
         readToken: TOKEN, catalogToken: TOKEN, sendToken: TOKEN,
         port: 0, nowMs: function () { return Date.now(); },
+        // No cursor file: this suite asserts exact tick/replay behavior,
+        // so it must stay hermetic (no repo-tree side effects).
+        cursorFile: null,
       });
       assert.strictEqual(svc.getUserContext(DEMO_REF), null, "no user ctx before first tick (restart state)");
 

@@ -187,8 +187,14 @@ async function run() {
     assert.ok(out2b.indexOf("terminal:") === 0, "second replay terminal, got " + out2b);
     assert.strictEqual((await outbound()).length, 1, "still one outbound send");
 
-    // --- A genuinely new share with media not yet available: retry, then give up ---
-    console.log("\n[fresh pending share retries normally, never sends]");
+    // --- A media-gone share matching nothing, media confirmed gone: terminal at once ---
+    // (2026-11-03: the media-gone branch now probes GET /ig/media — a 404
+    // means the bytes can never arrive, so retrying to give-up is futile.
+    // Retry is preserved for genuinely not-yet-downloaded media: the
+    // fetch-failure path (media_available:true, GET fails) still retries,
+    // proven by media-fetch-failure-retry.test.js, as does any non-404
+    // probe outcome here.)
+    console.log("\n[confirmed-gone media with no match goes terminal, never sends]");
     const pend = await realFetch(botBase + "/mock/incoming-photo?pending=1", {
       method: "POST", headers: { Authorization: "Bearer " + TOKEN },
     });
@@ -196,16 +202,19 @@ async function run() {
     items = await shares();
     const fresh = items.filter(function (s) { return s.id !== photo.id; })[0];
     assert.strictEqual(fresh.media_available, false, "fresh share media pending");
-    const outcomes = [];
-    for (let i = 0; i < 5; i++) outcomes.push(await svc2.processOne(fresh));
-    assert.deepStrictEqual(outcomes.slice(0, 4), ["retry", "retry", "retry", "retry"],
-      "four retries, got " + JSON.stringify(outcomes));
-    assert.ok(outcomes[4].indexOf("terminal:gave_up") === 0,
-      "fifth attempt gives up, got " + outcomes[4]);
+    const goneOut = await svc2.processOne(fresh);
+    assert.ok(goneOut.indexOf("terminal:media_gone") === 0,
+      "confirmed-gone share terminal at once, got " + goneOut);
+    // Re-offering the same share stays terminal via the handled-set.
+    const goneOut2 = await svc2.processOne(fresh);
+    assert.ok(goneOut2.indexOf("terminal:") === 0 && goneOut2.indexOf("retry") === -1,
+      "second offer terminal, never a retry, got " + goneOut2);
     log = await outbound();
     assert.strictEqual(log.length, 1, "no reply went out for the unseen photo, got " + log.length);
     const st3 = svc2.status();
-    assert.strictEqual(st3.counts.gave_up, 1, "give-up counted");
+    assert.strictEqual(st3.counts.gave_up, 0, "no give-up for confirmed-gone media");
+    assert.ok(st3.activity.some(function (l) { return /gone and I couldn't find its pieces/.test(l); }),
+      "honest media-gone line, activity=" + JSON.stringify(st3.activity));
 
     // --- A media-gone share past the 24h window: terminal at once, no retries ---
     console.log("\n[old media-gone share resolves window_closed immediately]");

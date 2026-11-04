@@ -27,6 +27,11 @@
  *                              IG_API_STORAGE_TOKEN, then to the read token.
  *   WARDROBE_SEND_TOKEN     -> send Bearer [REDACTED] (live). Falls back to
  *                              IG_API_SEND_TOKEN, then to the read token.
+ *   WARDROBE_CURSOR_FILE      -> opaque poll-cursor file path. Unset/empty
+ *                              keeps the default
+ *                              (wardrobe-service/data/poll-cursor.json).
+ *                              Holds { mode, bot_base, cursor, updated_at }
+ *                              only — never user data.
  *
  * In mock mode every route uses one demo token (the mock bot enforces a
  * single token for all routes) — read/catalog/send all resolve to it.
@@ -75,6 +80,8 @@ function resolveConfig(env) {
     sendToken = nonEmpty(e.WARDROBE_SEND_TOKEN) || readToken;
   }
 
+  var cursorFile = nonEmpty(e.WARDROBE_CURSOR_FILE) || undefined;
+
   return {
     mode: live ? "live" : "mock",
     botBase: botBase,
@@ -85,6 +92,7 @@ function resolveConfig(env) {
     port: port,
     demoUserKey: DEMO_USER_KEY,
     demoUserRef: DEMO_USER_REF,
+    cursorFile: cursorFile,
   };
 }
 

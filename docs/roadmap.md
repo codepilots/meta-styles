@@ -509,3 +509,13 @@ Per `docs/decisions.md` row 18. Updated in lockstep: `app/assembler.js` (rule, f
 Open:
 - When the latest bot question really is revise's "which piece…?", a clear new request ("make me a look") is still taken as its answer — consider letting a confident different intent break out of a pending text question.
 - Restart replay re-runs agentic turns for already-answered shares (sends are deduped, but questions/turns/pieces still mutate; a retrying photo kept replays going ~3 min). Needs a durable "already answered" signal — options to bring to Autumn.
+
+## Milestone 35 — no replay after restart + multi-detect media actually collected (2026-11-03)
+
+Per `docs/decisions.md` row 19: poll cursor persisted (`wardrobe-service/data/poll-cursor.json`, `WARDROBE_CURSOR_FILE` override, `cursorFile: null` in tests). Stuck-photo root cause: (1) the yes-add media ack after a multi-detect "Found N pieces… yes" referenced a variable scoped in another function — a swallowed `ReferenceError`, so those photos were **never deleted from the bot** (collect-then-delete not honoured); now acked on a terminal send with actual adds. (2) the already-answered check was exact-match only and missed bare-mid vs `<mid>:<media_id>` drift (`sameProvenance` now bridges it). Backstop: confirmed-gone media (GET 404) with no match is terminal at once (`terminal:media_gone`), not 5 retries; not-yet-downloaded media still retries.
+
+**Status: IMPLEMENTED, UNCOMMITTED 2026-11-03.** Muse Code; verified on host: suite 92/92 (new `poll-cursor-persistence`, `already-answered-multidetect`; one expectation intentionally changed in `already-answered-media-gone`; two tests given `cursorFile: null`). Mock bot already returned 400 for `since` past the end (locked by a test, no code change).
+
+Open:
+- Commit (app code as `muse-code`), restart `wardrobe-service` twice to confirm the second start resumes without replay.
+- Photos already left on the mock bot by the old dead ack stay there until the mock bot restarts (its store is in-memory).

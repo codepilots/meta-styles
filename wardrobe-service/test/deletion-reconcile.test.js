@@ -163,6 +163,9 @@ function freshService(botBase, extra) {
     botBase: botBase, proxyBase: PROXY_BASE,
     readToken: TOKEN, catalogToken: TOKEN, sendToken: TOKEN,
     port: 0, nowMs: function () { return Date.now(); },
+    // No cursor file: deletion tests simulate restarts in-memory and must
+    // stay hermetic (no repo-tree side effects).
+    cursorFile: null,
   }, extra || {}));
 }
 
