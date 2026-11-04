@@ -234,6 +234,14 @@
     if (/\bwear\b.*\btoo\b/.test(text) && /\b(bag|scarf|blazer|cardigan|dress|top|bottom|purse|coat|jacket|shrug|shoes?|boots?|heels?|trainers?|sneakers?|sandals?)\b/.test(text)) {
       return { skill: "revise_look", confidence: 89, reason: "revise wear-too phrasing matched" };
     }
+    // Revise (explicit add-to-look with a pronoun: "add it to my look").
+    // The category-noun rules above cannot see "it" — an add verb plus
+    // the look-target phrase is enough to reach revise_look, which
+    // resolves the pronoun against the piece just shown (or clarifies
+    // honestly when nothing was shown).
+    if (/\b(add|include|bring back|put back|plus)\b.*\bto\s+(my|the)\s+look\b/.test(text)) {
+      return { skill: "revise_look", confidence: 89, reason: "revise add-to-look phrasing matched" };
+    }
     // Propose look — include natural variants like "cook up a look", "make me a look", "create a look"
     if (/\b(show me a look|propose.*look|what goes together|suggest.*look|put.*look together|style me|outfit idea|cook.*look|make.*look|create.*look|find.*bag|can you find)\b/.test(text)) {
       return { skill: "propose_look", confidence: 91, reason: "propose-look trigger" };

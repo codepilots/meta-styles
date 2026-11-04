@@ -86,7 +86,11 @@
     "layer/cardigan", "layer/blazer", "scarf", "bag", "shoes"
   ];
   function isRealCategory(c) { return TAXONOMY_ORDER.indexOf(c) !== -1; }
-  function matchRevise(t){ if(typeof t!=="string") return null; if(!/\b(no|drop|remove|without|lose|ditch|swap|skip)\b/i.test(t)) return null; for(var i=0;i<REVISE_WORDS.length;i++) if(REVISE_WORDS[i].re.test(t.toLowerCase())) return REVISE_WORDS[i].category; return null; }
+  // Milestone 36: "change" and "a different <noun>" name a revision
+  // target too ("change the scarf", "a different scarf") — they feed the
+  // intra-category swap path below, falling back to today's removal when
+  // no other piece of the family exists.
+  function matchRevise(t){ if(typeof t!=="string") return null; if(!/\b(no|drop|remove|without|lose|ditch|swap|skip|change|different)\b/i.test(t)) return null; for(var i=0;i<REVISE_WORDS.length;i++) if(REVISE_WORDS[i].re.test(t.toLowerCase())) return REVISE_WORDS[i].category; return null; }
   // ADD/INCLUDE support: same category-noun set as matchRevise (never
   // duplicated/diverged), scanned over the FULL text independently so a
   // both-match turn ("swap the cardigan for the blazer") finds its own
@@ -120,6 +124,286 @@
     return best;
   }
   function plainNoun(c){ var m={"base/top":"top","base/bottom":"bottom","dress":"dress","layer/cardigan":"cardigan","layer/blazer":"blazer","scarf":"scarf","bag":"bag","shoes":"shoes"}; return m[c]||c; }
+
+  // Milestone 36 — specific-piece helpers. revise_look used to resolve an
+  // add/swap to a bare CATEGORY and always pick the first piece of it;
+  // descriptors ("multicolor") were discarded. Now the requested family is
+  // narrowed to one real piece before anything is added or forced.
+
+  // Swap intent (cat set, no add-target): "swap/change/... the scarf" and
+  // "a different scarf" try an intra-category swap first. Plain removals
+  // ("no / remove / drop the scarf") never match — they keep removing.
+  var SWAP_INTENT_RE=/\b(swap|switch|change|exchange|trade|replace|instead)\b/i;
+  var DIFFERENT_RE=/\bdifferent\b/i;
+  function isSwapIntent(t){ if(typeof t!=="string") return false; return SWAP_INTENT_RE.test(t)||DIFFERENT_RE.test(t); }
+  // Explicit removal intent: keeps today's remove behaviour even where a
+  // swap verb also appears ("drop the scarf" must still remove).
+  var REMOVE_INTENT_RE=/\b(no|drop|remove|without|lose|ditch)\b/i;
+
+  // Short description naming the ACTUAL piece — the same "colour + plain
+  // noun" shape as view_wardrobe_item's shortDesc (parity comment, not a
+  // dependency: plainNoun is already duplicated across skills the same
+  // way). Colourless pieces read exactly as plainNoun, so every old reply
+  // keeps its wording.
+  function pieceDesc(piece){
+    var color=piece&&piece.attributes&&typeof piece.attributes.color==="string"?piece.attributes.color.trim():"";
+    return (color?color+" ":"")+plainNoun(piece?piece.category:null);
+  }
+
+  // Colour matching, local-first against stored attributes.color
+  // (case-insensitive, tolerant): "multicolor" ~ "multicolored" ~
+  // "multicolour" ~ "multi-coloured" ~ "multi colour"; "colored" ~
+  // "coloured"; trailing plural/possessive noise ("pink's" ~ "pink").
+  function canonColorWord(s){
+    return String(s||"").toLowerCase().replace(/_/g," ").replace(/-/g," ")
+      .replace(/[^a-z0-9 ]/g," ").replace(/\s+/g," ").trim().replace(/our/g,"or");
+  }
+  function deedWord(w){ return (w.length>4&&/ed$/.test(w))?w.slice(0,-2):w; }
+  function singWord(w){ return (w.length>4&&/s$/.test(w)&&!/ss$/.test(w))?w.slice(0,-1):w; }
+  function colorMatchesText(color, text){
+    var c=canonColorWord(color), t=canonColorWord(text);
+    if(!c||!t) return false;
+    var words=t.split(" ").filter(function(w){ return !!w; });
+    var set={};
+    words.forEach(function(w){
+      set[w]=true;
+      var d=deedWord(w), s=singWord(w);
+      set[d]=true; set[s]=true; set[deedWord(s)]=true;
+    });
+    var variants=[c];
+    var de=deedWord(c);
+    if(de!==c) variants.push(de);
+    var nospace=c.replace(/ /g,"");
+    if(nospace!==c) variants.push(nospace);
+    if(/^multi[^ ]/.test(c)) variants.push("multi "+c.slice(5));
+    for(var i=0;i<variants.length;i++){
+      var v=variants[i];
+      if(!v) continue;
+      if(v.indexOf(" ")===-1){ if(set[v]) return true; }
+      else {
+        var vw=v.split(" ");
+        for(var s2=0;s2+vw.length<=words.length;s2++){
+          var ok=true;
+          for(var k=0;k<vw.length;k++){
+            var w=words[s2+k];
+            if(!(w===vw[k]||deedWord(w)===vw[k]||singWord(w)===vw[k])){ ok=false; break; }
+          }
+          if(ok) return true;
+        }
+      }
+    }
+    return false;
+  }
+
+  // Descriptor words in the request: everything that is neither a
+  // category word (any family's singular/plural/synonym) nor verb or
+  // filler ("my striped scarf" -> ["striped"]; "add my scarf to my
+  // look" -> []). Empty means "no descriptor given".
+  var DESCRIPTOR_STOP={a:1,an:1,the:1,my:1,your:1,this:1,that:1,these:1,those:1,it:1,one:1,ones:1,s:1,
+    please:1,can:1,could:1,you:1,would:1,will:1,to:1,for:1,me:1,look:1,outfit:1,back:1,on:1,top:1,of:1,in:1,
+    with:1,and:1,or:1,i:1,am:1,are:1,is:1,be:1,show:1,get:1,give:1,pop:1,wear:1,wearing:1,too:1,
+    add:1,adds:1,added:1,adding:1,include:1,includes:1,included:1,including:1,bring:1,put:1,plus:1,
+    swap:1,switch:1,change:1,exchange:1,trade:1,replace:1,instead:1,remove:1,removes:1,drop:1,drops:1,
+    without:1,another:1,different:1,no:1,not:1,now:1,just:1,like:1,want:1,need:1,have:1,has:1,got:1,
+    love:1,lovely:1,darling:1,loveling:1,kindly:1,bit:1,little:1,more:1,very:1,really:1,over:1,up:1,
+    some:1,any:1,all:1,own:1,ours:1,theirs:1,mine:1,yours:1,sure:1,yes:1,yeah:1,ok:1,okay:1,hi:1,hey:1};
+  function descriptorOf(text){
+    var mod=interpretMod();
+    var catWords=(mod&&mod.CATEGORY_WORDS)?mod.CATEGORY_WORDS:null;
+    var raw=String(text||"").toLowerCase().replace(/[^a-z0-9\- ]/g," ").split(/[\s]+/);
+    var out=[];
+    for(var i=0;i<raw.length;i++){
+      var w=raw[i].replace(/^-+|-+$/g,"");
+      if(!w||DESCRIPTOR_STOP[w]) continue;
+      if(catWords&&Object.prototype.hasOwnProperty.call(catWords,w)) continue;
+      // Possessive/plural noise of a category word ("scarves'" etc.).
+      if(catWords&&(Object.prototype.hasOwnProperty.call(catWords,singWord(w)))) continue;
+      out.push(w);
+    }
+    return out;
+  }
+
+  // Follow-up fix: descriptor words come in two kinds. ATTRIBUTE words
+  // are a small fixed colour/pattern/material vocabulary — the only words
+  // that can name a particular piece we don't hold (and the only words
+  // the honest no-add reply quotes). Everything else (filler, names,
+  // typos like "maybe"/"hun"/"also"/"thanks"/"lets"/"try") must never
+  // trigger a no-add on its own — a stop-list alone can never be
+  // complete, so filler falls back to the default pick as before M36.
+  var ATTRIBUTE_WORDS={
+    // Colours: basics + common fashion colours + multicolor variants +
+    // colourful/colorful + light/dark/pale/bright modifiers.
+    black:1,white:1,gray:1,grey:1,red:1,orange:1,yellow:1,green:1,blue:1,
+    purple:1,pink:1,brown:1,beige:1,nude:1,cream:1,ivory:1,navy:1,teal:1,
+    turquoise:1,aqua:1,coral:1,peach:1,mint:1,lilac:1,lavender:1,mauve:1,
+    plum:1,wine:1,burgundy:1,maroon:1,mustard:1,olive:1,khaki:1,tan:1,
+    camel:1,gold:1,golden:1,silver:1,bronze:1,copper:1,rust:1,terracotta:1,
+    charcoal:1,slate:1,indigo:1,violet:1,magenta:1,fuchsia:1,cyan:1,lime:1,
+    emerald:1,sage:1,forest:1,royal:1,sky:1,powder:1,blush:1,rose:1,ruby:1,
+    scarlet:1,crimson:1,taupe:1,mocha:1,chocolate:1,champagne:1,
+    multicolor:1,multicolored:1,multicolour:1,multicoloured:1,
+    colorful:1,colourful:1,light:1,dark:1,pale:1,bright:1,
+    // Patterns + materials.
+    striped:1,stripes:1,stripe:1,stripy:1,stripey:1,floral:1,florals:1,
+    plaid:1,tartan:1,check:1,checks:1,checked:1,checkered:1,gingham:1,
+    polka:1,dot:1,dots:1,dotted:1,dotty:1,spotted:1,spotty:1,spots:1,
+    leopard:1,animal:1,print:1,prints:1,printed:1,paisley:1,
+    knit:1,knits:1,knitted:1,silk:1,silky:1,satin:1,wool:1,woolen:1,
+    woollen:1,denim:1,leather:1,lace:1,lacy:1,velvet:1,velvety:1,
+    sheer:1,chiffon:1,cotton:1,linen:1,cashmere:1,
+    sequin:1,sequins:1,sequined:1,metallic:1
+  };
+  // Attribute subset of descriptorOf's output (same word order). Handles
+  // the spaced/hyphenated "multi colour" spelling via the phrase check —
+  // bare "multi"/"color" alone stay non-attributes (too generic).
+  function attributeWordsOf(text){
+    var all=descriptorOf(text);
+    var out=[];
+    for(var i=0;i<all.length;i++){
+      var w=all[i];
+      if(ATTRIBUTE_WORDS[w]||ATTRIBUTE_WORDS[singWord(w)]||
+        ATTRIBUTE_WORDS[deedWord(w)]||ATTRIBUTE_WORDS[deedWord(singWord(w))]) out.push(w);
+    }
+    if(/multi[\s\-_]*colou?rs?\b/.test(String(text||"").toLowerCase())||
+       /multi[\s\-_]*colou?red\b/.test(String(text||"").toLowerCase())){
+      var has=false;
+      for(var j=0;j<out.length;j++){
+        if(out[j].indexOf("multi")===0||out[j]==="colorful"||out[j]==="colourful"){ has=true; break; }
+      }
+      if(!has) out.push("multicolor");
+    }
+    return out;
+  }
+  // "a" vs "an" for the honest no-add quote ("an orange scarf").
+  function descriptorArticle(word){
+    return /^[aeiou]/i.test(String(word||""))?"an":"a";
+  }
+
+  // "…to my look" / "…to the look": the explicit look-target phrase the
+  // breakout check (agentic-loop.js) and the pronoun branch share.
+  var LOOK_TARGET_RE=/\bto\s+(my|the)\s+look\b/i;
+  var PRONOUN_RE=/\b(it|that one|this one|that|this)\b/i;
+
+  // view_wardrobe_item's last-shown piece (its pickPiece records one id):
+  // require in Node, else the browser global, else null (pronoun then
+  // keeps today's clarification). Never throws.
+  var ViewMod=null;
+  try {
+    if (typeof require!=="undefined") ViewMod=require("../view_wardrobe_item/handler.js");
+  } catch (e) { ViewMod=null; }
+  function viewMod(){
+    if (ViewMod&&typeof ViewMod.lastShownFor==="function") return ViewMod;
+    try {
+      var sk=root.MetaStyles&&root.MetaStyles.skills&&root.MetaStyles.skills["view_wardrobe_item"];
+      if(sk&&typeof sk.lastShownFor==="function") return sk;
+    } catch (e2) {}
+    return null;
+  }
+  function lastShownPiece(catalog, liveById){
+    try {
+      var vm=viewMod();
+      if(!vm) return null;
+      var ref=vm.lastShownFor(catalog);
+      if(!ref||!ref.piece_id) return null;
+      var p=liveById?liveById[ref.piece_id]:null;
+      if(!p) return null;
+      return p;
+    } catch (e) { return null; }
+  }
+
+  // Closed-choice over the REAL candidate pieces (reuse the
+  // sparkPick/interpret pattern): options are real piece_ids with
+  // "pink scarf"-style descriptions plus "any" (local miss only: the
+  // user did not ask for a particular one) plus "none"; anything outside
+  // the option set (including an invented id) resolves null via
+  // sparkPick's own re-validation. Records "interpret:spark:<choice>"
+  // (or "...:none" on a miss) in trace — never raw text. Never throws;
+  // null = no usable client / no pick.
+  async function sparkClosedPiece(metaClient, text, cands, trace, descWords, includeAny){
+    var sp=sparkPickFn();
+    if(!sp||!metaClient||typeof metaClient.interpret!=="function") return null;
+    var said=String(text||"");
+    if(!said.trim()) return null;
+    var noun=plainNoun(cands.length>0?cands[0].category:null);
+    var desc=(Array.isArray(descWords)&&descWords.length>0)?descWords.join(" "):noun;
+    var opts=cands.map(function(p){ return { id: p.piece_id, description: pieceDesc(p) }; });
+    if(includeAny) opts.push({ id:"any", description:"any "+noun+" will do — no particular one" });
+    opts.push({ id:"none", description:"none of these — no "+desc+" "+noun });
+    var pick=null;
+    try {
+      pick=await sp(metaClient, said, opts,
+        "The user wants to add a specific piece to their look. Which exact piece did they mean — or none?", null);
+    } catch (e) { pick=null; }
+    if(trace) trace.push("interpret:spark:"+(pick||"none"));
+    return pick;
+  }
+
+  // Resolve the requested family to ONE real piece.
+  // Returns { piece } (local hit or Spark pick), { noMatch:{...} } (an
+  // ATTRIBUTE word was given but names nothing we hold — caller must NOT
+  // add), or { piece:null, noMatch:null } (no descriptor at all, filler
+  // words only, a lone piece, or an ambiguous miss with no Spark client
+  // — caller keeps today's default pick). "any" (and a "none" with no
+  // attribute word, an invented id with no attribute word, or any Spark
+  // failure with no attribute word) all fall back to the default pick —
+  // only a "none"/invented-id/failure WITH an attribute word is an
+  // honest no-add. Never throws.
+  async function resolveSpecificPiece(activePieces, category, text, metaClient, trace){
+    try {
+      var cands=(Array.isArray(activePieces)?activePieces:[]).filter(function(p){ return p&&p.category===category; });
+      if(cands.length<2) return { piece:null, noMatch:null };
+      var desc=descriptorOf(text);
+      if(desc.length===0) return { piece:null, noMatch:null };
+      // Attribute words only drive the local colour match — filler never
+      // does ("maybe"/"hun"/"also"/"thanks"/"lets"/"try" must not match
+      // or mismatch anything).
+      var attrs=attributeWordsOf(text);
+      var hits=[];
+      if(attrs.length>0){
+        var attrText=attrs.join(" ");
+        hits=cands.filter(function(p){
+          return p&&p.attributes&&typeof p.attributes.color==="string"&&colorMatchesText(p.attributes.color,attrText);
+        });
+      }
+      if(hits.length===1) return { piece:hits[0], noMatch:null };
+      if(hits.length>1){
+        // Ambiguous locally: Spark breaks the tie when possible. With no
+        // client there is nothing to consult, so the caller keeps today's
+        // deterministic pick; but a consulted Spark that answers "none"
+        // or an invented id is a REJECTION — never a silent add. (Kept
+        // without the "any" option: the user DID name a particular colour
+        // here, so the closed choice stays pieces + none.)
+        var spA=sparkPickFn();
+        var usableA=!!(spA&&metaClient&&typeof metaClient.interpret==="function");
+        if(!usableA) return { piece:null, noMatch:null };
+        var apick=await sparkClosedPiece(metaClient,text,cands,trace,attrs,false);
+        if(apick&&apick!=="none"){
+          for(var ai=0;ai<cands.length;ai++){ if(cands[ai].piece_id===apick) return { piece:cands[ai], noMatch:null }; }
+        }
+        return { piece:null, noMatch:{ descriptor:attrs, category:category, cands:cands, contested:true } };
+      }
+      // Local miss: ask Spark over the real pieces plus "any" (the user
+      // did not name a particular one) plus "none" when possible. "any"
+      // keeps today's default pick; a real id adds that piece; "none" is
+      // an honest no-add ONLY when an attribute word was given —
+      // otherwise it is also the default pick. With no usable client (or
+      // a Spark failure / invented id, both of which surface as null):
+      // attribute words given means an honest no-add, filler-only means
+      // the default pick.
+      var sp2=sparkPickFn();
+      if(!sp2||!metaClient||typeof metaClient.interpret!=="function"){
+        if(attrs.length>0) return { piece:null, noMatch:{ descriptor:attrs, category:category, cands:cands } };
+        return { piece:null, noMatch:null };
+      }
+      var mpick=await sparkClosedPiece(metaClient,text,cands,trace,attrs,true);
+      if(mpick==="any") return { piece:null, noMatch:null };
+      if(mpick&&mpick!=="none"){
+        for(var mi=0;mi<cands.length;mi++){ if(cands[mi].piece_id===mpick) return { piece:cands[mi], noMatch:null }; }
+      }
+      if(attrs.length>0) return { piece:null, noMatch:{ descriptor:attrs, category:category, cands:cands } };
+      return { piece:null, noMatch:null };
+    } catch (e) { return { piece:null, noMatch:null }; }
+  }
 
   // Shared selection stack: required in Node, or read off the browser
   // global (skills index loads propose_look before revise_look). The fit
@@ -554,6 +838,43 @@
       }
       if(otherCat) cat=otherCat;
     }
+    // Same-family both-match ("swap the scarf for the multicolor scarf"):
+    // an intra-family add/swap, never an exclusion — drop the removal
+    // side so the specific-piece path below owns it.
+    if(cat && required && cat===required){
+      cat=null;
+    }
+
+    // Live wardrobe, early (Milestone 36): specific-piece resolution and
+    // the intra-category swap both need it before the clarify fork below.
+    // (The later Re-select block reuses this same array — declared once.)
+    var active=[];
+    try{ active=catalog?catalog.getActivePieces():[]; }catch(eA){ active=[]; }
+    if(!Array.isArray(active)) active=[];
+    var sparkTrace36=(o && Array.isArray(o._trace)) ? o._trace : null;
+    // "add it/that/this (one) to my look": the piece
+    // view_wardrobe_item just showed, when still active. No last-shown
+    // piece falls through to today's clarification as before.
+    var forcedPiece=null;
+    if(!required && typeof text==="string" && PRONOUN_RE.test(text) && LOOK_TARGET_RE.test(text)){
+      var lsShown=lastShownPiece(catalog, liveMapOf(active));
+      if(lsShown){ required=lsShown.category; forcedPiece=lsShown; }
+    }
+    // Narrow the requested family to one real piece (the pure-add turn
+    // AND the re-weave force path below). Shoes stay family-level, as
+    // today. A descriptor that matches nothing resolves to an honest
+    // no-add reply — never a silent different piece.
+    var noMatchInfo=null;
+    if(required && required!=="shoes" && !forcedPiece){
+      var res36=await resolveSpecificPiece(active, required, text, metaClient, sparkTrace36);
+      if(res36){
+        if(res36.piece) forcedPiece=res36.piece;
+        else if(res36.noMatch) noMatchInfo=res36.noMatch;
+      }
+    }
+    if(noMatchInfo){
+      return noMatchReply(noMatchInfo);
+    }
 
     // Pure render follow-up ("show me wearing this"): render the most
     // recent valid proposal on the wearer — never a clarification, never
@@ -613,9 +934,7 @@
     // category shapes the pool the OTHER direction: down to that one
     // allowed family, so the deterministic picker structurally can only
     // ever produce it — never by relaxing the fit rules.
-    var active=[];
-    try{ active=catalog?catalog.getActivePieces():[]; }catch(e){ active=[]; }
-    if(!Array.isArray(active)) active=[];
+    // (active was read above, before the clarify fork — reused here.)
 
     // Re-select one real 2-4 piece look from the reduced set, using
     // propose_look's own selection stack over that smaller pool. A
@@ -634,7 +953,113 @@
     // look via propose_look's own selection stack. Never relaxes the
     // fit rules. Used by the re-weave path below and by the
     // swap-to-shoes removal half.
-    function selectCore(excludeCat, forceCat){
+    // Place one SPECIFIC piece onto a look (Milestone 36): same-category
+    // pieces already there (core or extras) are replaced, never stacked —
+    // at most one of the family rides the result. The piece joins the
+    // core only when core+piece still passes the fit rules (validateSelection);
+    // otherwise the core stands and the piece rides on top as an extra.
+    // Returns { trialIds, baseExtras, checked } — checked may be null.
+    function placeSpecificOnLook(coreIdsIn, extrasIn, specific, live){
+      var newCoreIds=[];
+      var inserted=false;
+      for(var i=0;i<coreIdsIn.length;i++){
+        var id=coreIdsIn[i];
+        if(live[id]&&live[id].category===specific.category){
+          if(!inserted){ newCoreIds.push(specific.piece_id); inserted=true; }
+        } else newCoreIds.push(id);
+      }
+      if(!inserted){
+        var has=false;
+        for(var h=0;h<newCoreIds.length;h++){ if(newCoreIds[h]===specific.piece_id) has=true; }
+        if(!has) newCoreIds.push(specific.piece_id);
+      }
+      var baseExtras=(Array.isArray(extrasIn)?extrasIn:[]).filter(function(ex){ return ex&&ex.category!==specific.category; });
+      var checked=null;
+      try{ checked=stack.validateSelection(active, newCoreIds, assembleLook); }catch(e){ checked=null; }
+      return { trialIds: newCoreIds, baseExtras: baseExtras, checked: checked };
+    }
+
+    // Already-in-the-look reply naming the ACTUAL piece (Milestone 36).
+    async function alreadyInLookReply(coreIdsIn, extrasIn, name){
+      var liveA=liveMapOf(active);
+      var coreItemsA=coreItemsOf(coreIdsIn, liveA);
+      var nounsA=combinedNounsStr(coreItemsA, extrasIn);
+      var finishA=finishOfItems(coreItemsA, null);
+      recordReviseTurn(catalog, {
+        userText: typeof text==="string"?text:"",
+        proposal: { pieces: coreIdsIn, extras: extrasIn, title: null, note: "valid:"+finishA },
+        verdict: true, reasons: ["already_in_look"].concat(extraReasonsOf(extrasIn))
+      });
+      var pvA=await previewCombined(coreItemsA, extrasIn, nounsA);
+      if(pvA.early) return pvA.early;
+      var replyA="Your "+name+" is already in the look, darling \u2728 \u2014 your "+nounsA+" stand as they are. Fit check: valid \u2714";
+      if(pvA.imageDelivery.requested&&!pvA.imageDelivery.delivered) replyA+=CAVEAT;
+      return { text: replyA, image: pvA.img, persist:{ summaryDelta: "Add requested for "+name+"; already in the look, left unchanged.", preferencesDelta: "" }, skill:"revise_look", meta: outMetaFor(pvA) };
+    }
+
+    // Intra-category swap (Milestone 36): the family IS worn (core or
+    // extra) and another live piece of it sits outside the look — swap to
+    // it. Returns the turn reply, or null when there is nothing to swap
+    // to (caller keeps today's remove behaviour).
+    async function intraSwapTurn(look, category, targetOrNull){
+      var liveS=liveMapOf(active);
+      var coreIdsS=look.coreIds.slice();
+      var inLookIds={};
+      var wornOld=null;
+      coreIdsS.forEach(function(id){
+        inLookIds[id]=true;
+        if(!wornOld&&liveS[id]&&liveS[id].category===category) wornOld=liveS[id];
+      });
+      look.extras.forEach(function(ex){
+        if(ex&&ex.piece_id) inLookIds[ex.piece_id]=true;
+        if(!wornOld&&ex&&ex.category===category&&ex.piece_id&&liveS[ex.piece_id]) wornOld=liveS[ex.piece_id];
+      });
+      if(!wornOld) return null;
+      var target=targetOrNull||null;
+      if(!target){
+        for(var i=0;i<active.length;i++){
+          var ap=active[i];
+          if(ap&&ap.category===category&&!inLookIds[ap.piece_id]){ target=ap; break; }
+        }
+      }
+      if(!target) return null;
+      var newDesc=pieceDesc(target);
+      if(inLookIds[target.piece_id]){
+        return await alreadyInLookReply(coreIdsS, look.extras, newDesc);
+      }
+      var oldDesc=pieceDesc(wornOld);
+      var placed=placeSpecificOnLook(coreIdsS, look.extras, target, liveS);
+      if(placed.checked&&placed.checked.ok&&placed.checked.card&&placed.checked.card.valid===true){
+        var newCore=placed.checked.items;
+        recordReviseTurn(catalog, {
+          userText: typeof text==="string"?text:"",
+          proposal: { pieces: newCore.map(function(it){ return it.id; }), extras: placed.baseExtras, title: null, note: "valid:"+finishOfItems(newCore, placed.checked.card) },
+          verdict: true, reasons: ["swapped:"+category].concat(extraReasonsOf(placed.baseExtras))
+        });
+        var nounsJ=combinedNounsStr(newCore, placed.baseExtras);
+        var pvJ=await previewCombined(newCore, placed.baseExtras, nounsJ);
+        if(pvJ.early) return pvJ.early;
+        var replyJ="Got it, loveling \u2014 swapped your "+oldDesc+" for your "+newDesc+" \u2728 Your "+coreNounStr(newCore)+" are looking darling together. Fit check: valid \u2714";
+        if(placed.baseExtras.length>0) replyJ+=" Plus your "+extraNounStr(placed.baseExtras)+" riding on top \u2014 your pick outside the fit rules \u2728.";
+        if(pvJ.imageDelivery.requested&&!pvJ.imageDelivery.delivered) replyJ+=CAVEAT;
+        return { text: replyJ, image: pvJ.img, persist:{ summaryDelta: "Swapped "+oldDesc+" for "+newDesc+".", preferencesDelta: "Prefers with "+newDesc+"." }, skill:"revise_look", meta: outMetaFor(pvJ) };
+      }
+      var newExtras=placed.baseExtras.concat([{ piece_id: target.piece_id, category: target.category }]);
+      var coreItemsS=coreItemsOf(coreIdsS, liveS);
+      recordReviseTurn(catalog, {
+        userText: typeof text==="string"?text:"",
+        proposal: { pieces: coreIdsS, extras: newExtras, title: null, note: "valid:"+finishOfItems(coreItemsS, null) },
+        verdict: true, reasons: ["swapped:"+category].concat(extraReasonsOf(newExtras))
+      });
+      var nounsE=combinedNounsStr(coreItemsS, newExtras);
+      var pvE=await previewCombined(coreItemsS, newExtras, nounsE);
+      if(pvE.early) return pvE.early;
+      var replyE="Swapped your "+oldDesc+" for your "+newDesc+" on top, darling \u2014 it\u2019s your pick outside my fit rules, so the fit check covers your "+coreNounStr(coreItemsS)+" only \u2728";
+      if(pvE.imageDelivery.requested&&!pvE.imageDelivery.delivered) replyE+=CAVEAT;
+      return { text: replyE, image: pvE.img, persist:{ summaryDelta: "Swapped "+oldDesc+" for "+newDesc+" on top as an extra (outside the fit rules).", preferencesDelta: "Prefers with "+newDesc+"." }, skill:"revise_look", meta: outMetaFor(pvE) };
+    }
+
+    function selectCore(excludeCat, forceCat, forcePieceId){
       var sExcluded=excludeCat ? active.filter(function(p){ return p && p.category===excludeCat; }) : [];
       var sReqPieces=forceCat ? active.filter(function(p){ return p && p.category===forceCat; }) : null;
       var sReqMissing=!!(forceCat && sReqPieces && sReqPieces.length===0);
@@ -651,6 +1076,15 @@
           cands=cands.filter(function(p){ return BASE_CATS.indexOf(p.category)===-1 || p.category===forceCat; });
         }
       }
+      // Milestone 36: a resolved specific piece forces THAT piece, not
+      // just its family — the pool keeps no sibling of the same family.
+      if(forcePieceId && sReqPresent){
+        var forceLive=false;
+        for(var fpi=0;fpi<active.length;fpi++){
+          if(active[fpi]&&active[fpi].piece_id===forcePieceId&&active[fpi].category===forceCat){ forceLive=true; break; }
+        }
+        if(forceLive) cands=cands.filter(function(p){ return p.category!==forceCat||p.piece_id===forcePieceId; });
+      }
       var sChosen=null, sCard=null, sRejected=null;
       if(sReqMissing){
         sRejected=null;
@@ -664,6 +1098,29 @@
       }
       return { excluded: sExcluded, requiredPieces: sReqPieces, requiredMissing: sReqMissing,
         requiredPresent: sReqPresent, candidates: cands, chosen: sChosen, card: sCard, rejected: sRejected };
+    }
+
+    // Honest no-add reply for an ATTRIBUTE word that names nothing
+    // holdable (Milestone 36 + follow-up fix): adds nothing, quotes ONLY
+    // the attribute words (never filler like "also thanks"), lists the
+    // real pieces of the family by their actual short descriptions, and
+    // uses "an" before a vowel sound. contested=true means the
+    // descriptor DID match locally but the Spark tie-break rejected it —
+    // ask which one instead of claiming none exists.
+    function noMatchReply(info){
+      var d=(Array.isArray(info.descriptor)&&info.descriptor.length>0)?info.descriptor.join(" "):plainNoun(info.category);
+      var n=plainNoun(info.category);
+      var art=descriptorArticle((Array.isArray(info.descriptor)&&info.descriptor.length>0)?info.descriptor[0]:"");
+      var list=info.cands.map(function(p){ return pieceDesc(p); }).join(", ");
+      var copy=info.contested
+        ? "Oh, loveling \u2728 I couldn't quite tell which "+d+" "+n+" you meant \u2014 yours are the "+list+". Tell me its colour and I'll pop it right on! \u2728"
+        : "Oh, loveling \u2728 I don't see "+art+" "+d+" "+n+" in your wardrobe just yet \u2014 yours are the "+list+". Share a photo of one and I'll catalogue it, then we'll weave it in! \u2728";
+      var sumDelta=info.contested
+        ? "Couldn't tell which "+d+" "+n+" was meant; added nothing."
+        : "Looked for "+art+" "+d+" "+n+"; none in wardrobe, added nothing.";
+      recordReviseTurn(catalog, { userText: typeof text==="string"?text:"", proposal: null, verdict: false, reasons: ["descriptor_no_match:"+info.category] });
+      imageDelivery.reason="no_valid_look";
+      return { text: copy, image: null, persist:{ summaryDelta: sumDelta, preferencesDelta: "" }, skill:"revise_look", meta:{ imageDelivery: imageDelivery } };
     }
 
     // Meta shape for the extras-aware turns: mirrors the re-weave tail
@@ -810,7 +1267,7 @@
     // Pure ADD on a current look: the addition joins the core only when
     // core+addition still passes the fit rules — otherwise the core
     // stays unchanged and the piece rides on top as a user-chosen extra.
-    async function pureAddTurn(look){
+    async function pureAddTurn(look, specific){
       var live=liveMapOf(active);
       var coreIds=look.coreIds.slice();
       var oldExtras=look.extras;
@@ -819,6 +1276,43 @@
       oldExtras.forEach(function(ex){ if(ex.piece_id) inLookIds[ex.piece_id]=true; inLookCats[ex.category]=true; });
       var noun=plainNoun(required);
       var coreItems=coreItemsOf(coreIds, live);
+      // Milestone 36: a resolved specific piece replaces its same-family
+      // sibling (core or extra) instead of stacking two of the family.
+      if(specific && specific.piece_id && live[specific.piece_id]){
+        var addName=pieceDesc(specific);
+        if(inLookIds[specific.piece_id]){
+          return await alreadyInLookReply(coreIds, oldExtras, addName);
+        }
+        var placed=placeSpecificOnLook(coreIds, oldExtras, specific, live);
+        if(placed.checked&&placed.checked.ok&&placed.checked.card&&placed.checked.card.valid===true){
+          var newCoreS=placed.checked.items;
+          recordReviseTurn(catalog, {
+            userText: typeof text==="string"?text:"",
+            proposal: { pieces: newCoreS.map(function(it){ return it.id; }), extras: placed.baseExtras, title: null, note: "valid:"+finishOfItems(newCoreS, placed.checked.card) },
+            verdict: true, reasons: ["added:"+specific.category].concat(extraReasonsOf(placed.baseExtras))
+          });
+          var nounsSP=combinedNounsStr(newCoreS, placed.baseExtras);
+          var pvSP=await previewCombined(newCoreS, placed.baseExtras, nounsSP);
+          if(pvSP.early) return pvSP.early;
+          var replySP="Got it, loveling \u2014 added your "+addName+" \u2728 Your "+coreNounStr(newCoreS)+" are looking darling together. Fit check: valid \u2714";
+          if(placed.baseExtras.length>0) replySP+=" Plus your "+extraNounStr(placed.baseExtras)+" riding on top \u2014 your pick outside the fit rules \u2728.";
+          if(pvSP.imageDelivery.requested&&!pvSP.imageDelivery.delivered) replySP+=CAVEAT;
+          return { text: replySP, image: pvSP.img, persist:{ summaryDelta: "Revised look, added "+addName+".", preferencesDelta: "Prefers with "+addName+"." }, skill:"revise_look", meta: outMetaFor(pvSP) };
+        }
+        var newExtrasS=placed.baseExtras.concat([{ piece_id: specific.piece_id, category: specific.category }]);
+        var finishS=finishOfItems(coreItems, null);
+        recordReviseTurn(catalog, {
+          userText: typeof text==="string"?text:"",
+          proposal: { pieces: coreIds, extras: newExtrasS, title: null, note: "valid:"+finishS },
+          verdict: true, reasons: ["added:"+specific.category].concat(extraReasonsOf(newExtrasS))
+        });
+        var nounsSE=combinedNounsStr(coreItems, newExtrasS);
+        var pvSE=await previewCombined(coreItems, newExtrasS, nounsSE);
+        if(pvSE.early) return pvSE.early;
+        var replySE="Added your "+addName+" on top, darling \u2014 it\u2019s your pick outside my fit rules, so the fit check covers your "+coreNounStr(coreItems)+" only \u2728";
+        if(pvSE.imageDelivery.requested&&!pvSE.imageDelivery.delivered) replySE+=CAVEAT;
+        return { text: replySE, image: pvSE.img, persist:{ summaryDelta: "Added "+addName+" on top as an extra (outside the fit rules).", preferencesDelta: "Prefers with "+addName+"." }, skill:"revise_look", meta: outMetaFor(pvSE) };
+      }
       var finish=finishOfItems(coreItems, null);
       // Deterministic pick: the first active piece of the requested
       // category not already in the look — active (catalog) order is the
@@ -1041,9 +1535,31 @@
       var reqAlive=active.some(function(p){ return p && p.category===required; });
       if(reqAlive && stack && typeof stack.validateSelection==="function" && assembleLook){
         var lookAdd=lastValidLook(catalog);
-        if(lookAdd) return await pureAddTurn(lookAdd);
+        if(lookAdd) return await pureAddTurn(lookAdd, forcedPiece);
       }
       // else: fall through (no such piece, no look, or no stack).
+    }
+    // Intra-category swap (Milestone 36): "swap/change the scarf" / "a
+    // different scarf" with no add-target and no explicit removal verb
+    // swaps to another live piece of the family instead of removing it.
+    // Anything else (including "remove/drop the scarf") keeps today's
+    // remove path below.
+    if(cat && !required && isSwapIntent(text) && !REMOVE_INTENT_RE.test(text)){
+      var lookSwap=lastValidLook(catalog);
+      if(lookSwap && stack && typeof stack.validateSelection==="function" && assembleLook){
+        var swapSpec=null, swapNoMatch=null;
+        var resSwap=await resolveSpecificPiece(active, cat, text, metaClient, sparkTrace36);
+        if(resSwap){
+          if(resSwap.piece) swapSpec=resSwap.piece;
+          else if(resSwap.noMatch) swapNoMatch=resSwap.noMatch;
+        }
+        if(swapNoMatch){
+          return noMatchReply(swapNoMatch);
+        }
+        var swapped=await intraSwapTurn(lookSwap, cat, swapSpec);
+        if(swapped) return swapped;
+      }
+      // else: fall through to today's remove behaviour.
     }
     // Pure removal of a category that lives only in extras: drop just
     // the extra, keep the core look and remaining extras unchanged.
@@ -1055,7 +1571,8 @@
       // else: fall through to the re-weave.
     }
 
-    var sel=selectCore(cat, required);
+    var forcePieceId=(forcedPiece&&required&&forcedPiece.category===required)?forcedPiece.piece_id:null;
+    var sel=selectCore(cat, required, forcePieceId);
     var excluded=sel.excluded, requiredPieces=sel.requiredPieces, requiredMissing=sel.requiredMissing,
       requiredPresent=sel.requiredPresent, candidates=sel.candidates,
       chosen=sel.chosen, card=sel.card, rejected=sel.rejected;
@@ -1068,14 +1585,35 @@
       var carryLook=lastValidLook(catalog);
       var carryFrom=carryLook?carryLook.extras:[];
       var keptExtras=carryExtras(carryFrom, cat, chosen, candidates);
+      // The forced piece names the reply below; the pool shaping above
+      // usually lands it in the re-woven core already.
+      var reqName=(forcePieceId&&forcedPiece)?pieceDesc(forcedPiece):(requiredPresent?plainNoun(required):null);
+      var forcedExtra=false;
+      if(forcePieceId&&forcedPiece){
+        var hasForced=false;
+        for(var hfi=0;hfi<chosen.length;hfi++){ if(chosen[hfi]&&chosen[hfi].id===forcedPiece.piece_id){ hasForced=true; break; } }
+        if(!hasForced){
+          // The re-weave left the exact piece out: place it on top of the
+          // new core the same honest way a pure add would (core when it
+          // validates, otherwise an extra) — it is never silently dropped.
+          var fplaced=placeSpecificOnLook(chosen.map(function(it){ return it.id; }), keptExtras, forcedPiece, liveMapOf(active));
+          if(fplaced.checked&&fplaced.checked.ok&&fplaced.checked.card&&fplaced.checked.card.valid===true){
+            chosen=fplaced.checked.items; card=fplaced.checked.card; keptExtras=fplaced.baseExtras;
+          } else {
+            keptExtras=fplaced.baseExtras.concat([{ piece_id: forcedPiece.piece_id, category: forcedPiece.category }]);
+            forcedExtra=true;
+          }
+        }
+      }
       var combinedAll=combinedPreviewItems(candidates, chosen, keptExtras);
       var nouns=combinedNounsStr(chosen, keptExtras);
-      if(excluded.length>0 && requiredPresent) reply="Got it, loveling \u2014 set aside your "+plainNoun(cat)+" and brought back your "+plainNoun(required)+" \u2728 Let me re-weave the rest into something lovely.";
+      if(excluded.length>0 && requiredPresent) reply="Got it, loveling \u2014 set aside your "+plainNoun(cat)+" and brought back your "+reqName+" \u2728 Let me re-weave the rest into something lovely.";
       else if(excluded.length>0) reply="Got it, loveling \u2014 set aside your "+plainNoun(cat)+" for now \u2728 Let me re-weave the rest into something lovely.";
-      else if(requiredPresent && cat) reply="No "+plainNoun(cat)+" in the mix right now, darling \u2014 but I brought back your "+plainNoun(required)+" \u2728";
-      else if(requiredPresent) reply="Got it, loveling \u2014 brought back your "+plainNoun(required)+" \u2728 Let me re-weave things into something lovely.";
+      else if(requiredPresent && cat) reply="No "+plainNoun(cat)+" in the mix right now, darling \u2014 but I brought back your "+reqName+" \u2728";
+      else if(requiredPresent) reply="Got it, loveling \u2014 brought back your "+reqName+" \u2728 Let me re-weave things into something lovely.";
       else reply="No "+plainNoun(cat)+" in the mix right now, darling \u2014 but I\u2019ll re-check the fit with what we\u2019ve got \u2728";
       reply+=" Your "+coreNounStr(chosen)+" are looking darling together.";
+      if(forcedExtra) reply+=" Your "+reqName+" rides on top \u2014 your pick outside my fit rules \u2728.";
       if(card && card.valid===true) reply+=" Fit check: valid \u2714";
       if(keptExtras.length>0) reply+=" Plus your "+extraNounStr(keptExtras)+" riding on top \u2014 your pick outside the fit rules \u2728.";
       var onUserReviseCtx=text;

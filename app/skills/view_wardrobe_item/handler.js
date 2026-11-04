@@ -40,6 +40,46 @@
   var CONTEXT_TTL_MS = 24 * 3600 * 1000;
   var SKILL = "view_wardrobe_item";
 
+  // Last-shown single piece (Milestone 36): pickPiece below shows exactly
+  // one piece by id — revise_look treats "add it/that/this (one) to my
+  // look" as that piece. In-memory per-user map keyed by the catalog's
+  // userKey, same short-lived spirit as the list context above — never
+  // serialized, never a piece/catalog schema field (toJSON is untouched),
+  // expiry-checked on read like getListContext. A later pick overwrites
+  // the earlier one; a new list page does not clear it (the shown piece
+  // was still "just shown").
+  var LAST_SHOWN_TTL_MS = 24 * 3600 * 1000;
+  var lastShownByUser = {};
+  function userKeyOf(catalog) {
+    try {
+      if (catalog && typeof catalog.userKey === "string" && catalog.userKey) return catalog.userKey;
+    } catch (e) {}
+    return null;
+  }
+  function recordLastShown(catalog, piece) {
+    try {
+      var k = userKeyOf(catalog);
+      if (!k || !piece || typeof piece.piece_id !== "string" || !piece.piece_id) return;
+      if (typeof piece.category !== "string" || !piece.category) return;
+      lastShownByUser[k] = { piece_id: piece.piece_id, category: piece.category, at: new Date().toISOString() };
+    } catch (e) {}
+  }
+  // Returns { piece_id, category } or null (unknown user, nothing shown
+  // yet, or expired). Accepts the catalog or a bare userKey string.
+  function lastShownFor(catalogOrKey) {
+    try {
+      var k = typeof catalogOrKey === "string" ? catalogOrKey : userKeyOf(catalogOrKey);
+      if (!k || !lastShownByUser[k]) return null;
+      var e = lastShownByUser[k];
+      if (!e || typeof e.piece_id !== "string" || typeof e.category !== "string") return null;
+      if (!e.at || Date.parse(e.at) <= Date.now() - LAST_SHOWN_TTL_MS) {
+        try { delete lastShownByUser[k]; } catch (e2) {}
+        return null;
+      }
+      return { piece_id: e.piece_id, category: e.category };
+    } catch (e3) { return null; }
+  }
+
   // Shared singular/plural/synonym table (app/interpret.js) with the
   // old plural map as a fail-closed fallback when the module is
   // unreachable. Pinned to the classifier taxonomy.
@@ -418,6 +458,10 @@
       };
     }
     var piece = pagePieces[n - 1];
+    // The single piece just shown: remembered (in-memory, per user) so
+    // revise_look can resolve "add it to my look" — recorded for the
+    // photo and the word-picture branches alike.
+    try { recordLastShown(catalog, piece); } catch (eRec) {}
     var desc = shortDesc(piece);
     var dataURL = null;
     var source = null;
@@ -493,6 +537,7 @@
   var api = {
     handle: handle, skill: SKILL,
     plainNoun: plainNoun, shortDesc: shortDesc,
+    lastShownFor: lastShownFor,
     PLURAL_TO_CATEGORY: PLURAL_TO_CATEGORY, PAGE: PAGE
   };
   root.MetaStyles = root.MetaStyles || {};

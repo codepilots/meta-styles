@@ -66,6 +66,52 @@
       try { summariser = (root.MetaStyles && root.MetaStyles.summariser) || require("./summariser.js"); } catch (e) { summariser = null; }
     }
 
+    // Milestone 36 breakout: a clear add/swap-to-look request escapes a
+    // pending TEXT question (e.g. view_wardrobe_item's list hold) and
+    // routes normally — usually to revise_look. Reuses revise_look's own
+    // matchAdd/matchRevise plus the router's revise rule, so no vocabulary
+    // is duplicated here: the look-target phrase ("to my look" / "to the
+    // look") plus a revise hit, or the router's own revise_look verdict,
+    // counts as clear. Plain picks ("the second one", "multicolor") never
+    // match either arm and stay in-flow, and yes_no expectations
+    // (deletes, consent, purchase holds) are never consulted by this
+    // check at all.
+    var ReviseForBreakout = null;
+    try {
+      if (typeof require !== "undefined") ReviseForBreakout = require("./skills/revise_look/handler.js");
+    } catch (eRb) { ReviseForBreakout = null; }
+    function reviseBreakoutHit(text) {
+      try {
+        var r = ReviseForBreakout;
+        if (!r || (typeof r.matchAdd !== "function" && typeof r.matchRevise !== "function")) {
+          try {
+            r = root.MetaStyles && root.MetaStyles.skills && root.MetaStyles.skills["revise_look"];
+          } catch (eRb2) { r = null; }
+        }
+        if (r) {
+          if (typeof r.matchAdd === "function" && r.matchAdd(text)) return true;
+          if (typeof r.matchRevise === "function" && r.matchRevise(text)) return true;
+        }
+      } catch (eRb3) {}
+      return false;
+    }
+    function routerBreakoutHit(text) {
+      try {
+        if (router && typeof router.heuristicSkill === "function") {
+          var h = router.heuristicSkill({ text: text });
+          if (h && h.skill === "revise_look" && /revise/i.test(h.reason || "")) return true;
+        }
+      } catch (eRb4) {}
+      return false;
+    }
+    function isClearAddToLook(text) {
+      if (typeof text !== "string" || !text.trim()) return false;
+      var hasLookTarget = /\bto\s+(my|the)\s+look\b/i.test(text);
+      if (hasLookTarget && (reviseBreakoutHit(text) || routerBreakoutHit(text))) return true;
+      if (routerBreakoutHit(text)) return true;
+      return false;
+    }
+
     function loadSkill(name) {
       if (skillLoaders[name]) return skillLoaders[name];
       try { return require("./skills/" + name + "/handler.js"); } catch (e) {}
@@ -150,6 +196,14 @@
             // alone, route normally.
             if (pq.expects !== "image" && pq.expects !== "text" && pq.expects !== "yes_no" && pq.expects !== "profile_image") continue;
             var expired = pq.expires_at ? (Date.parse(pq.expires_at) <= Date.now()) : false;
+            // Milestone 36 breakout (see isClearAddToLook above): a clear
+            // add/swap-to-look request is NOT the answer to a pending text
+            // question — resolve that stale question and fall through to
+            // normal routing (usually revise_look).
+            if (!expired && pq.expects === "text" && isClearAddToLook(message)) {
+              try { if (typeof catalog.resolveQuestion === "function") catalog.resolveQuestion(pq.id); } catch (reB) {}
+              break;
+            }
             try { if (typeof catalog.resolveQuestion === "function") catalog.resolveQuestion(pq.id); } catch (re) {}
             var satisfied = false;
             var satisfiedKind = "";
